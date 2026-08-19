@@ -457,7 +457,7 @@ def build(served_counts: dict[str, int] | None = None,
     T("")
     T("## Freshness")
     try:
-        state = json.loads((_pathlib.Path.home() / ".local/state/warehouse/sync-state.json").read_text())
+        state = json.loads((config.STATE / "sync-state.json").read_text())
         T(f"Last rebuilt {state.get('last_run_finished', 'unknown')} "
           f"({state.get('status', '?')}).")
     except Exception:

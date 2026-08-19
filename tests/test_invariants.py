@@ -367,3 +367,23 @@ def test_sql_literal_refuses_a_value_d1_would_drop():
     assert publish_cf._sql_literal("it's fine") == "'it''s fine'"
     with pytest.raises(publish_cf.BinaryValue):
         publish_cf._sql_literal("bad\x00value")
+
+
+def test_load_env_reads_the_export_spelling(tmp_path, monkeypatch):
+    """The secrets file is also sourced by a shell, so it says `export KEY=value`.
+
+    Parsing it as KEY=value stored a variable literally named "export KEY", so
+    every lookup missed and a credentialed fetch reported its key as unset while
+    the key sat in the file being read.
+    """
+    from exo import config
+    env = tmp_path / "env"
+    env.write_text("export A_KEY=one\nB_KEY=two\n# comment\n\n")
+    monkeypatch.setattr(config, "ENV_FILE", env)
+    monkeypatch.setattr(config, "LEGACY_ENV_FILE", tmp_path / "absent")
+    monkeypatch.delenv("A_KEY", raising=False)
+    monkeypatch.delenv("B_KEY", raising=False)
+    assert config.load_env() == 2
+    import os
+    assert os.environ["A_KEY"] == "one"
+    assert os.environ["B_KEY"] == "two"

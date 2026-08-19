@@ -131,6 +131,11 @@ CAPTURES = ROOT / "captures"  # reversible captures (Life Terminal 'save to brai
 NOTES = ROOT / "notes"  # the engine's OWN note record (Apple Notes ingester writes here)
 ITEMS = ROOT / "items"  # item spine (ADR-0002): authored .md nouns + _events log
 
+# Where the laptop leg records what it last did. Written by an instance's own
+# sync script, read by the brief so a reader can see its own age — so the path
+# is an instance fact, not an engine one, and the default is only a default.
+STATE = _path("EXO_STATE", "paths", "state", "~/.local/state/exo")
+
 SECRETS = Path.home() / ".config" / "exo" / "secrets"
 ENV_FILE = SECRETS / "env"  # KEY=VALUE, mode 600, never in the repo
 LEGACY_ENV_FILE = Path.home() / ".config" / "warehouse" / "secrets" / "env"
@@ -210,6 +215,9 @@ PROJECTS_MAX_DEPTH = int(
 def load_env() -> int:
     """Load ingestion credentials from the secrets dir into os.environ.
 
+    Handles both spellings: `KEY=value` and the `export KEY=value` a shell
+    needs, since the same file is sourced by the laptop's sync script.
+
     Parsed here rather than sourced by a shell. `set -a; . .env` aborts on the
     first value containing a shell metacharacter — an unquoted `&` in a blocklist
     silently truncated everything below it — and a credential loader that stops
@@ -226,7 +234,13 @@ def load_env() -> int:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            key = key.strip()
+            # `export KEY=value`, because the same file is also sourced by the
+            # laptop's sync script and a shell needs the keyword. Without this
+            # the loader stored a variable literally named "export KEY", every
+            # lookup missed, and a credentialed fetch reported the key as unset
+            # while it sat in the file being read — the failure looked like a
+            # missing secret rather than a parser that could not read one.
+            key = key.strip().removeprefix("export").strip()
             if key and key not in os.environ:
                 os.environ[key] = value.strip().strip('"').strip("'")
                 n += 1
