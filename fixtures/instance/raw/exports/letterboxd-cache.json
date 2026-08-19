@@ -1,0 +1,39 @@
+{
+ "watched": [
+  {
+   "name": "Blue Hour",
+   "year": 2025,
+   "rating": 4.0,
+   "date": "2026-06-21",
+   "letterboxd_uri": "https://example.com/film/blue-hour/diary/"
+  },
+  {
+   "name": "Salt Flat",
+   "year": 2014,
+   "rating": 3.5,
+   "date": "2026-07-08",
+   "letterboxd_uri": "https://example.com/film/salt-flat/diary/"
+  },
+  {
+   "name": "Erasure",
+   "year": 2026,
+   "rating": 4.5,
+   "date": "2026-07-30",
+   "letterboxd_uri": "https://example.com/film/erasure/diary/"
+  },
+  {
+   "name": "Two Passes",
+   "year": 2011,
+   "rating": 3.0,
+   "date": "2026-08-12",
+   "letterboxd_uri": "https://example.com/film/two-passes/diary/"
+  },
+  {
+   "name": "Nine Bridges",
+   "year": 2016,
+   "rating": 5.0,
+   "date": "2026-02-23",
+   "letterboxd_uri": "https://example.com/film/nine-bridges/diary/"
+  }
+ ]
+}

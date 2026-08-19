@@ -1,0 +1,165 @@
+{
+ "total": 14,
+ "collections": {
+  "101": "Reading",
+  "102": "Workshop",
+  "103": "Watch later",
+  "104": "Unsorted"
+ },
+ "bookmarks": [
+  {
+   "bookmark_id": 7001,
+   "title": "The grammar of a rating scale",
+   "link": "https://example.com/essays/rating-grammar",
+   "type": "article",
+   "collection_id": "101",
+   "created": "Wed, 04 Feb 2026 08:12:03 GMT",
+   "tags": "measurement, ratings",
+   "note": "The bit I keep coming back to is that recentring destroys the only thing a personal scale is good for.",
+   "excerpt": "An argument for publishing the distribution alongside the number."
+  },
+  {
+   "bookmark_id": 7002,
+   "title": "Punch cards as a notation with an opinion",
+   "link": "https://example.com/talks/punch-cards",
+   "type": "video",
+   "collection_id": "101",
+   "created": "Sun, 22 Feb 2026 19:40:11 GMT",
+   "tags": "notation, history",
+   "note": "Worth it for the twelve minutes on ordering, skip the rest.",
+   "excerpt": "A conference talk on early program encoding."
+  },
+  {
+   "bookmark_id": 7003,
+   "title": "Shingling for near-duplicate detection",
+   "link": "https://example.com/papers/shingles",
+   "type": "article",
+   "collection_id": "102",
+   "created": "Tue, 10 Mar 2026 11:02:47 GMT",
+   "tags": "duplicates, text",
+   "note": "",
+   "excerpt": "Classic k-shingle overlap, with the parameter choices worked through."
+  },
+  {
+   "bookmark_id": 7004,
+   "title": "A very long thread about append-only logs",
+   "link": "https://x.com/someone/status/1",
+   "type": "link",
+   "collection_id": "102",
+   "created": "Fri, 27 Mar 2026 15:31:09 GMT",
+   "tags": "logs",
+   "note": "Saved for the reply about folding, not for the original post.",
+   "excerpt": ""
+  },
+  {
+   "bookmark_id": 7005,
+   "title": "Ebb \u2014 full album",
+   "link": "https://youtube.com/watch?v=aaaaaaaaaaa",
+   "type": "video",
+   "collection_id": "103",
+   "created": "Thu, 09 Apr 2026 21:14:55 GMT",
+   "tags": "music",
+   "note": "",
+   "excerpt": "Low Tide Orchestra, 2021."
+  },
+  {
+   "bookmark_id": 7006,
+   "title": "How standards get quietly ignored",
+   "link": "https://example.com/essays/ignored-standards",
+   "type": "article",
+   "collection_id": "101",
+   "created": "Mon, 20 Apr 2026 07:45:30 GMT",
+   "tags": "measurement, history",
+   "note": "The failed-standard chapter of the book, in short form and free.",
+   "excerpt": ""
+  },
+  {
+   "bookmark_id": 7007,
+   "title": "Building a fixture that proves something",
+   "link": "https://example.com/notes/fixtures",
+   "type": "article",
+   "collection_id": "102",
+   "created": "Sat, 02 May 2026 13:22:18 GMT",
+   "tags": "testing",
+   "note": "Everything publishable in a fixture means the guard is untested. Obvious in hindsight.",
+   "excerpt": ""
+  },
+  {
+   "bookmark_id": 7008,
+   "title": "Nine Bridges \u2014 restaurant",
+   "link": "https://example.com/places/nine-bridges",
+   "type": "link",
+   "collection_id": "104",
+   "created": "Wed, 13 May 2026 18:03:41 GMT",
+   "tags": "food, ashfield",
+   "note": "Go for the stew.",
+   "excerpt": ""
+  },
+  {
+   "bookmark_id": 7009,
+   "title": "On refusing rather than shrinking",
+   "link": "https://example.com/essays/refuse",
+   "type": "article",
+   "collection_id": "102",
+   "created": "Sun, 31 May 2026 09:58:02 GMT",
+   "tags": "reliability",
+   "note": "This is the piece I wanted to write and did not.",
+   "excerpt": "A guard that shrinks silently is not a guard."
+  },
+  {
+   "bookmark_id": 7010,
+   "title": "Two-pass reading, argued badly",
+   "link": "https://example.com/forum/two-pass",
+   "type": "link",
+   "collection_id": "101",
+   "created": "Thu, 11 Jun 2026 20:27:36 GMT",
+   "tags": "reading",
+   "note": "Saved as a record of the objection I keep failing to answer.",
+   "excerpt": ""
+  },
+  {
+   "bookmark_id": 7011,
+   "title": "A cold-night braise",
+   "link": "https://example.com/recipes/braise",
+   "type": "article",
+   "collection_id": "104",
+   "created": "Tue, 30 Jun 2026 17:11:04 GMT",
+   "tags": "cooking",
+   "note": "",
+   "excerpt": "Shoulder, preserved lemon, ninety minutes."
+  },
+  {
+   "bookmark_id": 7012,
+   "title": "Field Recordings, live set",
+   "link": "https://soundcloud.com/verdigris/live",
+   "type": "audio",
+   "collection_id": "103",
+   "created": "Sat, 18 Jul 2026 22:49:19 GMT",
+   "tags": "music",
+   "note": "Better than the record.",
+   "excerpt": ""
+  },
+  {
+   "bookmark_id": 7013,
+   "title": "Notes on content-addressed caches",
+   "link": "https://github.com/example/cache-notes",
+   "type": "link",
+   "collection_id": "102",
+   "created": "Mon, 03 Aug 2026 10:05:53 GMT",
+   "tags": "caching",
+   "note": "Keying on bytes rather than on the object is the whole trick.",
+   "excerpt": ""
+  },
+  {
+   "bookmark_id": 7014,
+   "title": "What a personal OS is actually for",
+   "link": "https://example.com/essays/personal-os",
+   "type": "article",
+   "collection_id": "101",
+   "created": "Fri, 14 Aug 2026 06:33:27 GMT",
+   "tags": "systems",
+   "note": "I disagree with about half of this and want to write down which half.",
+   "excerpt": ""
+  }
+ ]
+}

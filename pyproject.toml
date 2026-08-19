@@ -1,0 +1,33 @@
+[project]
+name = "exo"
+version = "0.1.0"
+description = "Exo — a personal context layer: one record of a life, write-scoped by tier, published read-only to whatever agent is in front of you."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.5.5",
+    "fastembed>=0.8.0",
+    "google-auth>=2.56.3",
+    "numpy>=2.5.1",
+    "pyarrow>=25.0.0",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+exo = "exo.cli:main"
+# One release: every launcher, cron and sibling repo on this machine calls `wh`.
+wh = "exo.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["exo"]
+# `exo init` copies these out; they must ride inside the wheel.
+artifacts = ["exo/templates/*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

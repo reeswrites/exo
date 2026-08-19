@@ -1,0 +1,44 @@
+# The engine holds no data. This is belt and braces: a checkout of the public
+# repo should refuse to carry an instance even if someone builds one inside it.
+
+# An instance, in any of its shapes — anchored, so these mean the repository
+# root and not any directory that happens to share the name. fixtures/instance/
+# is a real instance and IS committed: it is invented, and it is what the tests
+# run against.
+/exo.toml
+/serve-manifest.json
+/raw/
+/items/
+/notes/
+/captures/
+/backups/
+/plugins/
+/zones/
+/catalog/
+
+# the fixture's build output, which is regenerable
+fixtures/instance/zones/t0/
+fixtures/instance/zones/t1/
+fixtures/instance/zones/t2/
+fixtures/instance/zones/_cache/
+fixtures/instance/zones/_serve/
+fixtures/instance/zones/_serve.building/
+fixtures/instance/zones/_ledger/
+fixtures/instance/catalog/
+
+# real cloud config — the example is tracked, the ids are not
+worker/wrangler.toml
+.dev.vars
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# node
+node_modules/
+.wrangler/
+
+# os
+.DS_Store

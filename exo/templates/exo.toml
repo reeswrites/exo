@@ -1,0 +1,52 @@
+# Your instance. Copy to exo.toml beside your record and edit.
+#
+# Relative paths resolve against EXO_HOME (the directory holding this file);
+# `~` expands. An environment variable of the same name (EXO_EXPORTS,
+# EXO_UPSTREAM_VAULT, …) wins over the file, so CI can repoint a path without
+# editing anything the laptop owns.
+
+[owner]
+# Who the record is about. `name` and `possessive` are prose, used by the brief.
+name = "Ada Lovelace"
+possessive = "her"
+# `voice` is the attribution label on any span you wrote yourself, and it is
+# STORED IN EVERY ATOM'S ID. Choose it once. Changing it later re-mints the
+# whole derived tier and every reader will see a life's worth of "new" rows.
+voice = "ada"
+
+[blog]
+# Only if you publish. {slug} is substituted with each post's frontmatter slug —
+# whatever your site actually resolves permalinks against. Leave the whole
+# section out and post rows simply carry no url.
+url_template = "https://example.com/posts/{slug}/"
+
+[paths]
+# Where this instance physically keeps its inputs. The defaults shown are what
+# `exo init` creates; everything under raw/ is gitignored.
+exports           = "raw/exports"            # Last.fm / Letterboxd / Goodreads / Untappd dumps
+posts             = "raw/posts"              # a mirror of your published markdown
+vault             = "raw/vault"              # a mirror of your notes
+drafts            = "raw/drafts"
+inventory         = "raw/inventory"          # collections: records, books, games
+projects_snapshot = "raw/projects.json"      # written by `exo scan-projects`
+downloads         = "~/Downloads"            # where chat exports land before import
+
+[upstream]
+# Sources another system owns, which `exo sync-raw` mirrors into [paths] above
+# with rsync --delete. Omit any you do not have: an unconfigured upstream is
+# skipped, and a configured-but-absent one is skipped too, because a viewer must
+# never be able to fail an ingest.
+posts = "/path/to/your-blog/_posts"
+vault = "/path/to/your-notes"
+
+[vault]
+# Folders whose notes are ABOUT you by default, before first-person density
+# flips an individual span. Stored in every atom's facet, so it is in the id:
+# set it once, like owner.voice.
+about_me_folders = ["Journal"]
+
+[projects]
+# The workshop (ADR-0011): your own repos, as a source.
+root      = "~/code"
+deny      = ["node_modules"]   # not a privacy list — dirs holding no authored work
+max_depth = 2

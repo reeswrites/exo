@@ -1,0 +1,37 @@
+{
+  "the-analytical-engine-film": {
+    "title": "The Analytical Engine",
+    "source": "film",
+    "year": "2024",
+    "rating": "4",
+    "draft": "It is a film about a machine that never got built, and it is smart enough to know that the interesting part is the arguing rather than the brass. The middle act sags because it wants a villain and there wasn't one; the last twenty minutes recover it completely."
+  },
+  "second-order": {
+    "title": "Second Order",
+    "source": "tv",
+    "year": "2025",
+    "rating": "5",
+    "draft": "The only show I have seen that treats a research group as a workplace with politics rather than as a montage. Nobody has a breakthrough in the shower. People are wrong for six episodes and then slightly less wrong, which is what it is actually like."
+  },
+  "the-quiet-instrument": {
+    "title": "The Quiet Instrument",
+    "source": "book",
+    "year": "2023",
+    "rating": "4",
+    "draft": "A history of measurement that keeps its nerve and refuses to make every chapter about a genius. The chapter on failed standards is worth the whole book: it is the only place I have read a serious account of what happens when a unit is agreed on and then quietly ignored."
+  },
+  "hollow-orbit": {
+    "title": "Hollow Orbit",
+    "source": "album",
+    "year": "2026",
+    "rating": "3",
+    "draft": "Three enormous songs and four that exist to make the record long enough to be an album. I keep going back for the second track and skipping most of what surrounds it, which is a verdict on the sequencing rather than on the band."
+  },
+  "riverstone": {
+    "title": "Riverstone",
+    "source": "book",
+    "year": "2021",
+    "rating": "2",
+    "draft": "Beautifully written and about nothing. I finished it out of stubbornness and could not tell you what happened in the second half."
+  }
+}

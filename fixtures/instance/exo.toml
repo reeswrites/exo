@@ -1,0 +1,57 @@
+# The fixture instance — entirely synthetic, and the public CI's only input.
+#
+# Nothing here describes a real person. Ada Lovelace is the invented owner, the
+# blog is example.com, and every scrobble, film, note and repo below was made up
+# for this file. If you are reading this to learn what an instance looks like,
+# copy exo.example.toml instead — it is documented; this one is data.
+
+[owner]
+name = "Ada Lovelace"
+possessive = "her"
+# Stored in every atom id. Chosen once, never edited.
+voice = "ada"
+
+[blog]
+url_template = "https://example.com/posts/{slug}/"
+
+[paths]
+# Everything the fixture holds is colocated under this directory. No absolute
+# paths, so the instance runs wherever the repo is checked out.
+exports           = "raw/exports"
+posts             = "raw/posts"
+vault             = "raw/vault"
+drafts            = "raw/drafts"
+inventory         = "raw/inventory"
+taste_engine      = "raw/taste-engine"
+media_embeddings  = "raw/media_embeddings.json"
+projects_snapshot = "raw/projects.json"
+downloads         = "raw/downloads"
+
+[upstream]
+# The fixture has NO upstreams: raw/ is the whole truth and `exo sync-raw` must
+# mirror nothing. These point at a directory that does not exist, which is what
+# makes sync_raw skip them.
+#
+# Omitting this section entirely does NOT do that. config._path falls back to
+# "", Path("") is Path("."), and a relative path resolves against the instance
+# root — so every upstream would resolve to the instance itself, which exists,
+# and `exo rebuild` would rsync --delete the whole instance into raw/posts,
+# raw/vault, raw/drafts and raw/taste-engine. Naming an absent path is the only
+# way an instance can say "I have no upstream" to the engine as it stands.
+posts        = "no-upstream/posts"
+vault        = "no-upstream/vault"
+inventory    = "no-upstream/inventory"
+drafts       = "no-upstream/drafts"
+taste_engine = "no-upstream/taste-engine"
+
+[projects]
+# The workshop is read from raw/projects.json (hand-written here), never scanned,
+# so this root only has to be somewhere `exo scan-projects` would find nothing.
+root      = "no-workshop"
+deny      = ["node_modules"]
+max_depth = 2
+
+[vault]
+# Folders whose notes are ABOUT the owner by default, before first-person
+# density flips an individual span. Stored in every atom's facet, so in its id.
+about_me_folders = ["Journaling"]

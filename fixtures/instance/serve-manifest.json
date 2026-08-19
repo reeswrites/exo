@@ -1,0 +1,96 @@
+{
+  "_doc": [
+    "Publication policy for `exo publish` (ADR-0005), for the SYNTHETIC fixture",
+    "instance. Fail-closed: anything not listed here is not published, and its",
+    "appearance FAILS the build rather than defaulting to serve.",
+    "",
+    "Values: 'serve' = copied to zones/_serve/ and reachable by a remote read",
+    "surface. 'hold' = never leaves this machine.",
+    "",
+    "Held note folders propagate: their atoms and both vector tables are removed",
+    "too, because t2_atom carries note text verbatim. This fixture deliberately",
+    "contains something in every held category, so the guard has real work to do."
+  ],
+  "zones": {
+    "t0_music": "serve",
+    "t0_book": "serve",
+    "t0_film": "serve",
+    "t0_beer": "serve",
+    "t0_tv": "serve",
+    "t0_raindrop": "serve",
+    "t0_meal_event": "serve",
+    "t0_meal_rating": "serve",
+    "t0_chat_topic": "serve",
+    "t0_chat": "serve",
+    "t1_notes": "serve",
+    "t1_open_thread": "serve",
+    "t1_verdicts": "serve",
+    "t1_visits": "serve",
+    "t1_film_review": "serve",
+    "t1_collection": "serve",
+    "t1_recipe": "serve",
+    "t1_post": "serve",
+    "t1_draft": "serve",
+    "t1_item": "serve",
+    "t1_item_event": "serve",
+    "t1_project": "serve",
+    "t1_project_commit": "serve",
+    "t1_project_doc": "serve",
+    "t1_project_open": "serve",
+    "t2_atom": "serve",
+    "t2_atom_vec": "serve",
+    "t2_note_vec": "serve",
+    "t2_post_vec": "serve",
+    "t2_affinity": "serve",
+    "rows": "hold",
+    "cache_embed": "hold",
+    "cache_open_questions": "hold"
+  },
+  "zone_notes": {
+    "t0_chat": "Declared, but this fixture never runs `exo chatindex`, so the zone is not built and publish skips it with a message. Kept here on purpose: a declared-but-unbuilt zone is a state the engine has to survive, and the fixture should exercise it.",
+    "rows": "Cross-zone union — would bypass every per-zone decision in this file.",
+    "cache_embed": "The content-addressed vector cache. Machine output about machine output; no reader.",
+    "cache_open_questions": "A view over t1_open_thread under legacy column names. The canonical zone already serves; publishing both would ship the same questions twice.",
+    "t1_post": "The one zone where serve is not a judgement: every row is already published at example.com, and each carries its live URL so an answer can link rather than paraphrase.",
+    "t1_project_doc": "README / CONTEXT / ADR prose from the workshop snapshot. Prose and metadata only — no source code is captured at any layer.",
+    "t2_affinity": "Published without `score`: that column blends plays with note mentions using a weight, and the read surface ranks by relevance, never by preference."
+  },
+  "note_folders": {
+    "Field Notes": "serve",
+    "Reading": "serve",
+    "Workshop": "serve",
+    "Essays": "serve",
+    "Journaling": "hold",
+    "": "hold"
+  },
+  "folder_notes": {
+    "Journaling": "The daily entries. First-person, unfinished, and the reason the folder axis exists.",
+    "": "Unfiled, including notes promoted out of conversation. No decision means held."
+  },
+  "path_zones": {
+    "raw/import": "serve",
+    "raw/daily": "hold",
+    "raw/chat-promoted": "hold",
+    "refined/shared": "serve",
+    "refined/unshared": "hold"
+  },
+  "path_zone_notes": {
+    "_axis": "Gradient position, independent of note_folders. A note publishes only if BOTH axes say serve.",
+    "refined/unshared": "Private prose that was worked on but never shared. Never leaves.",
+    "raw/chat-promoted": "Verbatim spans promoted out of a conversation. Held until deliberately widened.",
+    "raw/daily": "Freeform per-day capture; the same character as the held Journaling folder.",
+    "refined/shared": "Essays that also exist on the blog, so serving them exposes nothing new."
+  },
+  "chat_topics": {
+    "_doc": "t0_chat_topic and t0_chat are windowed together, and titles named here never leave.",
+    "window_days": 90,
+    "_window_doc": "A conversation older than this is not published. The window is applied to both chat tables, not just the topic list.",
+    "hold_titles": [
+      "Working out why I keep putting off the same message"
+    ],
+    "_hold_doc": "Titles leak on their own. This one names a private matter, so the topic row and every turn under it are absent from the projection rather than merely unreturned."
+  },
+  "sensitive_rows": {
+    "_doc": "Row-level decisions inside an otherwise-served zone. This fixture has none; the key is kept so the shape is visible."
+  }
+}

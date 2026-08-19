@@ -1,0 +1,17 @@
+[
+  {"name": "Copper Morning", "maker": "Verdigris Perfumes", "type": "Eau de parfum",
+   "top_notes": "bergamot, green mandarin", "heart_notes": "iris, tea",
+   "base_notes": "cedar, ambrette",
+   "my_thoughts": "Wears like a clean morning and disappears after three hours, which I have decided to forgive because the first thirty minutes are the best thirty minutes I own.",
+   "profile": "https://example.com/fragrance/copper-morning"},
+  {"name": "Salt Flat", "maker": "Low Tide Atelier", "type": "Eau de toilette",
+   "top_notes": "sea salt, grapefruit", "heart_notes": "driftwood",
+   "base_notes": "vetiver, musk",
+   "my_thoughts": "Bought it on holiday and it only works on holiday. At home it smells like a hotel corridor, which is a lesson about buying anything in a good mood.",
+   "profile": "https://example.com/fragrance/salt-flat"},
+  {"name": "Patina", "maker": "Ferrymen Apothecary", "type": "Extrait",
+   "top_notes": "black pepper", "heart_notes": "leather, incense",
+   "base_notes": "oud, labdanum",
+   "my_thoughts": "Far too much for a Tuesday and exactly right for a cold night out. Two sprays is a costume; one is a decision.",
+   "profile": "https://example.com/fragrance/patina"}
+]

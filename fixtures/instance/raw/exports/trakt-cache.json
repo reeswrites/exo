@@ -1,0 +1,388 @@
+{
+ "shows": [
+  {
+   "plays": 16,
+   "last_watched_at": "2026-08-10T21:30:00.000Z",
+   "show": {
+    "title": "Second Order",
+    "year": 2025,
+    "ids": {
+     "trakt": 501,
+     "slug": "second-order",
+     "imdb": "tt5010001"
+    }
+   },
+   "seasons": [
+    {
+     "number": 1,
+     "episodes": [
+      {
+       "number": 1,
+       "plays": 1
+      },
+      {
+       "number": 2,
+       "plays": 1
+      },
+      {
+       "number": 3,
+       "plays": 1
+      },
+      {
+       "number": 4,
+       "plays": 1
+      },
+      {
+       "number": 5,
+       "plays": 1
+      },
+      {
+       "number": 6,
+       "plays": 1
+      },
+      {
+       "number": 7,
+       "plays": 1
+      },
+      {
+       "number": 8,
+       "plays": 1
+      }
+     ]
+    },
+    {
+     "number": 2,
+     "episodes": [
+      {
+       "number": 1,
+       "plays": 1
+      },
+      {
+       "number": 2,
+       "plays": 1
+      },
+      {
+       "number": 3,
+       "plays": 1
+      },
+      {
+       "number": 4,
+       "plays": 1
+      },
+      {
+       "number": 5,
+       "plays": 1
+      },
+      {
+       "number": 6,
+       "plays": 1
+      },
+      {
+       "number": 7,
+       "plays": 1
+      },
+      {
+       "number": 8,
+       "plays": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "plays": 6,
+   "last_watched_at": "2026-06-27T22:05:00.000Z",
+   "show": {
+    "title": "The Difference Engine",
+    "year": 2023,
+    "ids": {
+     "trakt": 502,
+     "slug": "the-difference-engine",
+     "imdb": "tt5010002"
+    }
+   },
+   "seasons": [
+    {
+     "number": 1,
+     "episodes": [
+      {
+       "number": 1,
+       "plays": 1
+      },
+      {
+       "number": 2,
+       "plays": 1
+      },
+      {
+       "number": 3,
+       "plays": 1
+      },
+      {
+       "number": 4,
+       "plays": 1
+      },
+      {
+       "number": 5,
+       "plays": 1
+      },
+      {
+       "number": 6,
+       "plays": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "plays": 28,
+   "last_watched_at": "2026-04-02T20:10:00.000Z",
+   "show": {
+    "title": "Harbourside",
+    "year": 2019,
+    "ids": {
+     "trakt": 503,
+     "slug": "harbourside",
+     "imdb": "tt5010003"
+    }
+   },
+   "seasons": [
+    {
+     "number": 1,
+     "episodes": [
+      {
+       "number": 1,
+       "plays": 1
+      },
+      {
+       "number": 2,
+       "plays": 1
+      },
+      {
+       "number": 3,
+       "plays": 1
+      },
+      {
+       "number": 4,
+       "plays": 1
+      },
+      {
+       "number": 5,
+       "plays": 1
+      },
+      {
+       "number": 6,
+       "plays": 1
+      },
+      {
+       "number": 7,
+       "plays": 1
+      },
+      {
+       "number": 8,
+       "plays": 1
+      },
+      {
+       "number": 9,
+       "plays": 1
+      },
+      {
+       "number": 10,
+       "plays": 1
+      }
+     ]
+    },
+    {
+     "number": 2,
+     "episodes": [
+      {
+       "number": 1,
+       "plays": 1
+      },
+      {
+       "number": 2,
+       "plays": 1
+      },
+      {
+       "number": 3,
+       "plays": 1
+      },
+      {
+       "number": 4,
+       "plays": 1
+      },
+      {
+       "number": 5,
+       "plays": 1
+      },
+      {
+       "number": 6,
+       "plays": 1
+      },
+      {
+       "number": 7,
+       "plays": 1
+      },
+      {
+       "number": 8,
+       "plays": 1
+      },
+      {
+       "number": 9,
+       "plays": 1
+      },
+      {
+       "number": 10,
+       "plays": 1
+      }
+     ]
+    },
+    {
+     "number": 3,
+     "episodes": [
+      {
+       "number": 1,
+       "plays": 1
+      },
+      {
+       "number": 2,
+       "plays": 1
+      },
+      {
+       "number": 3,
+       "plays": 1
+      },
+      {
+       "number": 4,
+       "plays": 1
+      },
+      {
+       "number": 5,
+       "plays": 1
+      },
+      {
+       "number": 6,
+       "plays": 1
+      },
+      {
+       "number": 7,
+       "plays": 1
+      },
+      {
+       "number": 8,
+       "plays": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "plays": 4,
+   "last_watched_at": "2026-02-15T19:00:00.000Z",
+   "show": {
+    "title": "Field Recordings",
+    "year": 2021,
+    "ids": {
+     "trakt": 504,
+     "slug": "field-recordings",
+     "imdb": "tt5010004"
+    }
+   },
+   "seasons": [
+    {
+     "number": 1,
+     "episodes": [
+      {
+       "number": 1,
+       "plays": 1
+      },
+      {
+       "number": 2,
+       "plays": 1
+      },
+      {
+       "number": 3,
+       "plays": 1
+      },
+      {
+       "number": 4,
+       "plays": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "plays": 12,
+   "last_watched_at": "2026-07-19T21:00:00.000Z",
+   "show": {
+    "title": "Nine Bridges",
+    "year": 2016,
+    "ids": {
+     "trakt": 505,
+     "slug": "nine-bridges-tv",
+     "imdb": "tt5010005"
+    }
+   },
+   "seasons": [
+    {
+     "number": 1,
+     "episodes": [
+      {
+       "number": 1,
+       "plays": 1
+      },
+      {
+       "number": 2,
+       "plays": 1
+      },
+      {
+       "number": 3,
+       "plays": 1
+      },
+      {
+       "number": 4,
+       "plays": 1
+      },
+      {
+       "number": 5,
+       "plays": 1
+      },
+      {
+       "number": 6,
+       "plays": 1
+      }
+     ]
+    },
+    {
+     "number": 2,
+     "episodes": [
+      {
+       "number": 1,
+       "plays": 1
+      },
+      {
+       "number": 2,
+       "plays": 1
+      },
+      {
+       "number": 3,
+       "plays": 1
+      },
+      {
+       "number": 4,
+       "plays": 1
+      },
+      {
+       "number": 5,
+       "plays": 1
+      },
+      {
+       "number": 6,
+       "plays": 1
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

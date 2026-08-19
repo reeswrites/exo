@@ -1,0 +1,96 @@
+{
+  "_doc": [
+    "Publication policy for `wh publish` (ADR-0005). Fail-closed: anything not",
+    "listed here is NOT published, and its appearance FAILS the build rather than",
+    "defaulting to serve. Adding a zone or a note folder is a deliberate act.",
+    "",
+    "Values: 'serve' = copied to zones/_serve/ and reachable by the remote read",
+    "surface. 'hold' = never leaves this machine.",
+    "",
+    "Held note folders propagate: their atoms and both vector tables are removed",
+    "too, because t2_atom carries note text verbatim.",
+    "",
+    "This is the EXAMPLE. Copy to serve-manifest.json and decide every line",
+    "yourself \u2014 an inherited publication policy is not a decision, and this file",
+    "is the only thing standing between your record and the internet."
+  ],
+  "zones": {
+    "t0_music": "serve",
+    "t0_book": "serve",
+    "t0_film": "serve",
+    "t0_beer": "serve",
+    "t0_raindrop": "serve",
+    "t0_meal_event": "serve",
+    "t0_meal_rating": "serve",
+    "t0_chat": "serve",
+    "t1_notes": "serve",
+    "t1_open_thread": "serve",
+    "t1_verdicts": "serve",
+    "t1_visits": "serve",
+    "t1_recipe": "serve",
+    "t1_item": "serve",
+    "t1_item_event": "serve",
+    "t2_affinity": "serve",
+    "t2_atom": "serve",
+    "t2_atom_vec": "serve",
+    "t2_note_vec": "serve",
+    "rows": "hold",
+    "cache_captures": "hold",
+    "cache_collision": "hold",
+    "cache_deck": "hold",
+    "cache_embed": "hold",
+    "cache_gaps": "hold",
+    "cache_links": "hold",
+    "cache_maps": "hold",
+    "cache_ondeck": "hold",
+    "cache_open_questions": "hold",
+    "cache_returns": "hold",
+    "cache_thread_candidates": "hold",
+    "cache_thread_summary": "hold",
+    "t1_film_review": "serve",
+    "t1_collection": "serve",
+    "t0_chat_topic": "serve",
+    "t0_tv": "serve",
+    "t1_project": "serve",
+    "t1_project_commit": "serve",
+    "t1_project_doc": "serve",
+    "t1_project_open": "serve",
+    "t1_post": "serve",
+    "t2_post_vec": "serve",
+    "t1_draft": "serve"
+  },
+  "zone_notes": {
+    "t0_chat": "Your own turns only. The assistant's half is another model's output, not your words.",
+    "rows": "The cross-zone provenance union. Held: it is a join surface, not an answer."
+  },
+  "note_folders": {
+    "_doc": "The folder axis. Every folder your vault contains must appear here or the build fails \u2014 that is the point: a new folder is a decision, not a default.",
+    "Notes": "serve",
+    "Journal": "hold",
+    "": "hold"
+  },
+  "path_zones": {
+    "raw/import": "serve",
+    "raw/chat-promoted": "hold",
+    "raw/daily": "hold",
+    "refined/unshared": "hold",
+    "refined/shared": "serve"
+  },
+  "path_zone_notes": {
+    "_axis": "Gradient position, independent of note_folders. A note publishes only if BOTH axes say serve."
+  },
+  "folder_notes": {
+    "Journal": "The clearest case of a folder that must never leave. Yours will differ.",
+    "": "The unfiled drawer (ADR-0009). A note with no folder is a note nobody decided about, and an undecided note is exactly the kind that should not leave. Held by default; change it deliberately."
+  },
+  "sensitive_rows": {
+    "_doc": "Row-level decisions inside an otherwise-served zone. Explicit, because the default for medical data should never be inherited from a zone."
+  },
+  "chat_topics": {
+    "_doc": "Conversation TITLES and volume only \u2014 t0_chat itself stays held. Titles are auto-generated from content, so a private conversation gets a revealing title; these two rules are the review, and both are deliberate rather than pattern-matched.",
+    "window_days": 90,
+    "_window_doc": "Recency is the point: an assistant needs what he is working through now. Older topics carry the same exposure with far less value.",
+    "_hold_doc": "Named explicitly, not matched. A regex over titles would hold 'Therapy speak as emptiness' (criticism he already publishes as a note) and miss anything private with a bland title \u2014 the same argument ADR-0009 made for notes.",
+    "hold_titles": []
+  }
+}

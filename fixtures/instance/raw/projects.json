@@ -1,0 +1,376 @@
+{
+ "generated_at": "2026-08-19T06:00:00Z",
+ "root": "workshop",
+ "repos": [
+  {
+   "slug": "lantern",
+   "name": "lantern",
+   "group": "",
+   "github": "https://example.com/ada/lantern",
+   "remote": "git@example.com:ada/lantern.git",
+   "branch": "main",
+   "status": "active",
+   "description": "A personal record that can answer questions about itself.",
+   "languages": "Python 62, SQL 21, Markdown 17",
+   "commit_count": 12,
+   "file_count": 12,
+   "doc_count": 2,
+   "first_commit": "2026-06-19T02:00:00+00:00",
+   "last_commit": "2026-08-18T00:00:00+00:00",
+   "days_idle": 1,
+   "dirty": 2,
+   "untracked": 1,
+   "unpushed": 0,
+   "path": "workshop/lantern"
+  },
+  {
+   "slug": "tidewrack",
+   "name": "tidewrack",
+   "group": "",
+   "github": "https://example.com/ada/tidewrack",
+   "remote": "git@example.com:ada/tidewrack.git",
+   "branch": "main",
+   "status": "active",
+   "description": "Near-duplicate detection for prose, tuned for short passages.",
+   "languages": "Python 88, Markdown 12",
+   "commit_count": 6,
+   "file_count": 19,
+   "doc_count": 2,
+   "first_commit": "2026-07-06T17:00:00+00:00",
+   "last_commit": "2026-08-13T00:00:00+00:00",
+   "days_idle": 6,
+   "dirty": 0,
+   "untracked": 0,
+   "unpushed": 2,
+   "path": "workshop/tidewrack"
+  },
+  {
+   "slug": "hiatus/ostrander",
+   "name": "ostrander",
+   "group": "hiatus",
+   "github": "https://example.com/ada/ostrander",
+   "remote": "git@example.com:ada/ostrander.git",
+   "branch": "main",
+   "status": "dormant",
+   "description": "A two-pass reading log. Shelved until I know what I want from it.",
+   "languages": "Ruby 71, Markdown 29",
+   "commit_count": 3,
+   "file_count": 26,
+   "doc_count": 2,
+   "first_commit": "2026-01-05T08:00:00+00:00",
+   "last_commit": "2026-01-17T00:00:00+00:00",
+   "days_idle": 214,
+   "dirty": 0,
+   "untracked": 0,
+   "unpushed": 0,
+   "path": "workshop/hiatus/ostrander"
+  },
+  {
+   "slug": "ferrymen",
+   "name": "ferrymen",
+   "group": "",
+   "github": "https://example.com/ada/ferrymen",
+   "remote": "git@example.com:ada/ferrymen.git",
+   "branch": "main",
+   "status": "warm",
+   "description": "A publication step that refuses rather than guesses.",
+   "languages": "Python 79, Shell 12, Markdown 9",
+   "commit_count": 7,
+   "file_count": 33,
+   "doc_count": 2,
+   "first_commit": "2026-07-19T01:00:00+00:00",
+   "last_commit": "2026-08-07T00:00:00+00:00",
+   "days_idle": 12,
+   "dirty": 1,
+   "untracked": 0,
+   "unpushed": 1,
+   "path": "workshop/ferrymen"
+  }
+ ],
+ "commits": [
+  {
+   "repo": "lantern",
+   "sha": "000db5fd260bd7c059e3159c15f4d0f891c2921cf86",
+   "subject": "carve the atomiser out of the indexer",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-06-19T02:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "001ab6096f27ce7273b20b142e5e3d7b2bc48c7c06e",
+   "subject": "stop the cache re-embedding unchanged spans",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-06-24T19:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "0020ba9b5e189760a03cf63836108ef55c66c13bee7",
+   "subject": "fail loudly when a source is absent",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-06-25T20:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "00356f6cff281cafa5f11081e620f87ad44b7b3db9c",
+   "subject": "write the shrink guard",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-06-29T14:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "004d346896ad8b7dfb4bb535443f3b9a87d79dfe4fa",
+   "subject": "guard: refuse rather than publish a smaller corpus",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-04T02:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "005fa275d8339c72a34194855fa112a158ded3c85d6",
+   "subject": "notes on the two axes",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-12T08:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "006dc4c524f0cfe8eecd7336dd4477e6b20bca40bae",
+   "subject": "drop the second copy of the ledger",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-17T10:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "007ccab25513072cf3067933b29456df873e9fbf697",
+   "subject": "one envelope for every row",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-22T11:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "008de487665f4023e0550f1d4828b6abe601bbb1f46",
+   "subject": "hash the origin ref before it leaves",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-27T14:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "009e1c8b73d406456b0d2c80bd8b648bf4ebad561e1",
+   "subject": "content guard: shingle overlap at 30%",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-08-05T22:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "01054bc26259eefd7b75c2fdbfee260cd4c04bf7da2",
+   "subject": "ADR-0002: the item spine",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-08-10T17:00:00+00:00"
+  },
+  {
+   "repo": "lantern",
+   "sha": "011c356ad401281e00668e74b20bffa5b561e87c877",
+   "subject": "fold status from the log, never store it",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-08-18T00:00:00+00:00"
+  },
+  {
+   "repo": "tidewrack",
+   "sha": "10074c99c5052be75eb1d10dabcd113d25b3587eea7",
+   "subject": "first pass at the shingler",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-06T17:00:00+00:00"
+  },
+  {
+   "repo": "tidewrack",
+   "sha": "10108f6718b884b7fec4a45608141a345eb76b0e043",
+   "subject": "handle the empty-input case",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-12T22:00:00+00:00"
+  },
+  {
+   "repo": "tidewrack",
+   "sha": "102d7141755c96bbe5b2991b8c19db58f7a940ea5e5",
+   "subject": "rewrite the boundary rule to split on authorship flips",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-22T16:00:00+00:00"
+  },
+  {
+   "repo": "tidewrack",
+   "sha": "103dc1c8e3b87bda05543e3882fbeebd2f3c017acc4",
+   "subject": "cap the embed text at 2000 chars",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-28T04:00:00+00:00"
+  },
+  {
+   "repo": "tidewrack",
+   "sha": "104c4bcecbe3a30a60269dfcf0f97aa1145c2b5889b",
+   "subject": "measure: batch of 32 is the sweet spot",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-08-04T13:00:00+00:00"
+  },
+  {
+   "repo": "tidewrack",
+   "sha": "1054bc29b55ae66241d03ce6a92941269f4ab81e33b",
+   "subject": "README: what this is not",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-08-13T00:00:00+00:00"
+  },
+  {
+   "repo": "hiatus/ostrander",
+   "sha": "20029d6c276f0d7c9b1c36f52ebd093cc83ccdfee00",
+   "subject": "import the old notebook",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-01-05T08:00:00+00:00"
+  },
+  {
+   "repo": "hiatus/ostrander",
+   "sha": "201271d9e94d7a548ce39a1e135f467d14a10024aac",
+   "subject": "split the reading log out of the diary",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-01-07T21:00:00+00:00"
+  },
+  {
+   "repo": "hiatus/ostrander",
+   "sha": "2029f23aa086a57e0b24b6f88991c3f829f9d0978ee",
+   "subject": "shelve this until the notation question is settled",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-01-17T00:00:00+00:00"
+  },
+  {
+   "repo": "ferrymen",
+   "sha": "300aa97feecd7dd1e61782792e19826c53c353c96cf",
+   "subject": "scaffold",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-19T01:00:00+00:00"
+  },
+  {
+   "repo": "ferrymen",
+   "sha": "301f2bd5d775dc708b237071b53c9a3ea5e85f683b3",
+   "subject": "read the manifest before doing anything else",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-21T18:00:00+00:00"
+  },
+  {
+   "repo": "ferrymen",
+   "sha": "3026bc15cad8de174b046c5667c4771a58dff8e860f",
+   "subject": "fail closed on an undeclared zone",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-24T11:00:00+00:00"
+  },
+  {
+   "repo": "ferrymen",
+   "sha": "3034b78fc64762399db073454d89c59c8c90a34f9fc",
+   "subject": "receipt: say what was held and why",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-28T04:00:00+00:00"
+  },
+  {
+   "repo": "ferrymen",
+   "sha": "3043e8f370d1ece3bf97e8f6578479ae70629f73b45",
+   "subject": "swap the projection in atomically",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-07-31T06:00:00+00:00"
+  },
+  {
+   "repo": "ferrymen",
+   "sha": "305e830d0fe96c246a170f888a4c4e9b69595379537",
+   "subject": "keep the previous projection until the swap lands",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-08-04T00:00:00+00:00"
+  },
+  {
+   "repo": "ferrymen",
+   "sha": "306f050e28d7a730635a22f61e71149fa9a78ad6b60",
+   "subject": "print per-contributor counts, always",
+   "committed_by": "Ada Lovelace",
+   "date": "2026-08-07T00:00:00+00:00"
+  }
+ ],
+ "docs": [
+  {
+   "repo": "lantern",
+   "path": "README.md",
+   "kind": "readme",
+   "title": "lantern",
+   "body": "# lantern\n\nA personal record that can answer questions about itself.\n\nThe premise is that an archive and a record are different objects. An archive keeps; a record carries the shape of its own accumulation, so it can be asked when something arrived, what it arrived from, and whether anyone has looked at it since.\n"
+  },
+  {
+   "repo": "lantern",
+   "path": "docs/adr/0001-one-store-write-scoped.md",
+   "kind": "adr",
+   "title": "ADR-0001 \u2014 One store, divided by who may write",
+   "body": "# ADR-0001 \u2014 One store, divided by who may write\n\nStatus: accepted\n\nDividing a personal store by what the data is produces categories that stop being true within a year. Dividing it by who may write produces three that have held: what the world recorded about you, what you wrote, and what a machine concluded. The third may never be an input to itself, which is what makes the whole thing rebuildable.\n"
+  },
+  {
+   "repo": "tidewrack",
+   "path": "README.md",
+   "kind": "readme",
+   "title": "tidewrack",
+   "body": "# tidewrack\n\nNear-duplicate detection for prose, tuned for short passages.\n\nFiling is not containment. The same paragraph turns up under a second name often enough that any system deciding what to publish by folder alone will eventually publish the thing it meant to withhold.\n"
+  },
+  {
+   "repo": "ferrymen",
+   "path": "CONTEXT.md",
+   "kind": "context",
+   "title": "CONTEXT",
+   "body": "# CONTEXT\n\nVocabulary for the publication step.\n\n**serve** \u2014 a remote reader may see it. **hold** \u2014 it never leaves. There is no third state and no default: an undeclared thing fails the build rather than guessing, so nothing is published by being forgotten.\n"
+  },
+  {
+   "repo": "ferrymen",
+   "path": "docs/plan.md",
+   "kind": "plan",
+   "title": "Plan",
+   "body": "# Plan\n\n- [x] refuse on an undeclared zone\n- [x] write a receipt\n- [ ] carry the previous projection across a failed build\n- [ ] say when a zone is declared but not yet built\n"
+  },
+  {
+   "repo": "ostrander",
+   "path": "README.md",
+   "kind": "readme",
+   "title": "ostrander",
+   "body": "# ostrander\n\nA two-pass reading log. Shelved until I know what I want from it.\n\nThe first pass builds a map and is not allowed to argue. The second pass is where the disagreements go. The software never captured that distinction, which is why it is here and not in use.\n"
+  }
+ ],
+ "open_work": [
+  {
+   "repo": "lantern",
+   "kind": "marker",
+   "path": "lantern/index.py",
+   "line": 88,
+   "text": "TODO: the ledger should survive a rebuild, not be rebuilt with it"
+  },
+  {
+   "repo": "lantern",
+   "kind": "marker",
+   "path": "lantern/embed.py",
+   "line": 41,
+   "text": "FIXME: a batch pads to its longest text; cap upstream instead"
+  },
+  {
+   "repo": "lantern",
+   "kind": "uncommitted",
+   "path": "lantern/guard.py",
+   "line": 0,
+   "text": "modified, not committed"
+  },
+  {
+   "repo": "ferrymen",
+   "kind": "unchecked",
+   "path": "docs/plan.md",
+   "line": 5,
+   "text": "carry the previous projection across a failed build"
+  },
+  {
+   "repo": "ferrymen",
+   "kind": "unchecked",
+   "path": "docs/plan.md",
+   "line": 6,
+   "text": "say when a zone is declared but not yet built"
+  },
+  {
+   "repo": "tidewrack",
+   "kind": "marker",
+   "path": "tidewrack/shingle.py",
+   "line": 17,
+   "text": "TODO: 12 words is a guess; measure it on real prose"
+  }
+ ]
+}

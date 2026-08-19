@@ -1,0 +1,42 @@
+{
+ "checkins": [
+  {
+   "beer_name": "Tidewrack",
+   "brewery_name": "Low Tide Brewery",
+   "beer_type": "Porter - Baltic",
+   "beer_abv": 7.1,
+   "rating_score": 4.25,
+   "venue_name": "Sesame House",
+   "venue_city": "Ashfield",
+   "venue_state": "XX",
+   "venue_country": "Nowhere",
+   "venue_lat": 51.3,
+   "venue_lng": -1.3,
+   "brewery_city": "Ashfield",
+   "brewery_state": "XX",
+   "brewery_country": "Nowhere",
+   "comment": "Cold night beer.",
+   "created_at": "2026-07-14 21:02:00",
+   "checkin_url": "https://example.com/c/5601"
+  },
+  {
+   "beer_name": "Apogee",
+   "brewery_name": "Tessellate Brewing",
+   "beer_type": "IPA - Session",
+   "beer_abv": 4.4,
+   "rating_score": 3.75,
+   "venue_name": "Copper Pot",
+   "venue_city": "Ashfield",
+   "venue_state": "XX",
+   "venue_country": "Nowhere",
+   "venue_lat": 51.31,
+   "venue_lng": -1.31,
+   "brewery_city": "Millbrook",
+   "brewery_state": "XX",
+   "brewery_country": "Nowhere",
+   "comment": "",
+   "created_at": "2026-08-03 18:40:00",
+   "checkin_url": "https://example.com/c/5602"
+  }
+ ]
+}

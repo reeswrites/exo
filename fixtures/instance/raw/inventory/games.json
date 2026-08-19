@@ -1,0 +1,12 @@
+[
+  {"name": "Difference", "type": "Board game", "mechanism": "Worker placement",
+   "game_information": "https://example.com/games/difference"},
+  {"name": "Tidewrack", "type": "Board game", "mechanism": "Area control",
+   "game_information": "https://example.com/games/tidewrack"},
+  {"name": "Nine Bridges", "type": "Card game", "mechanism": "Trick taking",
+   "game_information": "https://example.com/games/nine-bridges"},
+  {"name": "Marginalia", "type": "Party game", "mechanism": "Social deduction",
+   "game_information": "https://example.com/games/marginalia"},
+  {"name": "Slow Ascent", "type": "Board game", "mechanism": "Deck building",
+   "game_information": "https://example.com/games/slow-ascent"}
+]

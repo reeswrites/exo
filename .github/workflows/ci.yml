@@ -1,0 +1,55 @@
+# The public engine's CI. It runs the checks that need no data, and nothing else.
+#
+# There are no secrets configured on this repository and this workflow needs
+# none, so a fork's pull request can run everything here and has nothing in
+# scope to exfiltrate. `pull_request_target` would hand a fork this repository's
+# own context and must never appear in this file.
+#
+# What is deliberately NOT here: rebuilding an instance. The tests that need a
+# built record are marked `record` and skip themselves without one (see
+# tests/conftest.py), because the proofs they perform — the wall holding, T2
+# regenerating identically — already run every night against real data in a
+# private instance. A second opinion is not worth a 90MB model download in front
+# of every commit, or a fixture that goes red when it drifts rather than when
+# something breaks.
+#
+# To run the whole suite, including those, point EXO_HOME at a built instance:
+#
+#     EXO_HOME=fixtures/instance uv run exo rebuild
+#     EXO_HOME=fixtures/instance uv run pytest tests/ -q
+#     EXO_HOME=fixtures/instance uv run exo verify
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # First, and on its own, because it is the check this repository exists to
+      # keep passing: the engine must name no instance — no home directory, no
+      # owner, no hostname, no cloud resource id.
+      - name: The engine names no instance
+        run: uv run pytest tests/test_no_personal_strings.py -q
+
+      - name: Tests
+        run: uv run pytest tests/ -q
+
+      # A fresh checkout must be able to scaffold, or the first thing a stranger
+      # does fails. Cheap, and it exercises the packaged templates.
+      - name: exo init produces a usable instance
+        run: |
+          uv run exo init /tmp/ci-instance
+          test -f /tmp/ci-instance/exo.toml
+          test -f /tmp/ci-instance/serve-manifest.json
+          EXO_HOME=/tmp/ci-instance uv run exo views
