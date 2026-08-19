@@ -101,6 +101,27 @@ uv run exo publish --dry-run    # what would leave, and what is held back
 The templates `exo init` copies are [exo/templates/](exo/templates/) — read
 them before you edit the copies.
 
+## Reach it from your phone
+
+The point of the read surface is that the record answers when you are nowhere
+near the machine holding it. [worker/](worker/) is a Cloudflare Worker speaking
+MCP over HTTP — read-only permanently, serving only the publication bundle — and
+[worker/README.md](worker/README.md) walks through standing it up and connecting
+it to [Poke](https://poke.com), the iMessage assistant:
+
+```sh
+cd worker
+cp wrangler.example.toml wrangler.toml       # your database id, your buckets, your name
+npx wrangler d1 create exo                   # + r2 bucket create exo-vectors
+npx wrangler deploy
+npx wrangler secret put AUTH_TOKEN           # openssl rand -hex 32
+```
+
+then publish a bundle into it (`exo publish --cf`, then `import.sh`), and add
+the Worker's URL and that token at
+[poke.com/integrations/new](https://poke.com/integrations/new). Any MCP client
+works the same way — Poke is just the one that reaches you by text message.
+
 Then read [CONTEXT.md](CONTEXT.md) — it is the vocabulary, and the rest of the
 repo assumes it.
 

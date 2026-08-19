@@ -1,0 +1,40 @@
+# Copy to wrangler.toml and fill in. The real file is gitignored: the database
+# id, the bucket names and the owner's details belong to one instance, not to
+# the engine.
+
+name = "exo-read-surface"
+main = "src/index.js"
+compatibility_date = "2026-08-18"
+
+# The tabular projection — one table per served zone, reconciled to the bundle
+# on every import, so tightening serve-manifest.json actually drops tables.
+[[d1_databases]]
+binding = "DB"
+database_name = "exo"
+database_id = "PUT-THE-ID-WRANGLER-PRINTED-HERE"
+
+# vectors.f32 (384 floats per row, loaded whole into the isolate), vectors.json,
+# and brief.md.
+[[r2_buckets]]
+binding = "VECTORS"
+bucket_name = "exo-vectors"
+
+# bge-small-en-v1.5 — the SAME model that produced the stored vectors, so query
+# and corpus share a space. This binding is why Cloudflare rather than a box you
+# rent: it removes the model from the deployment artifact entirely.
+[ai]
+binding = "AI"
+
+# Who this deployment is about. The engine's source names nobody, so these are
+# what put the owner back into the served text.
+#
+# BLOG_URL_TEMPLATE is the one that is not cosmetic: without it a post hit
+# carries no `url` at all, and the right answer about a published post is the
+# link rather than a paraphrase. Leave it out only if you publish nothing.
+[vars]
+OWNER_NAME = "Ada Lovelace"
+OWNER_LABEL = "ada"
+BLOG_URL_TEMPLATE = "https://example.com/posts/{slug}/"
+
+# AUTH_TOKEN is a secret, never a var:
+#   openssl rand -hex 32 | npx wrangler secret put AUTH_TOKEN

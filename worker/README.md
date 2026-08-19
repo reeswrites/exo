@@ -1,13 +1,16 @@
-# warehouse read surface
+# The read surface
 
-Live: `https://warehouse-read-surface.peregrine-rd.workers.dev`
+MCP over HTTP, on Cloudflare Workers. Read-only, permanently (ADR-0006). It
+serves `zones/_serve/cf/` — the publication bundle, which is a physically
+separate copy of the record. Held material is *absent* from it, not filtered at
+read time, so nothing downstream of here can reach what you decided to hold.
 
-MCP over HTTP. Read-only, permanently (ADR-0006). Serves `zones/_serve/cf/`,
-which is a physically separate copy — held material is *absent* here, not
-filtered at read time.
+This is what makes the record reachable from a phone: point an assistant at it
+and it can answer from your own notes, ratings, saves and repos without that
+assistant's vendor ever holding them.
 
 - `src/index.js` — JSON-RPC, auth, the brief resource, the audit and caller logs
-- `src/tools.js` — the 23 tools, and the caps
+- `src/tools.js` — the 28 tools, and the caps
 - `src/search.js` — vector search over `vectors.f32` from R2
 
 Hand-rolled JSON-RPC, no MCP SDK: the surface used here is five methods, and a
@@ -16,15 +19,26 @@ personal.
 
 ## Setup
 
+You need a Cloudflare account with Workers, D1 and R2 enabled. R2 needs turning
+on in the dashboard once; the rest is CLI.
+
+Copy `wrangler.example.toml` to `wrangler.toml` first — it is gitignored,
+because it holds *your* database id and bucket names, which belong to your
+instance rather than to this engine.
+
 ```sh
-npx wrangler d1 create warehouse            # put the id in wrangler.toml
-npx wrangler r2 bucket create warehouse-vectors   # requires R2 enabled in the dashboard
+cp wrangler.example.toml wrangler.toml
+
+npx wrangler d1 create exo                  # put the id it prints into wrangler.toml
+npx wrangler r2 bucket create exo-vectors   # and the bucket name
 npx wrangler deploy                         # the Worker must EXIST before a secret can be set
 npx wrangler secret put AUTH_TOKEN          # openssl rand -hex 32
 ```
 
 A Worker with no `AUTH_TOKEN` rejects every request, so deploying before the
-secret exists is safe — it serves nothing rather than serving openly.
+secret exists is safe — it serves nothing rather than serving openly. Set the
+`[vars]` in `wrangler.toml` too: without `BLOG_URL_TEMPLATE` a post hit carries
+no link, which is most of the point of that zone.
 
 ## Publish data
 
@@ -32,13 +46,15 @@ Both legs of the nightly (`scripts/daily-sync.sh`, `.github/workflows/nightly.ym
 do this for you. By hand:
 
 ```sh
-cd ../ && uv run wh publish --cf                     # builds the bundle
-WRANGLER="npx wrangler" ./scripts/guard-publication.sh warehouse   # refuse a shrunken corpus
-cd zones/_serve/cf && WRANGLER="npx wrangler" ./import.sh warehouse   # reconciles + loads D1
+cd "$EXO_HOME" && uv run exo publish --cf                        # builds the bundle
+WRANGLER="npx wrangler" ./scripts/guard-publication.sh exo       # refuse a shrunken corpus
+cd zones/_serve/cf && WRANGLER="npx wrangler" ./import.sh exo    # reconciles + loads D1
 for f in vectors.f32 vectors.json brief.md; do
-  npx wrangler r2 object put "warehouse-vectors/$f" --file "$f" --remote
+  npx wrangler r2 object put "exo-vectors/$f" --file "$f" --remote
 done
 ```
+
+(`exo` and `exo-vectors` here are the D1 database and R2 bucket you named above.)
 
 `import.sh` reconciles: a table in D1 that is no longer in `served-tables.txt`
 gets dropped, so tightening `serve-manifest.json` actually removes data. Tables
@@ -50,12 +66,25 @@ prefixed `wh_` are protected, which is where the audit log lives.
 npm run deploy
 ```
 
+An instance that keeps its `wrangler.toml` outside this checkout — which is what
+the engine/instance split implies — passes it explicitly instead:
+
+```sh
+npx wrangler deploy --config /path/to/your-instance/worker/wrangler.toml
+```
+
+`main` in that file is resolved relative to the file itself, so point it at this
+repo's `src/index.js`.
+
 ## Test
 
 ```sh
-node test/run.mjs                 # 186 tests, D1/R2/AI stubbed
-node test/verify-embedding-space.mjs https://warehouse-read-surface.peregrine-rd.workers.dev <token>
+EXO_HOME=/path/to/your-instance node test/run.mjs    # 269 tests, D1/R2/AI stubbed
+node test/verify-embedding-space.mjs https://<your-worker>.workers.dev <token>
 ```
+
+`run.mjs` reads the bundle from `$EXO_HOME/zones/_serve/cf`, so publish once
+before running it.
 
 The corpus is embedded by Python bge-small; queries by Workers AI's copy of it.
 Choosing Cloudflare rests on those being one vector space, and `run.mjs` cannot
@@ -66,6 +95,79 @@ cosine 0.9031, not ~1.0 — a pooling or normalisation difference. It does not
 matter: the offset is systematic, so ordering survives (the source atom still
 ranked #1 of 8,446, at 0.9031 vs 0.6464 for second). Which is why the verifier
 tests rank, and why its absolute threshold sits at 0.75.
+
+## Connect it to Poke
+
+[Poke](https://poke.com) is an assistant you talk to over iMessage, and it is
+the reason this surface exists: it puts your own record behind a text message,
+without the assistant's vendor holding any of it.
+
+1. Deploy the Worker and load a bundle, as above. Check it is alive:
+
+   ```sh
+   curl https://<your-worker>.workers.dev/          # -> "exo read surface"
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<your-worker>.workers.dev/ \
+     -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+                                                    # -> 401, because no token was sent
+   ```
+
+   A 401 there is the good answer. A 200 means `AUTH_TOKEN` is unset and the
+   surface is open.
+
+2. Go to [poke.com/integrations/new](https://poke.com/integrations/new) (also
+   reachable from *Settings → Connections*) and fill in three fields:
+
+   | field | value |
+   |---|---|
+   | Name | anything — "Exo" |
+   | MCP Server URL | your Worker's root URL, `https://<your-worker>.workers.dev` |
+   | API Key | the `AUTH_TOKEN` you generated |
+
+   No `/sse` path and no trailing segment: this server speaks JSON-RPC over
+   POST at the root, and it answers on any path.
+
+3. Poke connects and discovers the tools. It sends the key as
+   `Authorization: Bearer <key>`, which is the header this server prefers —
+   though it also accepts `x-api-key`, `api-key` and `x-auth-token`, because
+   clients disagree about where an "API key" belongs and an opaque 401 cannot
+   tell a wrong key from a wrong header.
+
+4. Ask it something only your record knows. Good first messages, because they
+   exercise different halves of the surface:
+
+   - *"read my exo brief"* — the standing context resource, which is what a
+     reader is supposed to load before anything else
+   - *"what have I written about attention?"* — vector search over notes and
+     the spans lifted from them
+   - *"what am I in the middle of writing?"* — drafts, the zone most likely to
+     be empty on a new instance
+
+### If it does not work
+
+- **Every call 401s.** The key is wrong, or `AUTH_TOKEN` was never set. Set it
+  with `npx wrangler secret put AUTH_TOKEN` and re-enter it in Poke — a secret
+  changed in Cloudflare does not propagate to a client that stored the old one.
+- **Poke connects but finds no tools.** It reached the Worker but got no
+  `tools/list` result — usually the URL points at a path that returns the GET
+  banner rather than accepting POST. Use the root URL.
+- **Tools exist but every answer is empty.** The Worker is up and D1 is not
+  loaded. Run the publish steps above and check `import.sh` printed
+  `every table matches the bundle`.
+- **Answers are stale.** The surface serves the last bundle you loaded, and
+  says so: the brief carries its own age. Re-run the publish steps.
+- **You changed the tool descriptions and Poke still uses the old ones.**
+  Re-sync the tool list from Poke's integrations page; discovery is cached.
+
+### What Poke can and cannot do with it
+
+Everything here is read-only, permanently, and not by permission: there is no
+write path in the surface to revoke (ADR-0006). A prompt injected into something
+you saved cannot make it write, and cannot widen what it can see — the bundle
+physically lacks the held material (ADR-0007). Every call is capped at 20 rows
+and 16KB and lands in an audit table.
+
+Poke also sends an `X-Poke-User-Id` header. This surface ignores it: one bundle,
+one owner, one token. If you share the token, you have shared the record.
 
 ## What a client sees
 
