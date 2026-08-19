@@ -147,8 +147,8 @@ BLOG_URL_TEMPLATE = _env("EXO_BLOG_URL_TEMPLATE") or setting("blog", "url_templa
 def post_url(slug: str) -> str:
     """The live URL of a published post, or "" when this instance has no blog.
 
-    ADR-0012: the right answer about a published post is the link, so the
-    template is the one blog fact the engine cannot infer.
+    The right answer about a published post is often the link rather than a
+    paraphrase, so the template is the one blog fact the engine cannot infer.
     """
     return BLOG_URL_TEMPLATE.format(slug=slug) if BLOG_URL_TEMPLATE else ""
 
@@ -162,7 +162,6 @@ POSTS = _path("EXO_POSTS", "paths", "posts", "raw/posts")
 VAULT = _path("EXO_VAULT", "paths", "vault", "raw/vault", "WH_SECOND_BRAIN_DATA")
 DRAFTS = _path("EXO_DRAFTS", "paths", "drafts", "raw/drafts")
 INVENTORY = _path("EXO_INVENTORY", "paths", "inventory", "raw/inventory")
-TASTE_ENGINE_DATA = _path("EXO_TASTE_ENGINE_DATA", "paths", "taste_engine", "raw/taste-engine")
 MEDIA_EMBEDDINGS = _path("EXO_MEDIA_EMBEDDINGS", "paths", "media_embeddings", "raw/media_embeddings.json")
 PROJECTS_SNAPSHOT = _path("EXO_PROJECTS_SNAPSHOT", "paths", "projects_snapshot", "raw/projects.json")
 DOWNLOADS = _path("EXO_DOWNLOADS", "paths", "downloads", "~/Downloads")
@@ -174,9 +173,7 @@ DOWNLOADS = _path("EXO_DOWNLOADS", "paths", "downloads", "~/Downloads")
 
 UPSTREAM_POSTS = _optional("EXO_UPSTREAM_POSTS", "upstream", "posts")
 UPSTREAM_VAULT = _optional("EXO_UPSTREAM_VAULT", "upstream", "vault", "WH_UPSTREAM_SECOND_BRAIN")
-UPSTREAM_INVENTORY = _optional("EXO_UPSTREAM_INVENTORY", "upstream", "inventory")
 UPSTREAM_DRAFTS = _optional("EXO_UPSTREAM_DRAFTS", "upstream", "drafts")
-UPSTREAM_TASTE_ENGINE = _optional("EXO_UPSTREAM_TASTE_ENGINE", "upstream", "taste_engine")
 
 # garden/ is authoring-only — no loader reads it — so it is excluded from the
 # vault sync. Same for the vault's own .git and OS cruft.

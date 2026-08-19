@@ -7,7 +7,8 @@ Status: accepted · 2026-08-19
 This repo is two things wearing one name. It is an *engine* — tier zones, the
 wall, a DuckDB catalog, loaders, a fail-closed publication step, a read-only MCP
 surface — and it is *a life*: 40k scrobbles, 2k notes, a held-folder list that
-names his journaling, eight scrapers that only make sense in Washington DC.
+names one person's journaling, eight scrapers that only make sense in Washington
+DC.
 
 The engine is worth giving away. The premise behind it — that you should own your
 personal context, operational knowledge and memory, so that no platform or model
@@ -35,7 +36,7 @@ recall.
 - Public `exo` — the engine. Package, worker, docs, synthetic fixtures, `exo init`.
 - Private `exo-me` — one person's instance. `raw/`, `items/`, `notes/`,
   `captures/`, `zones/`, `serve-manifest.json`, the nightly workflow, the
-  secrets, the machine paths, the DC scrapers, the ADRs that are about him.
+  secrets, the machine paths, the DC scrapers, the ADRs that are about a life.
 
 Not a directory in a shared repo. A separate repository, so a personal file
 cannot arrive in the public one by being filed wrongly — there is no path from
@@ -51,7 +52,7 @@ else reads from warehouse* — applied one level up.
 CSV, a Letterboxd export, a Goodreads dump, a markdown vault, a folder of git
 repos — anyone can hold one of those, so the loader is core. Suns Cinema's
 Filmbot API, Partiful's DC feed, the Living Room's calendar, a taste-engine
-checkout — those read *his* city and *his* siblings, so they are instance
+checkout — those read *your* city and *your* siblings, so they are instance
 plugins. This is the rule that forces the loader registry to become a real
 extension point rather than an import list, which is the modularity the project
 claims to have.
@@ -98,6 +99,6 @@ builds against a pinned tag, so a bad engine commit cannot reach production data
 by being pushed.
 
 Two ADRs become public and lose their subject: 0009 (the unfiled drawer is held)
-and 0011 (his repos are a source) generalise cleanly. 0004, 0008 and 0012 —
-second-brain's deprecation, allergies, his blog — stay in `exo-me`, because they
-are decisions about a life rather than about an engine.
+and 0011 (your repos are a source) generalise cleanly. 0004, 0008 and 0012 —
+second-brain's deprecation, allergies, one specific blog — stay in `exo-me`,
+because they are decisions about a life rather than about an engine.

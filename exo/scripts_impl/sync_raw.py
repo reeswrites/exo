@@ -32,11 +32,16 @@ from __future__ import annotations
 
 import subprocess
 
-from .. import config
+from .. import config, plugins
 
 
-def _rsync(src: str, dst: str, excludes: tuple[str, ...] = ()) -> int:
-    """Mirror src/ -> dst/ (trailing slash = contents). --delete keeps it faithful."""
+def mirror(src: str, dst: str, excludes: tuple[str, ...] = ()) -> int:
+    """Mirror src/ -> dst/ (trailing slash = contents). --delete keeps it faithful.
+
+    Public because a plugin's sync needs exactly this and should not reimplement
+    it: --delete is unforgiving, and one careful copy of that call is safer than
+    several careless ones.
+    """
     config.POSTS.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["rsync", "-a", "--delete"]
     for e in excludes:
@@ -56,7 +61,7 @@ def sync_posts() -> int:
     if not src.exists():
         print(f"  posts: upstream missing ({src}) — skipped")
         return 0
-    rc = _rsync(str(src), str(dst))
+    rc = mirror(str(src), str(dst))
     if rc == 0:
         n = len(list(dst.glob("*.md")))
         print(f"  posts  {n:>6,} files   <- {src}")
@@ -71,7 +76,7 @@ def sync_vault() -> int:
     if not src.exists():
         print(f"  vault: upstream missing ({src}) — skipped")
         return 0
-    rc = _rsync(str(src), str(dst), config.VAULT_SYNC_EXCLUDES)
+    rc = mirror(str(src), str(dst), config.VAULT_SYNC_EXCLUDES)
     if rc == 0:
         chats = len(list((dst / "chat-logs").glob("*.md"))) if (dst / "chat-logs").exists() else 0
         raws = sum(1 for _ in dst.glob("raw/**/*.md"))
@@ -92,25 +97,10 @@ def sync_drafts() -> int:
     if not src.exists():
         print(f"  drafts: upstream missing ({src}) — skipped")
         return 0
-    rc = _rsync(str(src), str(dst), (".git/", "*.md.tmp", ".DS_Store"))
+    rc = mirror(str(src), str(dst), (".git/", "*.md.tmp", ".DS_Store"))
     if rc == 0:
         n = len([f for f in dst.glob("*.md") if f.name != "README.md"])
         print(f"  drafts {n:>7,} files   <- {src}")
-    return rc
-
-
-def sync_taste() -> int:
-    """taste-engine owns the stated-preference files; mirror the data dir."""
-    src, dst = config.UPSTREAM_TASTE_ENGINE, config.TASTE_ENGINE_DATA
-    if src is None:
-        print("  taste: no upstream configured — skipped")
-        return 0
-    if not src.exists():
-        print(f"  taste: upstream missing ({src}) — skipped")
-        return 0
-    rc = _rsync(str(src), str(dst), ("embeddings/", "*.example.json"))
-    if rc == 0:
-        print(f"  taste  {len(list(dst.glob('*.json'))):>7,} files   <- {src}")
     return rc
 
 
@@ -121,6 +111,12 @@ def run(posts: bool = True, vault: bool = True) -> int:
         rc |= sync_posts()
     if vault:
         rc |= sync_vault()
-    rc |= sync_taste()
     rc |= sync_drafts()
+    # Whatever this instance mirrors that the engine has never heard of. A
+    # loader whose input is a place usually has a sync behind it, and leaving
+    # that sync here would keep the engine holding one laptop's directory
+    # layout (ADR-0014 §3).
+    for name, contributors in sorted(plugins.syncs().items()):
+        for who, fn in contributors:
+            rc |= fn() or 0
     return rc

@@ -320,11 +320,12 @@ def recipes_blog() -> list[Row]:
 def open_threads() -> list[Row]:
     """open-questions/ — human questions found in raw (`type: open-thread`).
 
-    A human-structured T1 zone (ADR-0004): projected + queryable (what's open,
-    joinable to its source note via `note_source`) but NOT atomized — a question is
-    a pointer with state, not corpus prose. `state` (open/closed) is hand-edited in
-    the markdown, so this stays a faithful projection. Keeps the vault's own `id` so
-    re-projection is idempotent.
+    A human-structured T1 zone, authored in the vault and only mirrored here:
+    projected + queryable (what's open, joinable to its source note via
+    `note_source`) but NOT atomized — a question is a pointer with state, not
+    corpus prose. `state` (open/closed) is hand-edited in the markdown, so this
+    stays a faithful projection. Keeps the vault's own `id` so re-projection is
+    idempotent.
     """
     base = config.VAULT / "open-questions"
     if not base.exists():

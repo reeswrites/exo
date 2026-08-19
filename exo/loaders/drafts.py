@@ -1,9 +1,10 @@
 """t1_draft — longform writing in progress, from md-writer.
 
 The store had the two ends of a piece of writing and not the middle. A private
-note in the vault is thinking; a post on the blog is the finished argument
-(ADR-0012). What was missing is the state between them: the thing being written,
-which is exactly what someone forgets they started.
+note in the vault is thinking; a post on the blog is the finished argument, the
+same thinking after it was argued into shape and published. What was missing is
+the state between them: the thing being written, which is exactly what someone
+forgets they started.
 
 Read from the DIRECTORY, not from git. `_docs_for` in the project scanner walks
 `git ls-files`, so it only ever sees committed files — and the draft you are in

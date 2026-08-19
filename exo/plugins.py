@@ -9,8 +9,10 @@ place, and live in `$EXO_HOME/plugins/` (ADR-0014 §3).
 A plugin is a module or package under `plugins/` that may declare any of:
 
     LOADERS      = {"event": fn}      zone name -> zero-arg fn -> list[Row]
+    T1_LOADERS   = {"taste": fn}      the same, for the authored tier
     DERIVATIONS  = {"name": fn}       T2, read through the wall only
     COMMANDS     = {"fetch-ra": (fn, "one-line help")}
+    SYNCS        = {"taste": fn}      mirror an upstream into raw/, on sync-raw
 
 Two rules make the failure modes legible:
 
@@ -123,3 +125,15 @@ def t1_loaders() -> dict[str, list[tuple[str, Callable]]]:
     be claiming its rows are the owner's own words.
     """
     return _collect("T1_LOADERS")
+
+
+def syncs() -> dict[str, list[tuple[str, Callable]]]:
+    """name -> [(plugin, fn)] run by `exo sync-raw`.
+
+    A loader whose input is a place usually has a *sync* behind it — the step
+    that mirrors somebody else's directory into raw/ before anything reads it.
+    Moving the loader out and leaving the sync in the engine would keep the
+    engine knowing which sibling repos exist on one particular laptop, which is
+    the thing the split is for.
+    """
+    return _collect("SYNCS")

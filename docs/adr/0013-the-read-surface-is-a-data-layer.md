@@ -31,15 +31,15 @@ decide what to do about it.**
 **1. It ranks by relevance to a query. It never ranks by preference.** Retrieval
 is finding: `whats_relevant`, `posts` and `notes_on` sort by semantic similarity
 because a caller cannot run cosine over 9,708 vectors itself. Judgment — *this
-event suits him better than that one* — is not ours. Every ORDER BY in the tool
-surface is over a measured fact (created, plays, rating, turns, start, count),
-and that is the invariant, not a coincidence. `event_pitches` sits on the far
-side of the line and stays in taste-engine.
+event suits the owner better than that one* — is not ours. Every ORDER BY in the
+tool surface is over a measured fact (created, plays, rating, turns, start,
+count), and that is the invariant, not a coincidence. `event_pitches` sits on
+the far side of the line and stays in taste-engine.
 
 **2. Conveyance to the human belongs to the agent. Conveyance to the agent
 belongs to us.** Poke decides whether to link, quote, summarise or stay quiet; it
-knows whether he is at a desk or walking, and we do not. What we owe it is an
-honest account of our own shape, which it cannot recover from the rows:
+knows whether the owner is at a desk or walking, and we do not. What we owe it
+is an honest account of our own shape, which it cannot recover from the rows:
 calibration (a dining 8 is average, because the median is 8.1), coverage gaps
 (no watchlist was ever exported, so absent films are a hole in the data and not
 an empty queue), provenance, recency, and — through the brief — what exists at
@@ -73,20 +73,22 @@ The near-term work collapses into exposing rows already published: `agenda` and
 `history` over the item spine, `recipes` over `t1_recipe`. No ranking, no
 pitching, no writes.
 
-`medium` is the shape this licenses. Answering "what is he like about film"
+`medium` is the shape this licenses. Answering "what are they like about film"
 took four calls to four tools that a caller had to know existed; one call now
-returns consumption, ratings on that medium's own scale, what he owns and what
-he has written. It is a join, not a judgment, and it is squarely data-layer.
+returns consumption, ratings on that medium's own scale, what is owned and what
+has been written. It is a join, not a judgment, and it is squarely data-layer.
 
 `t2_affinity.score` — `plays + mentions * 500` — is dropped from the projection.
 It is the one preference weight that ever reached served data, nothing read it,
 and that arbitrary 500 is exactly what this ADR says the surface does not do.
 The column stays in the store, where it remains a worked cross-zone example.
 
-The brief no longer tells a reader to link rather than summarise, and this ADR
-supersedes ADR-0012 §4 on that point. Carrying the URL on every row is a fact
-about the data. What to do with it is the reader's call.
+The brief no longer tells a reader to link rather than summarise, which retires
+the earlier rule that a published post is always best answered with its link.
+Carrying the URL on every row is a fact about the data. What to do with it is
+the reader's call.
 
 What this does NOT settle: whether friend-radar's inputs should be ingested. It
-is his data and it fits the layer, but publishing people's names is a policy
-decision that deserves its own hearing rather than arriving as gap-filling.
+is the owner's data and it fits the layer, but publishing people's names is a
+policy decision that deserves its own hearing rather than arriving as
+gap-filling.

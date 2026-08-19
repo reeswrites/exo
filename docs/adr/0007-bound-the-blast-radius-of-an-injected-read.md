@@ -31,14 +31,14 @@ Assume a single injection succeeds. Four controls, none of them authentication:
    surface cannot consume more in one turn anyway". That justification died when
    the target was restated as a context layer for AI assistants generally rather
    than for one messaging product, and the number should have moved with it.
-   16KB returns ~99% of his notes whole (avg 1,573 chars, max 48,543) and still
-   makes a full-corpus pull ~250 logged calls rather than a handful.
+   16KB returns ~99% of the owner's notes whole (avg 1,573 chars, max 48,543)
+   and still makes a full-corpus pull ~250 logged calls rather than a handful.
 
    What a cap buys is narrower than it looks: it does not prevent exfiltration,
    because a patient caller loops. It converts "one quiet call takes everything"
    into "hundreds of calls, visibly" — which is worth something only if the log
    in (4) is read. Its real value is against the dumb case, an injected "return
-   all his notes", which is also the likely case.
+   all their notes", which is also the likely case.
 3. **No general-purpose tool.** Fixed semantic tools only — no raw SQL, no
    id-lookup loop, no pagination cursor that can walk the full set. **The tool
    surface is the security boundary**, so every tool added is a decision about
