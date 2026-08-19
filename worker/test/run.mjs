@@ -720,7 +720,12 @@ console.log("\n── documentation ──");
   // A tool nobody is told about is a tool nobody calls. The brief is the only
   // thing a client reads unprompted, so a capability missing from it is
   // effectively unshipped — this has now happened four times.
-  const brief = readFileSync(new URL("../../zones/_serve/brief.md", import.meta.url), "utf8");
+  // Same base the harness uses: the bundle belongs to an instance, not to the
+  // engine checkout this file happens to sit in.
+  const briefPath = process.env.EXO_HOME
+    ? new URL(`file://${process.env.EXO_HOME}/zones/_serve/brief.md`)
+    : new URL("../../zones/_serve/brief.md", import.meta.url);
+  const brief = readFileSync(briefPath, "utf8");
   const SHOULD_ADVERTISE = ["agenda", "recipes", "medium", "backlog", "around_the_time", "drafts"];
   const unadvertised = SHOULD_ADVERTISE.filter((n) => !brief.includes(n));
   ok(unadvertised.length === 0, `the brief names the tools it should${unadvertised.length ? " — missing: " + unadvertised : ""}`);
