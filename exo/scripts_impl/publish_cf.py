@@ -368,17 +368,33 @@ if [ -s "$MISMATCH" ]; then
   while IFS="|" read -r t want got; do
     echo "    $t: expected $want, found $got"
   done < "$MISMATCH"
-  echo "  reapplying them one file at a time"
-  while IFS="|" read -r t want got; do
-    [ -f "$HERE/data/$t.sql" ] || { echo "    $t: no data file in the bundle" >&2; exit 1; }
-    echo "    reapplying data/$t.sql"
-    apply_file "$HERE/data/$t.sql"
-  done < "$MISMATCH"
+  # Reapply, then look again — up to three rounds, with a pause between.
+  #
+  # Two different failures reach this point and only one of them is a lost
+  # write. D1 also reads back stale for a few seconds after a bulk load: on
+  # 2026-08-19 six tables verified as EMPTY, the repair reapplied all six, the
+  # immediate re-read still said empty, and a hand check minutes later found
+  # five of them full the whole time. A single immediate re-read cannot tell
+  # "the write vanished" from "the read has not caught up", so it must not be
+  # the thing that decides. Looking again after a pause can.
+  attempt=1
+  while [ -s "$MISMATCH" ] && [ "$attempt" -le 3 ]; do
+    echo "  reapplying them one file at a time (attempt $attempt of 3)"
+    while IFS="|" read -r t want got; do
+      [ -f "$HERE/data/$t.sql" ] || { echo "    $t: no data file in the bundle" >&2; exit 1; }
+      echo "    reapplying data/$t.sql"
+      apply_file "$HERE/data/$t.sql" < /dev/null
+    done < "$MISMATCH"
+    # Long enough to outlast the stale read, short enough that three rounds
+    # still fit inside the job's timeout.
+    sleep $(( attempt * 10 ))
+    read_counts
+    find_mismatches
+    attempt=$(( attempt + 1 ))
+  done
 
-  read_counts
-  find_mismatches
   if [ -s "$MISMATCH" ]; then
-    echo "  STILL WRONG after reapplying — refusing to call this a load:" >&2
+    echo "  STILL WRONG after three rounds — refusing to call this a load:" >&2
     while IFS="|" read -r t want got; do
       echo "    $t: expected $want, found $got" >&2
     done < "$MISMATCH"
