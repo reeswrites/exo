@@ -71,7 +71,7 @@ export function cap(rows) {
  * an empty answer advising them to narrow a question that was already one
  * thread. Budget against the real envelope and the row always fits.
  */
-const TURN_NOTE_SAMPLE = "999 of 999 of his turns shown — ask about a narrower part";
+const TURN_NOTE_SAMPLE = "999 of 999 of the owner's turns shown — ask about a narrower part";
 
 function fitInto(row, field, items, notePlaceholder) {
   const envelope = JSON.stringify({ ...row, [field]: [], note: notePlaceholder }).length;
@@ -95,7 +95,7 @@ function fitInto(row, field, items, notePlaceholder) {
  * queued to watch, which is the opposite of true.
  */
 const WATCH_GAP =
-  "watching is not covered: his Letterboxd watchlist was never exported, so absence of films here is a gap in the data, not an empty queue";
+  "watching is not covered: the Letterboxd watchlist was never exported, so absence of films here is a gap in the data, not an empty queue";
 
 const q = (env, sql, ...binds) =>
   env.DB.prepare(sql).bind(...binds).all().then((r) => r.results ?? []);
@@ -139,7 +139,7 @@ async function readOne(env, { topic, kind, table, key, select, missing, onClip }
 export const TOOLS = {
   whats_relevant: {
     description:
-      "What has he written that bears on a topic? Searches his notes and the verbatim spans lifted from them, by meaning. Use this first when you want to know his thinking on something.",
+      "What has the owner written that bears on a topic? Searches their notes and the verbatim spans lifted from them, by meaning. Use this first when you want to know their thinking on something.",
     schema: {
       type: "object",
       properties: { topic: { type: "string", description: "A topic, question, or phrase." } },
@@ -164,7 +164,7 @@ export const TOOLS = {
 
   notes_on: {
     description:
-      "His notes about a topic. Returns titles by default — a map of what exists rather than contents. Pass full:true for the entire text of the single best match.",
+      "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents. Pass full:true for the entire text of the single best match.",
     schema: {
       type: "object",
       properties: {
@@ -179,7 +179,7 @@ export const TOOLS = {
           topic, kind: "note", table: "t1_notes", key: "origin_ref", missing: "note",
           select: "title, folder, created, body",
           onClip: (_r, kept, total) =>
-            `body truncated to ${kept} of ${total} chars — this is one of his longer notes; ask about a specific part of it rather than requesting it again`,
+            `body truncated to ${kept} of ${total} chars — this is one of the owner's longer notes; ask about a specific part of it rather than requesting it again`,
         });
       }
       const hits = await search(env, topic, { k: MAX_ROWS, kind: "note" });
@@ -189,7 +189,7 @@ export const TOOLS = {
 
   open_threads: {
     description:
-      "Questions he has asked himself and not closed. The best single source of what he is currently chewing on.",
+      "Questions the owner has asked themselves and not closed. The best single source of what they are currently chewing on.",
     schema: { type: "object", properties: {} },
     async run(env) {
       const rows = await q(
@@ -205,7 +205,7 @@ export const TOOLS = {
 
   verdicts: {
     description:
-      "His written opinions on books, films, tv and music — in his own words, with reasoning. The highest-signal material here for judging how he thinks.",
+      "The owner's written opinions on books, films, tv and music — in their own words, with reasoning. The highest-signal material here for judging how they think.",
     schema: {
       type: "object",
       properties: { kind: { type: "string", description: "books | films | tv | music" } },
@@ -220,7 +220,7 @@ export const TOOLS = {
 
   taste: {
     description:
-      "What he actually listens to, by play count — the revealed preference, as distinct from what he says.",
+      "What the owner actually listens to, by play count — the revealed preference, as distinct from what they say.",
     schema: { type: "object", properties: {} },
     async run(env) {
       const rows = await q(
@@ -234,7 +234,7 @@ export const TOOLS = {
 
   agenda: {
     description:
-      "What he has committed to and where it stands \u2014 the item spine Kairos schedules from. Four families with different lifecycles: tasks are todo/done, habits carry a streak and a cadence, slots are open or filled, constraints are standing rules. Ask with no arguments for what is live right now.",
+      "What the owner has committed to and where it stands \u2014 the item spine Kairos schedules from. Four families with different lifecycles: tasks are todo/done, habits carry a streak and a cadence, slots are open or filled, constraints are standing rules. Ask with no arguments for what is live right now.",
     schema: {
       type: "object",
       properties: {
@@ -282,14 +282,14 @@ export const TOOLS = {
         // Completion is not available here and never will be \u2014 this surface is
         // read-only (ADR-0006). Saying so stops an assistant offering to tick
         // something off and then silently failing to.
-        note: "read-only: items are marked done on his own machine, not through this surface",
+        note: "read-only: items are marked done on the owner's own machine, not through this surface",
       };
     },
   },
 
   history: {
     description:
-      "What actually happened to his commitments \u2014 the append-only log behind the item spine. Status changes with dates, so you can see when a habit lapsed or how long a task sat before it moved, rather than only where it stands now.",
+      "What actually happened to the owner's commitments \u2014 the append-only log behind the item spine. Status changes with dates, so you can see when a habit lapsed or how long a task sat before it moved, rather than only where it stands now.",
     schema: {
       type: "object",
       properties: { title: { type: "string", description: "Match against the item's title." } },
@@ -321,7 +321,7 @@ export const TOOLS = {
 
   recipes: {
     description:
-      "What he actually cooks \u2014 recipes he wrote up and published, with their source links. Small and real: these are ones he made and posted, not a recipe database. Pass full:true for the ingredients and steps of the best match.",
+      "What the owner actually cooks \u2014 recipes they wrote up and published, with their source links. Small and real: these are ones they made and posted, not a recipe database. Pass full:true for the ingredients and steps of the best match.",
     schema: {
       type: "object",
       properties: {
@@ -361,7 +361,7 @@ export const TOOLS = {
   },
   drafts: {
     description:
-      "Longform pieces he is in the middle of writing \u2014 the state between a private note and a published post. Ask with no arguments for everything open, oldest-touched last. `stale_days` finds the ones that have gone cold, which is the question a writer cannot answer about themselves. Pass full:true for the whole text of one.",
+      "Longform pieces the owner is in the middle of writing \u2014 the state between a private note and a published post. Ask with no arguments for everything open, oldest-touched last. `stale_days` finds the ones that have gone cold, which is the question a writer cannot answer about themselves. Pass full:true for the whole text of one.",
     schema: {
       type: "object",
       properties: {
@@ -407,8 +407,8 @@ export const TOOLS = {
           // An empty answer here has two very different meanings and the caller
           // cannot tell them apart, so say which one it is.
           note: topic || stale_days
-            ? "nothing matched — he may still have other drafts open"
-            : "he has no drafts in progress right now",
+            ? "nothing matched — there may still be other drafts open"
+            : "no drafts are in progress right now",
         };
       }
       return cap(rows);
@@ -416,7 +416,7 @@ export const TOOLS = {
   },
   medium: {
     description:
-      "Everything about one medium in a single call: how much of it he consumes, how he rates it ON ITS OWN SCALE, what he owns, and what he has written about it. Answering 'what is he like about film' otherwise takes four calls to four tools, and an assistant has to know all four exist.",
+      "Everything about one medium in a single call: how much of it the owner consumes, how they rate it ON ITS OWN SCALE, what they own, and what they have written about it. Answering 'what are they like about film' otherwise takes four calls to four tools, and an assistant has to know all four exist.",
     schema: {
       type: "object",
       properties: {
@@ -454,7 +454,7 @@ export const TOOLS = {
           ...cap(out),
           note: name
             ? `no medium called '${name}' — ask for one of these`
-            : "ask for one by name to get ratings, what he owns, and what he wrote about it",
+            : "ask for one by name to get ratings, what is owned, and what was written about it",
         };
       }
 
@@ -522,9 +522,9 @@ export const TOOLS = {
       const notes = [];
       // Calibration is not decoration here: the dining median is 8.1, so an 8
       // read against a 0-10 scale looks like praise and is not.
-      if (d.calibrated) notes.push("his 0-10 dining scale runs high — call taste_summary(kind:'dining') before reading any of these numbers as praise");
+      if (d.calibrated) notes.push("the owner's 0-10 dining scale runs high — call taste_summary(kind:'dining') before reading any of these numbers as praise");
       if (name === "film") notes.push(WATCH_GAP);
-      if (!d.rate) notes.push(`he does not rate ${name} item by item — the counts are the record`);
+      if (!d.rate) notes.push(`the owner does not rate ${name} item by item — the counts are the record`);
 
       return { rows: [rec], ...(notes.length ? { note: notes.join(" · ") } : {}) };
     },
@@ -532,7 +532,7 @@ export const TOOLS = {
 
   consumption: {
     description:
-      "Shape and recency of what he consumes, per medium: how much, and how current the record is. Returns aggregates, not a list of titles.",
+      "Shape and recency of what the owner consumes, per medium: how much, and how current the record is. Returns aggregates, not a list of titles.",
     schema: {
       type: "object",
       properties: { medium: { type: "string", description: "music | books | films | beer" } },
@@ -641,7 +641,7 @@ export const TOOLS = {
 
   events: {
     description:
-      "Upcoming DC events he could actually go to \u2014 a live pool merged from eight sources (library, theatre, improv, cinema, parties, music venues). Recurring series are collapsed to their next date, and no single source is allowed to dominate the answer. Filter by a topic word or free-only; pair with `taste_profile` for the venues and orgs he rates.",
+      "Upcoming DC events the owner could actually go to \u2014 a live pool merged from eight sources (library, theatre, improv, cinema, parties, music venues). Recurring series are collapsed to their next date, and no single source is allowed to dominate the answer. Filter by a topic word or free-only; pair with `taste_profile` for the venues and orgs they rate.",
     schema: {
       type: "object",
       properties: {
@@ -714,7 +714,7 @@ export const TOOLS = {
                 CASE WHEN venues > 1 THEN venues END AS venues,
                 -- free describes the instance shown, so say when the rest of
                 -- the series disagrees rather than reporting max(free) and
-                -- sending him to a paid night expecting a free one.
+                -- sending the reader to a paid night expecting a free one.
                 CASE WHEN free_min <> free_max THEN 1 END AS price_varies
          FROM ranked WHERE rn <= 4
          ORDER BY start
@@ -728,7 +728,7 @@ export const TOOLS = {
 
   taste_profile: {
     description:
-      "What he SAYS he likes — stated preferences: venues and orgs he rates, things he seeks out, things he avoids. Distinct from `taste`, which is revealed behaviour (play counts). When the two disagree, that gap is usually the interesting part.",
+      "What the owner SAYS they like — stated preferences: venues and orgs they rate, things they seek out, things they avoid. Distinct from `taste`, which is revealed behaviour (play counts). When the two disagree, that gap is usually the interesting part.",
     schema: { type: "object", properties: {} },
     async run(env) {
       const rows = await q(env, `SELECT kind, key, value FROM t1_taste ORDER BY kind, key LIMIT ?`, MAX_ROWS);
@@ -741,7 +741,7 @@ export const TOOLS = {
   // scrobbles` can be asked as one question.
   around_the_time: {
     description:
-      "What was going on around a period: what he wrote, what he listened to, what he read or watched. Answers 'what was he thinking about in March' — a window, not a topic. He forgets periods more than subjects, so this is often the useful lens.",
+      "What was going on around a period: what the owner wrote, listened to, read or watched. Answers 'what were they thinking about in March' — a window, not a topic. Periods are forgotten more easily than subjects, so this is often the useful lens.",
     schema: {
       type: "object",
       properties: {
@@ -814,7 +814,7 @@ export const TOOLS = {
 
   ratings: {
     description:
-      "What he rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while he has rated 720 films, 409 books, 1,906 beers and 93 restaurants. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film.",
+      "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film.",
     schema: {
       type: "object",
       properties: {
@@ -861,12 +861,12 @@ export const TOOLS = {
 
   reviews: {
     description:
-      "His written film reviews from Letterboxd \u2014 115 of them, in his own words, each with a link. Far more of his actual criticism than `verdicts` (10). Search by topic or filter to a minimum rating; quote him rather than paraphrasing.",
+      "The owner's written film reviews from Letterboxd \u2014 115 of them, in their own words, each with a link. Far more of their actual criticism than `verdicts` (10). Search by topic or filter to a minimum rating; quote them rather than paraphrasing.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against film title or review text." },
-        min_rating: { type: "number", description: "Only films he rated at least this, 0-5." },
+        min_rating: { type: "number", description: "Only films rated at least this, 0-5." },
       },
     },
     async run(env, { topic, min_rating }) {
@@ -889,7 +889,7 @@ export const TOOLS = {
 
   collection: {
     description:
-      "What he OWNS, which is not what he consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste he committed to. Fragrances carry his own written notes.",
+      "What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes.",
     schema: {
       type: "object",
       properties: {
@@ -933,17 +933,17 @@ export const TOOLS = {
 
   saves: {
     description:
-      "Links he bookmarked \u2014 2,188 of them across nine years. Filter by platform (youtube, substack, x, pinterest, tiktok, soundcloud...), by collection (his own buckets: Gift Ideas, thought-provoking, aesthetically-pleasing, want-to-think-about, Tattoo Inspiration, yummy...), by kind, by tag, or by topic. Call with no arguments to see which platforms and collections exist before narrowing. A save is intent, not consumption: it caught his attention, he did not necessarily finish it.",
+      "Links the owner bookmarked \u2014 2,188 of them across nine years. Filter by platform (youtube, substack, x, pinterest, tiktok, soundcloud...), by collection (the owner's own buckets: Gift Ideas, thought-provoking, aesthetically-pleasing, want-to-think-about, Tattoo Inspiration, yummy...), by kind, by tag, or by topic. Call with no arguments to see which platforms and collections exist before narrowing. A save is intent, not consumption: it caught their attention, they did not necessarily finish it.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against title, tags or collection." },
         platform: { type: "string", description: "youtube | substack | x | pinterest | tiktok | soundcloud | etsy ..." },
-        collection: { type: "string", description: "One of his collections, e.g. 'thought-provoking'." },
+        collection: { type: "string", description: "One of the owner's collections, e.g. 'thought-provoking'." },
         kind: { type: "string", description: "link | article | video | image | audio | document" },
         tag: { type: "string", description: "A single tag." },
         since: { type: "string", description: "ISO date; only saves on or after." },
-        with_note: { type: "boolean", description: "Only saves he wrote a note on." },
+        with_note: { type: "boolean", description: "Only saves with a note written on them." },
       },
     },
     async run(env, { topic, platform, collection, kind, tag, since, with_note }) {
@@ -1009,15 +1009,15 @@ export const TOOLS = {
         ...cap(rows),
         scope: `searched ${tot?.n ?? 0} saves, newest ${tot?.newest ?? "?"}`,
         ...(noted === 0
-          ? { notes: "his own notes on these saves are not synced yet — absence here is not evidence he wrote none" }
-          : { notes: `${noted} of these carry a note he wrote` }),
+          ? { notes: "the owner's own notes on these saves are not synced yet — absence here is not evidence none were written" }
+          : { notes: `${noted} of these carry a note the owner wrote` }),
       };
     },
   },
 
   backlog: {
     description:
-      "What he has queued but not done — things he decided he wanted and has not gotten to. Shelving a book or filing a link into a bucket is a deliberate act, which is what separates this from `saves` (attention) and from `collection` (already owned). Kinds: 'read' (436 shelved to-read), 'resume' (41 books started and abandoned mid-way — the strongest candidates, since he already began), 'make' (things he wants to build or cook), 'buy' (gift and shopping ideas). Call with no kind to see the sizes. Default order is newest-first; pass order='oldest' to dig up what has been sitting, which is usually the point of asking.",
+      "What the owner has queued but not done — things they decided they wanted and have not gotten to. Shelving a book or filing a link into a bucket is a deliberate act, which is what separates this from `saves` (attention) and from `collection` (already owned). Kinds: 'read' (436 shelved to-read), 'resume' (41 books started and abandoned mid-way — the strongest candidates, since they already began), 'make' (things they want to build or cook), 'buy' (gift and shopping ideas). Call with no kind to see the sizes. Default order is newest-first; pass order='oldest' to dig up what has been sitting, which is usually the point of asking.",
     schema: {
       type: "object",
       properties: {
@@ -1099,7 +1099,7 @@ export const TOOLS = {
           scope: `${tot?.n ?? 0} on this shelf, oldest queued ${tot?.oldest ?? "?"}`,
           // my_rating is 0 across every unread row, so it is omitted rather
           // than emitted as a zero an assistant would read as a verdict.
-          notes: "avg_rating is Goodreads' crowd score, not his — he has not read these",
+          notes: "avg_rating is Goodreads' crowd score, not the owner's — they have not read these",
           gap: WATCH_GAP,
         };
       }
@@ -1131,7 +1131,7 @@ export const TOOLS = {
           // and a wall of TikToks. Reporting 9 as the making backlog without
           // this would understate it by an order of magnitude.
           ...(kind === "make"
-            ? { notes: "only what he filed into want-to-make; most making references sit unfiled in his pinterest and tiktok saves — try saves(platform:'pinterest')" }
+            ? { notes: "only what was filed into want-to-make; most making references sit unfiled in the pinterest and tiktok saves — try saves(platform:'pinterest')" }
             : {}),
           gap: WATCH_GAP,
         };
@@ -1148,7 +1148,7 @@ export const TOOLS = {
 
   recent_topics: {
     description:
-      "What he has been working through in conversation lately \u2014 titles and volume, not transcripts. Fresher than his notes, which lag a deliberate act of capture. Turn count is the signal a title cannot carry: 40 turns is a preoccupation, 3 is a passing look. Use this to know what is live for him right now.",
+      "What the owner has been working through in conversation lately \u2014 titles and volume, not transcripts. Fresher than their notes, which lag a deliberate act of capture. Turn count is the signal a title cannot carry: 40 turns is a preoccupation, 3 is a passing look. Use this to know what is live for them right now.",
     schema: {
       type: "object",
       properties: {
@@ -1179,7 +1179,7 @@ export const TOOLS = {
 
   thread: {
     description:
-      "One conversation. `include` chooses what comes back: 'conclusion' (where he landed, plus the machine distillation), 'turns' (only what HE typed), 'dialogue' (both sides interleaved, speaker-tagged), or 'both' (default: conclusion + his turns). Prefer 'dialogue' when his turns read as questions or fragments \u2014 45% of them are under 80 chars and answer something you cannot otherwise see. Lines tagged assistant are another model's output: context for reading him, not verified fact, and never quote them as his.",
+      "One conversation. `include` chooses what comes back: 'conclusion' (where the owner landed, plus the machine distillation), 'turns' (only what THEY typed), 'dialogue' (both sides interleaved, speaker-tagged), or 'both' (default: conclusion + owner turns). Prefer 'dialogue' when those turns read as questions or fragments \u2014 45% of them are under 80 chars and answer something you cannot otherwise see. Lines tagged assistant are another model's output: context for reading the owner, not verified fact, and never quote them as the owner's.",
     schema: {
       type: "object",
       properties: {
@@ -1214,7 +1214,7 @@ export const TOOLS = {
         // source is a different object from one they must believe.
         if (hit.summary) {
           out.summary = hit.summary;
-          out.summary_is = `machine-written by ${hit.summary_by}, not his words`;
+          out.summary_is = `machine-written by ${hit.summary_by}, not the owner's words`;
         }
       }
 
@@ -1233,7 +1233,7 @@ export const TOOLS = {
         );
         // Set before budgeting: the note is part of the row it has to fit in.
         out.dialogue_note =
-          "lines tagged assistant are another model's output — context, not fact, and not his words";
+          "lines tagged assistant are another model's output — context, not fact, and not the owner's words";
         const kept = fitInto(out, "dialogue", lines, TURN_NOTE_SAMPLE);
         out.dialogue = kept;
         if (kept.length < turns.length) {
@@ -1255,7 +1255,7 @@ export const TOOLS = {
         const kept = fitInto(out, "his_words", turns.map((t) => t.text || ""), TURN_NOTE_SAMPLE);
         out.his_words = kept;
         if (kept.length < turns.length) {
-          out.note = `${kept.length} of ${turns.length} of his turns shown — ask about a narrower part`;
+          out.note = `${kept.length} of ${turns.length} of the owner's turns shown — ask about a narrower part`;
         }
       }
       return cap([out]);
@@ -1264,7 +1264,7 @@ export const TOOLS = {
 
   taste_summary: {
     description:
-      "Derived summaries of his taste: how his rating scales actually behave, and the clusters his loved items fall into. Read the dining one BEFORE interpreting any restaurant rating \u2014 his 0-10 scale has a median of 8.1, so an 8 is average, not a rave.",
+      "Derived summaries of the owner's taste: how their rating scales actually behave, and the clusters their loved items fall into. Read the dining one BEFORE interpreting any restaurant rating \u2014 that 0-10 scale has a median of 8.1, so an 8 is average, not a rave.",
     schema: {
       type: "object",
       properties: { kind: { type: "string", description: "dining | clusters" } },
@@ -1288,7 +1288,7 @@ export const TOOLS = {
 
   places: {
     description:
-      "Restaurants he has been to, with his own notes and ratings. Filter by city or cuisine.",
+      "Restaurants the owner has been to, with their own notes and ratings. Filter by city or cuisine.",
     schema: {
       type: "object",
       properties: { city: { type: "string" }, cuisine: { type: "string" } },
@@ -1319,7 +1319,7 @@ export const TOOLS = {
    */
   projects: {
     description:
-      "His repos — what he is building, what he set down, and what each one claims to be. `status` is heat, not judgement: active (commit in 21 days), warm (90), stalled (a year), dormant (older, which includes everything that simply shipped). Repos filed under a group like 'hiatus' were deliberately set aside — that is his own shelving, not a guess. Call with no arguments for the shape of the workshop: the status counts plus what he has actually been working on, ranked by commits in the last 90 days rather than by last-commit date, because half these repos were git-init'd the same week and recency alone floats a one-commit import above a year of work. Prose and metadata only — no source code is in this store.",
+      "The owner's repos — what they are building, what they set down, and what each one claims to be. `status` is heat, not judgement: active (commit in 21 days), warm (90), stalled (a year), dormant (older, which includes everything that simply shipped). Repos filed under a group like 'hiatus' were deliberately set aside — that is deliberate shelving, not a guess. Call with no arguments for the shape of the workshop: the status counts plus what has actually been worked on, ranked by commits in the last 90 days rather than by last-commit date, because half these repos were git-init'd the same week and recency alone floats a one-commit import above a year of work. Prose and metadata only — no source code is in this store.",
     schema: {
       type: "object",
       properties: {
@@ -1383,7 +1383,7 @@ export const TOOLS = {
 
   project_activity: {
     description:
-      "What he actually worked on, dated — commit subjects from his own repos. This is the closest thing in the store to a work log, and unlike his notes it cannot be stale: a commit is written at the moment of the work. Use it to answer what he has been doing lately, when a project came alive or died, or what was happening around a date. With no repo it returns per-repo totals for the window; with a repo it returns the subjects themselves. Subjects only — never a diff, and no source code is in this store.",
+      "What the owner actually worked on, dated — commit subjects from their own repos. This is the closest thing in the store to a work log, and unlike their notes it cannot be stale: a commit is written at the moment of the work. Use it to answer what they have been doing lately, when a project came alive or died, or what was happening around a date. With no repo it returns per-repo totals for the window; with a repo it returns the subjects themselves. Subjects only — never a diff, and no source code is in this store.",
     schema: {
       type: "object",
       properties: {
@@ -1430,7 +1430,7 @@ export const TOOLS = {
 
   project_docs: {
     description:
-      "The prose his repos carry: READMEs, CONTEXT glossaries, architecture decision records and plan documents. This is where a project states what it is FOR and why it was built the way it was — an ADR is him arguing with himself and recording who won, which is the same category of writing as his notes and usually more decided. Search by topic to find which project already settled a question, or pass a repo to read what it says about itself. Returns matching excerpts; ask with full=true and a title to read one whole document.",
+      "The prose those repos carry: READMEs, CONTEXT glossaries, architecture decision records and plan documents. This is where a project states what it is FOR and why it was built the way it was — an ADR is the owner arguing with themselves and recording who won, which is the same category of writing as their notes and usually more decided. Search by topic to find which project already settled a question, or pass a repo to read what it says about itself. Returns matching excerpts; ask with full=true and a title to read one whole document.",
     schema: {
       type: "object",
       properties: {
@@ -1488,7 +1488,7 @@ export const TOOLS = {
 
   project_open: {
     description:
-      "What is visibly unfinished in his repos: TODO and FIXME markers he left in code, unchecked items in plan documents, and files sitting uncommitted. Useful for 'what could I pick up' and for reading intent — a marker is a note he wrote to himself at the moment he chose not to do something. Treat it as a trail, not a backlog: nobody prunes these, so an old marker may name work that was done another way. With no repo it returns where the unfinished work is concentrated. Paths and marker text only, never file contents.",
+      "What is visibly unfinished in those repos: TODO and FIXME markers left in code, unchecked items in plan documents, and files sitting uncommitted. Useful for 'what could I pick up' and for reading intent — a marker is a note written to oneself at the moment of choosing not to do something. Treat it as a trail, not a backlog: nobody prunes these, so an old marker may name work that was done another way. With no repo it returns where the unfinished work is concentrated. Paths and marker text only, never file contents.",
     schema: {
       type: "object",
       properties: {

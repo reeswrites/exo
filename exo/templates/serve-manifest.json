@@ -89,8 +89,8 @@
   "chat_topics": {
     "_doc": "Conversation TITLES and volume only \u2014 t0_chat itself stays held. Titles are auto-generated from content, so a private conversation gets a revealing title; these two rules are the review, and both are deliberate rather than pattern-matched.",
     "window_days": 90,
-    "_window_doc": "Recency is the point: an assistant needs what he is working through now. Older topics carry the same exposure with far less value.",
-    "_hold_doc": "Named explicitly, not matched. A regex over titles would hold 'Therapy speak as emptiness' (criticism he already publishes as a note) and miss anything private with a bland title \u2014 the same argument ADR-0009 made for notes.",
+    "_window_doc": "Recency is the point: an assistant needs what the owner is working through now. Older topics carry the same exposure with far less value.",
+    "_hold_doc": "Named explicitly, not matched. A regex over titles would hold 'Therapy speak as emptiness' (criticism already published as a note) and miss anything private with a bland title \u2014 the same argument ADR-0009 made for notes.",
     "hold_titles": []
   }
 }

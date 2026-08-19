@@ -41,7 +41,7 @@ const call = async (method, params) => {
 };
 
 // A phrase that exists verbatim in the corpus. Any atom's text will do; this one
-// is stable because it is his own writing, not a title.
+// is stable because it is authored prose, not a title.
 const PROBE = process.env.PROBE_TEXT
   ?? "the death note works better as a constraint than as a power";
 

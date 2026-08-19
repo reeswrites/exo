@@ -186,7 +186,7 @@ async function handleRpc(req, env, body) {
             uri: "exo://brief",
             name: "Standing context",
             description:
-              "Who he is, what he is currently circling, how fresh each source is, and what this surface can answer. Load this before anything else.",
+              "Who the owner is, what they are currently circling, how fresh each source is, and what this surface can answer. Load this before anything else.",
             mimeType: "text/markdown",
           },
         ],

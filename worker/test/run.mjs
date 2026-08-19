@@ -156,7 +156,7 @@ ok(JSON.stringify(dining).length <= MAX_BYTES, "document fits the cap uncut");
 console.log("\n── reviews + links ──");
 const rv = await TOOLS.reviews.run(env, {});
 ok(rv.rows.length > 0, `reviews -> ${rv.rows.length}`);
-ok(rv.rows.every((r) => r.review && r.review.length > 0), "every row carries his text");
+ok(rv.rows.every((r) => r.review && r.review.length > 0), "every row carries the review text");
 ok(rv.rows.every((r) => /letterboxd\.com|boxd\.it/.test(r.url || "")), "every review links out");
 const topical = await TOOLS.reviews.run(env, { topic: "time" });
 ok(Array.isArray(topical.rows), `topic search -> ${topical.rows.length}`);
@@ -208,7 +208,7 @@ const vinyl = await TOOLS.collection.run(env, { kind: "vinyl" });
 ok(vinyl.rows.every((r) => r.kind === "vinyl"), "kind filter holds");
 ok(vinyl.rows.some((r) => r.acquired), "vinyl carries a purchase date");
 const frag = await TOOLS.collection.run(env, { kind: "fragrance" });
-ok(frag.rows.some((r) => r.thoughts), "fragrances carry his own notes");
+ok(frag.rows.some((r) => r.thoughts), "fragrances carry their own notes");
 ok(frag.rows.every((r) => !("genre" in r)), "empty columns dropped, not emitted as nulls");
 const games = await TOOLS.collection.run(env, { kind: "board_game" });
 // One game genuinely has no link in the source, so assert the shape of the
@@ -299,7 +299,7 @@ console.log("\n── thread text ──");
 const th = await TOOLS.thread.run(env, { topic: "mp3" });
 ok(th.rows.length === 1, "one thread returned");
 const t0 = th.rows[0];
-ok(Array.isArray(t0.his_words) && t0.his_words.length > 0, `his turns returned (${t0.his_words?.length})`);
+ok(Array.isArray(t0.his_words) && t0.his_words.length > 0, `owner turns returned (${t0.his_words?.length})`);
 ok(typeof t0.landed === "string", "conclusion included by default");
 const concl = (await TOOLS.thread.run(env, { topic: "mp3", include: "conclusion" })).rows[0];
 ok(concl.his_words === undefined, "include=conclusion omits the raw turns");
@@ -323,7 +323,7 @@ const toRead = await TOOLS.backlog.run(env, { kind: "read" });
 ok(toRead.rows.length > 0 && toRead.rows.every((r) => r.shelf === "to-read"), `read -> ${toRead.rows.length} to-read`);
 ok(toRead.rows.every((r) => r.title && r.queued), "each row carries a title and a queued date");
 ok(toRead.rows.every((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.queued)), "both Goodreads date shapes normalise to ISO days");
-ok(toRead.rows.every((r) => r.my_rating === undefined), "no unread book carries a rating of his");
+ok(toRead.rows.every((r) => r.my_rating === undefined), "no unread book carries an owner rating");
 ok(!!toRead.gap && !!toRead.scope, "kind results still declare scope and the watch gap");
 
 const resume = await TOOLS.backlog.run(env, { kind: "resume" });
@@ -356,7 +356,7 @@ ok(listed.rows.some((r) => r.gist && r.gist.length > 0),
    "browsing threads surfaces a gist, not just titles");
 const full = await TOOLS.thread.run(env, { topic: listed.rows.find((r) => r.gist)?.title || "mp3" });
 ok(!!full.rows[0].summary, "thread returns the full summary");
-ok(/not his words/.test(full.rows[0].summary_is || ""), "summary is attributed as machine-written");
+ok(/not the owner's words/.test(full.rows[0].summary_is || ""), "summary is attributed as machine-written");
 ok(typeof full.rows[0].landed === "string", "the verbatim it can be checked against ships with it");
 const b5 = await (await env.VECTORS.get("brief.md")).text();
 ok(/distillation/i.test(b5), "brief tells an assistant the distillations exist");
@@ -365,12 +365,13 @@ console.log("\n── dialogue mode ──");
 const dlg = await TOOLS.thread.run(env, { topic: "mp3", include: "dialogue" });
 const d0 = dlg.rows[0];
 ok(Array.isArray(d0.dialogue) && d0.dialogue.length > 0, `dialogue -> ${d0.dialogue?.length} lines`);
-ok(d0.dialogue.some((l) => l.startsWith("ada:")), "his lines are tagged");
+ok(d0.dialogue.some((l) => l.startsWith("ada:")), "owner lines are tagged");
 ok(d0.dialogue.some((l) => l.startsWith("assistant:")), "the other side is present");
-ok(/not his words/.test(d0.dialogue_note || ""), "assistant lines are labelled as not his");
+ok(/not the owner's words/.test(d0.dialogue_note || ""),
+   "assistant lines are labelled as not the owner's");
 ok(JSON.stringify(dlg).length <= MAX_BYTES, "dialogue respects the cap");
 const hisOnly = (await TOOLS.thread.run(env, { topic: "mp3", include: "turns" })).rows[0];
-ok(hisOnly.dialogue === undefined, "include=turns still returns his side only");
+ok(hisOnly.dialogue === undefined, "include=turns still returns the owner side only");
 const heldD = await TOOLS.thread.run(env, { topic: "nonmonogamy", include: "dialogue" });
 ok(heldD.rows.length === 0, "held threads stay held in dialogue mode");
 
@@ -644,7 +645,7 @@ ok(x_hist.rows.every((r) => r.item && r.when_), "every event names its item and 
 console.log("\n── recipes ──");
 const x_rc = await TOOLS.recipes.run(env, {});
 ok(x_rc.rows.length > 0, `recipes -> ${x_rc.rows.length}`);
-ok(x_rc.rows.every((r) => r.source_url?.startsWith("http")), "each links to where he published it");
+ok(x_rc.rows.every((r) => r.source_url?.startsWith("http")), "each links to where it was published");
 const x_rcFull = await TOOLS.recipes.run(env, { full: true });
 ok(x_rcFull.rows.length === 1, "full:true returns exactly one");
 ok(Array.isArray(x_rcFull.rows[0].ingredients) && Array.isArray(x_rcFull.rows[0].steps),
@@ -659,7 +660,7 @@ ok(x_film.rows.length === 1, "one medium, one row");
 const x_f = x_film.rows[0];
 ok(x_f.consumed > 0 && x_f.rated?.n > 0, `film: ${x_f.consumed} watched, ${x_f.rated.n} rated`);
 ok(x_f.rated.scale === "0-5", "the scale rides with the numbers");
-ok(x_f.written?.reviews > 0 && x_f.owns?.dvd > 0, "joins his criticism and his shelf in one call");
+ok(x_f.written?.reviews > 0 && x_f.owns?.dvd > 0, "joins criticism and shelf in one call");
 ok((x_film.note ?? "").includes("watchlist"), "carries the watchlist gap");
 // The calibration warning is the reason this tool is worth having for dining:
 // an 8 on a 0-10 scale whose median is 8.1 is not praise.
@@ -668,7 +669,7 @@ ok(x_dining.rows[0].rated.scale === "0-10" && (x_dining.note ?? "").includes("ta
    "restaurant points at its own calibration before its numbers can be misread");
 const x_music = await TOOLS.medium.run(env, { name: "music" });
 ok(!x_music.rows[0].rated && (x_music.note ?? "").includes("does not rate"),
-   "a medium he does not rate says so rather than returning an empty rating block");
+   "an unrated medium says so rather than returning an empty rating block");
 const x_bogus = await TOOLS.medium.run(env, { name: "opera" });
 ok(x_bogus.rows.length >= 5 && (x_bogus.note ?? "").includes("no medium"),
    "an unknown medium returns the directory and says why");
@@ -680,7 +681,7 @@ console.log("\n── drafts ──");
   ok(all.rows.length === Math.min(n, MAX_ROWS), `drafts -> ${all.rows.length} of ${n}`);
   if (n === 0) {
     // Zero drafts is a real state, not a failure — but it must be distinguishable
-    // from "your filter matched nothing", or a reader concludes he never writes.
+    // from "your filter matched nothing", or a reader concludes nothing was ever written.
     ok((all.note ?? "").includes("no drafts in progress"), "an empty desk says so plainly");
     const filtered = await TOOLS.drafts.run(env, { topic: "nothing" });
     ok((filtered.note ?? "").includes("may still have other drafts"),
