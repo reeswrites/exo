@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { env, corpus } from "./harness.mjs";
-import { TOOLS, cap, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
+import { TOOLS, CLASSES, DOMAINS, KINDS, cap, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
 import worker from "../src/index.js";
 
 let pass = 0, fail = 0;
@@ -699,6 +699,35 @@ console.log("\n── drafts ──");
   }
   ok(!TOOLS.drafts.schema.properties.id && !TOOLS.drafts.schema.properties.offset,
      "no cursor, no id (ADR-0007)");
+}
+
+console.log("\n── taxonomy (ADR-0015) ──");
+{
+  // A facet nothing checks is a facet that drifts, and an unclassified tool is
+  // the one that gets called for the wrong reason. The vocabularies are closed
+  // on purpose: widening one should be an edit to tools.js and an argument in
+  // the ADR, not a typo that quietly invents a ninth class.
+  const entries = Object.entries(TOOLS);
+  const unfiled = entries.filter(([, t]) => !t.class || !t.domain || !t.kind).map(([n]) => n);
+  ok(unfiled.length === 0, `every tool declares class, domain and kind${unfiled.length ? " — missing: " + unfiled : ""}`);
+
+  const bad = entries.filter(([, t]) =>
+    !CLASSES.includes(t.class) || !DOMAINS.includes(t.domain) || !KINDS.includes(t.kind)).map(([n]) => n);
+  ok(bad.length === 0, `every facet value is in the closed vocabulary${bad.length ? " — offenders: " + bad : ""}`);
+
+  // The one implication the taxonomy asserts: a lens owns no rows of its own,
+  // so it cannot be fixed to a single domain. If a lens ever gets a domain, it
+  // stopped being a lens and became a tool that should say which zone it reads.
+  const fixedLens = entries.filter(([, t]) => t.class === "lens" && t.domain !== "*").map(([n]) => n);
+  ok(fixedLens.length === 0, `class:lens implies domain:"*"${fixedLens.length ? " — offenders: " + fixedLens : ""}`);
+
+  // The facets are internal. tools/list is the MCP contract and must carry
+  // exactly name, description and inputSchema — leaking our filing system into
+  // it would make every client's tool descriptor depend on our bookkeeping.
+  const listed = (await post({ jsonrpc: "2.0", id: 1, method: "tools/list" }).then((r) => r.json()))
+    .result.tools;
+  ok(listed.every((t) => Object.keys(t).sort().join() === "description,inputSchema,name"),
+     "tools/list still exposes name, description and inputSchema only");
 }
 
 console.log("\n── documentation ──");

@@ -136,6 +136,34 @@ async function readOne(env, { topic, kind, table, key, select, missing, onClip }
   };
 }
 
+/**
+ * Three orthogonal facets on every tool (ADR-0015). They are not decoration:
+ * `class` is what would make an answer a lie, `domain` is what the rows are
+ * about, `kind` is what one row is. The README table is generated from them and
+ * test/run.mjs fails on an unknown value, so a new tool cannot ship unclassified.
+ *
+ * `class` — the act that produced the row, which is what a caller gets wrong.
+ *   revealed    they did it; no intent was stated (plays, ratings, commits)
+ *   authored    their words, deliberately written
+ *   intent      declared want, not consummated — and nobody prunes these
+ *   possession  they paid for it and kept it
+ *   dialogue    co-authored; half of it is another model and is not them
+ *   derived     a machine concluded it (T2) — never quote it as theirs
+ *   world       not about them at all; a candidate pool
+ *   lens        owns no rows; joins across the classes above
+ *
+ * `domain` — what the rows are about. "*" means the caller chooses: the tool
+ * takes the domain as an argument rather than being fixed to one. class:lens
+ * implies domain:"*"; the reverse does not hold.
+ *
+ * `kind` — the shape of one row, which predicts the failure mode. A judgement
+ * is unreadable without its scale, a pointer goes stale silently, a vector is
+ * never quotable, and an event is the only kind that cannot lie about recency.
+ */
+export const CLASSES = ["revealed", "authored", "intent", "possession", "dialogue", "derived", "world", "lens"];
+export const DOMAINS = ["culture", "table", "mind", "workshop", "commitments", "world", "*"];
+export const KINDS = ["event", "judgement", "text", "entity", "pointer", "vector", "mixed"];
+
 export const TOOLS = {
   whats_relevant: {
     class: "derived", domain: "mind", kind: "vector",
