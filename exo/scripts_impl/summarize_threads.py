@@ -1,7 +1,7 @@
 """`wh summarize-threads` — a distillation of the long conversations.
 
-Poke asked where his head landed on the 80-turn rabbit holes, not just what they
-were called. `landed` answers that verbatim, but a closing turn is where a
+Poke asked where the owner's thinking landed on the 80-turn rabbit holes, not
+just what they were called. `landed` answers that verbatim, but a closing turn is where a
 conversation stopped, which is not always where it arrived.
 
 Deliberate constraints, each from a number rather than a preference:
@@ -15,14 +15,14 @@ Deliberate constraints, each from a number rather than a preference:
                          never regenerates and `wh verify` stays deterministic.
                          Generating on read would put a model call in the latency
                          path of every search and re-bill the same thread forever.
-  his turns only         the assistant's side is not summarized and not stored.
+  owner turns only       the assistant's side is not summarized and not stored.
   attributed             the model is recorded on every row. This is machine
-                         prose about him, the one thing the vault's authorship
+                         prose about the owner, the one thing the vault's authorship
                          rule forbids inbound — permitted here because it goes
                          OUT, is never written to the vault, is grounds=false,
                          and ships beside the verbatim it derives from.
   never embedded         summaries stay out of every vector space, so search
-                         keeps returning his words rather than a paraphrase.
+                         keeps returning the owner's words rather than a paraphrase.
 
 Absent a token this is a no-op: existing summaries stand, nothing fails.
 """
@@ -99,8 +99,8 @@ def _load_cache() -> dict[str, dict]:
 def _generate(account: str, token: str, text: str, ended_open: bool = False) -> str | None:
     # Told, not inferred. Asked to judge for itself whether a thread concluded,
     # the model said "they concluded" for 96 of 96 — including 21 that end on a
-    # question from him, where it turned his asking into his deciding. Whether
-    # the last thing he wrote is a question is a fact about the text, so it is
+    # question from the owner, where it turned asking into deciding. Whether
+    # the last thing written is a question is a fact about the text, so it is
     # computed here and stated, rather than left to the summarizer to notice.
     prefix = (
         "This conversation ENDED OPEN: the last thing they wrote was a question "

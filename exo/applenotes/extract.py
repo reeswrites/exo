@@ -179,7 +179,7 @@ _STYLE_MAP = {
     1: "heading",
     2: "subheading",
     # 4 = monospaced. Deliberately unmapped: those paragraphs already hold
-    # literal Markdown he pasted ("## Methodology"); prefixing would corrupt it.
+    # literal pasted Markdown ("## Methodology"); prefixing would corrupt it.
     100: "numbered",
     101: "dashed",
     102: "bullet",     # dotted list — 362 paragraphs, previously unmapped
@@ -296,7 +296,7 @@ def _apply_structure(text: str, runs: list) -> tuple[str, list[str]]:
         # ── Pass 2: rebuild text with Markdown prefixes ───────────────────────
         # Block quote wins the outer position: "> - item", never "- > item",
         # so a quoted list still reads as quoted (ADR-0003 — the marker is the
-        # only record that these bytes are not his).
+        # only record that these bytes were quoted, not authored).
         parts: list[str] = []
         para_start = 0
         for i, ch in enumerate(text):

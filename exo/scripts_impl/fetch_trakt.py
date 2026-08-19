@@ -155,7 +155,7 @@ def authorize() -> int:
     machine on 3.14, `requests` absent). This needs nothing but urllib.
 
     Prints the code and waits. The approval happens on trakt.tv, in the owner's
-    browser, under his account — this only polls for the result.
+    own browser and account — this only polls for the result.
     """
     import time
 

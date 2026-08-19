@@ -1,14 +1,14 @@
 """T0 television — Trakt's watched shows.
 
-An entire medium was missing. He has written verdicts about Death Note, Severance
-and Lie to Me, so an assistant could read his opinions on television while having
-no record that he watches any: 358 shows and 7,719 episodes sat in
+An entire medium was missing. The record holds verdicts on Death Note, Severance
+and Lie to Me, so an assistant could read those opinions on television while
+having no record of any watching at all: 358 shows and 7,719 episodes sat in
 `trakt-cache.json` with no loader.
 
 One row per SHOW, not per episode. 7,719 episode rows would dominate every
 count in the store — more rows than notes and atoms combined — while answering
-nothing an assistant asks. "What does he watch" is a question about shows;
-episode counts belong on the show as a measure of how far he got.
+nothing an assistant asks. "What is watched" is a question about shows;
+episode counts belong on the show as a measure of how far it got.
 
 `created` is last_watched_at, so recency means the same thing it does for films
 and scrobbles rather than "when the row was written".

@@ -59,8 +59,8 @@ def _platform(url: str) -> str:
     """Where a save came from, derived once at load rather than regexed per query.
 
     `kind` says what a thing IS (video, article); platform says where it lives,
-    and they answer different questions — "what videos has he saved" is not "what
-    has he saved from YouTube", since a YouTube link the API never typed comes
+    and they answer different questions — "what videos were saved" is not "what
+    was saved from YouTube", since a YouTube link the API never typed comes
     through as a plain link.
     """
     u = (url or "").lower()
@@ -97,11 +97,11 @@ def _row(bm: dict, collections: dict[str, str]) -> Row:
             # which reads as data rather than as a bug.
             "tags": _tags(bm.get("tags")),
             "platform": _platform(bm.get("link", "")),
-            # `note` is HIS commentary on why a link was worth keeping — the same
-            # category as verdicts and reviews, and 1,906 saves have one.
+            # `note` is the OWNER's commentary on why a link was worth keeping —
+            # the same category as verdicts and reviews, and 1,906 saves have one.
             # `excerpt` is the page's own description, which is the world's
             # words; kept apart so an assistant never quotes marketing copy back
-            # to him as his own thought.
+            # as if it were an authored thought.
             "note": (bm.get("note") or "").strip(),
             "excerpt": (bm.get("excerpt") or "").strip(),
         },
@@ -129,7 +129,7 @@ def _from_api(token: str) -> list[Row]:
                  "collection_id": (it.get("collection") or {}).get("$id"),
                  "created": it.get("created"), "link": it.get("link"), "tags": it.get("tags"),
                  # The MCP's find_bookmarks does not return these; the REST API
-                 # does. Dropping them here is why a token buys his commentary
+                 # does. Dropping them here is why a token buys the commentary
                  # and not merely fresher links.
                  "note": it.get("note"), "excerpt": it.get("excerpt")},
                 cols,

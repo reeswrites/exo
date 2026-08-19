@@ -309,7 +309,7 @@ def run(dry_run: bool = False) -> int:
                 # already; drafts hit it immediately, because zero drafts is the
                 # normal state of a writer between pieces rather than an edge
                 # case. Emit the shape explicitly so the schema is the same on
-                # the day he starts writing and the day he has finished.
+                # the day writing starts and the day it has finished.
                 sql = """
                     SELECT *,
                            NULL::VARCHAR AS slug,    NULL::VARCHAR AS title,
@@ -360,15 +360,15 @@ def run(dry_run: bool = False) -> int:
             elif zone == "t1_recipe" and _has_column(con, "t1_recipe", "is_seed"):
                 # The seed pool is synthetic — machine-generated combinations
                 # with no title, carrying is_seed=true. It exists so the eating
-                # vertical has something to rank against; it is not his cooking.
+                # vertical has something to rank against; it is not real cooking.
                 # Published, it was 50 invented recipes against 10 real ones, and
-                # an assistant asking what he cooks would mostly have been told
+                # an assistant asked what the owner cooks would mostly have been told
                 # about food that does not exist. The store keeps them; the
                 # surface does not.
                 sql = "SELECT * FROM t1_recipe WHERE NOT COALESCE(is_seed, false)"
                 params = []
             elif zone == "t0_chat":
-                # BOTH sides now. His turns alone were a distorted record: 957 of
+                # BOTH sides now. One side alone was a distorted record: 957 of
                 # 2,136 are under 80 chars, and most of those are questions or
                 # redirects — "so not the f'(x) kind of derivative?" means
                 # nothing without the turn it answers. A reader cannot derive the
@@ -380,7 +380,7 @@ def run(dry_run: bool = False) -> int:
                 #
                 # Never embedded. The assistant's prose is retrievable as context
                 # inside one thread, but it does not enter any vector space, so
-                # search keeps returning his words rather than a model's.
+                # search keeps returning the owner's words rather than a model's.
                 ct = manifest.get("chat_topics", {})
                 # Windowed with t0_chat_topic, not just held-title filtered. The
                 # window is a publication decision and it was applied to one of
@@ -442,10 +442,10 @@ def run(dry_run: bool = False) -> int:
                 params = [hold_titles]
             elif zone == "t0_event" and _has_column(con, "t0_event", "start"):
                 # Candidate events are a utility, not a record. They describe the
-                # world rather than him, they age out on a fixed date, and the
+                # world rather than the owner, they age out on a fixed date, and the
                 # pool refreshes daily — so a past event is pure payload with no
                 # reader. The store keeps whatever the sources still list; the
-                # projection carries only what he could still act on.
+                # projection carries only what is still actionable.
                 # An empty zone still writes a parquet, but only with the
                 # provenance columns — naming `start` then throws and takes the
                 # whole publish down. An upstream that was not mirrored is a

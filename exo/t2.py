@@ -86,7 +86,7 @@ def _hash(*parts: str) -> str:
 
 def _cut_blocks(body: str) -> list[str]:
     """Verbatim spans. Boundaries: blank line, or an authorship flip (a
-    '>'-quoted line vs an unquoted one) so no atom is half his words / half a
+    '>'-quoted line vs an unquoted one) so no atom is half authored words / half a
     pasted quote. A contiguous list run stays one atom (no blank between)."""
     blocks: list[str] = []
     cur: list[str] = []
@@ -243,8 +243,8 @@ def embed_posts() -> list[Row]:
     guarantee nobody checks is a guarantee for exactly as long as nobody breaks it.
 
     Embedded text is title + description + the opening of the body. The
-    description is the post's own abstract — the highest-signal sentence he ever
-    wrote about it — so it earns its place ahead of 1,800 chars of prose.
+    description is the post's own abstract — the sharpest sentence it has about
+    itself — so it earns its place ahead of 1,800 chars of prose.
     """
     rows = read_source(
         "SELECT id, title, description, body FROM t1_post ORDER BY id"
@@ -260,7 +260,7 @@ def embed_posts() -> list[Row]:
 
 # ────────────────────────────── affinity ─────────────────────────────
 def affinity() -> list[Row]:
-    """artist -> (plays, notes he wrote mentioning them, blended score).
+    """artist -> (plays, authored notes mentioning them, blended score).
     Worked cross-zone example. Reads ONLY through the wall (t0_music + t1_notes).
     Word-boundary match (normalize punctuation to spaces); illustrative, not
     production taste scoring."""

@@ -189,8 +189,8 @@ VAULT_SYNC_EXCLUDES = ("garden/", ".git/", ".DS_Store", "*.bak", ".*.bak")
 DC_EVENTS_WEB = _optional("EXO_DC_EVENTS_WEB", "write", "dc_events_web")
 
 # ────────────────────────────── the workshop ──────────────────────────────
-# His repos, scanned on the laptop by `exo scan-projects` into a snapshot, so CI
-# rebuilds the zones without needing 40 checkouts (ADR-0011).
+# The owner's repos, scanned on the laptop by `exo scan-projects` into a
+# snapshot, so CI rebuilds the zones without needing 40 checkouts (ADR-0011).
 
 PROJECTS_ROOT = _path("EXO_PROJECTS_ROOT", "projects", "root", "..")
 # Top-level directory names never treated as project space. Not a privacy list —

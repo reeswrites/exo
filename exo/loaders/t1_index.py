@@ -7,7 +7,7 @@ queryable projection into zones/t1. Losing these parquets costs nothing —
 
 Four zones:
   note        raw/ + refined/ markdown (frontmatter + body)
-  verdict     media-verdicts.json (his ratings/opinions)
+  verdict     media-verdicts.json (authored ratings/opinions)
   visit       restaurant-visits.csv (rated dining ground truth)
   open_thread open-questions/ (human questions found in raw; has state)
 
@@ -111,14 +111,14 @@ def verdicts() -> list[Row]:
 
 
 def film_reviews() -> list[Row]:
-    """His written Letterboxd reviews — T1, his words, same category as verdicts.
+    """Written Letterboxd reviews — T1, authored words, same category as verdicts.
 
     The reviews export carries a `Review` column the film loader never read, so
-    115 pieces of his own criticism sat on disk while an assistant had only the
-    10 media-verdicts to judge how he thinks about film.
+    115 pieces of that criticism sat on disk while an assistant had only the
+    10 media-verdicts to judge how the owner thinks about film.
 
     Kept apart from t0_film rather than folded into it: t0_film is what
-    Letterboxd recorded (author=external), a review is what he wrote
+    Letterboxd recorded (author=external), a review is what the owner wrote
     (author=human, grounds=True). Same distinction verdicts already draw.
 
     The RSS cache has no review field, so unlike ratings these only refresh on a
@@ -461,7 +461,7 @@ def run() -> None:
                      ("draft", lambda: __import__(
                          "exo.loaders.drafts", fromlist=["load"]).load()),
                      ("item", items), ("item_event", item_events),
-                     # his repos, from the snapshot `wh scan-projects` writes
+                     # the owner's repos, from the snapshot `wh scan-projects` writes
                      ("project", _proj("repos")), ("project_commit", _proj("commits")),
                      ("project_doc", _proj("docs")), ("project_open", _proj("open_work"))):
         rows = fn()
@@ -495,7 +495,7 @@ def posts() -> list[Row]:
 
     The dir was already synced for `recipes_blog`, which reads the 10 posts with
     `type: recipe` and ignores the other 309. That made the blog the one body of
-    his writing the read surface could not reach: notes are indexed, chat is
+    authored writing the read surface could not reach: notes are indexed, chat is
     indexed, and the finished, public, edited version of the same thinking was
     invisible.
 

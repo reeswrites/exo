@@ -1,6 +1,6 @@
-"""`wh scan-projects` — snapshot his repos into raw/projects.json.
+"""`wh scan-projects` — snapshot the owner's repos into raw/projects.json.
 
-The workshop floor is the one part of his life the store could not see. Notes,
+The workshop floor is the one part of a life the store could not see. Notes,
 scrobbles, ratings and events were all ingested; the ~40 repos those notes are
 *about* were not, so a reader could recite the thesis of a project and not know
 whether it had been touched since March, or that it exists at all.
@@ -16,7 +16,7 @@ export. The loader downstream reads only the snapshot.
 Four things are captured, because "aware of my projects" is four questions:
 
     repo        what exists, where it points, how alive it is
-    commits     what he actually worked on, and when
+    commits     what was actually worked on, and when
     docs        README / CONTEXT / ADRs / plans — the arguments each repo makes
     open work   TODO markers, unchecked plan items, uncommitted files
 
@@ -348,7 +348,7 @@ def run() -> int:
 
     # Refuse to replace a good snapshot with an empty one. Same reasoning as the
     # event fetchers: a scan that finds nothing (wrong root, revoked disk access)
-    # must not be the reason the read surface forgets he builds things.
+    # must not be the reason the read surface forgets anything is built here.
     out = config.PROJECTS_SNAPSHOT
     if not all_meta and out.exists():
         print("scan-projects: found no repos — keeping the existing snapshot")

@@ -1,15 +1,15 @@
-"""T1 projects — his repos, from the snapshot `wh scan-projects` writes.
+"""T1 projects — the owner's repos, from the snapshot `wh scan-projects` writes.
 
 Four zones, because the reader asks four different questions:
 
     project        what exists and how alive it is
-    project_commit what he worked on, dated
+    project_commit what was worked on, dated
     project_doc    README / CONTEXT / ADR / plan prose
     project_open   markers, unchecked plan items, uncommitted files
 
-T1 and author=human throughout. A commit subject and an ADR are his words about
-his own work — the same category as a note, not something the outside world
-recorded about him. `regenerable` stays False for the same reason the vault's
+T1 and author=human throughout. A commit subject and an ADR are authored words
+about authored work — the same category as a note, not something the outside
+world recorded. `regenerable` stays False for the same reason the vault's
 projection does: losing these parquets costs a rescan of a live record, but the
 record is not derived from a lower tier.
 
@@ -72,7 +72,7 @@ def repos() -> list[Row]:
                 "slug": r["slug"],
                 "name": r.get("name", ""),
                 # '' for a repo directly under the root, else the folder it was
-                # filed under (hiatus/, one-offs/) — his own shelving, and the
+                # filed under (hiatus/, one-offs/) — deliberate shelving, and the
                 # only signal in the tree that a thing was set down deliberately.
                 "grouping": r.get("group", ""),
                 "github": r.get("github", ""),
@@ -107,9 +107,9 @@ def commits() -> list[Row]:
                 "repo": c["repo"],
                 "sha": c["sha"][:10],
                 "subject": c.get("subject", ""),
-                # Who git recorded. Almost always him; kept because a repo with a
-                # second name in it is a collaboration, which is a fact about the
-                # project a reader should not have to guess at.
+                # Who git recorded. Almost always the owner; kept because a repo
+                # with a second name in it is a collaboration, which is a fact
+                # about the project a reader should not have to guess at.
                 "committed_by": c.get("committed_by", ""),
                 "committed_at": c.get("date", ""),
             },

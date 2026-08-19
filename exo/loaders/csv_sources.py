@@ -122,13 +122,13 @@ def letterboxd() -> list[Row]:
     ]
     # Keyed on title+year, NOT on the uri. Letterboxd hands out a different
     # permalink per context — https://boxd.it/2a38 for the film, a separate
-    # boxd.it id for the diary entry, and letterboxd.com/<user>/film/... for his
-    # page — so keying on the uri counted one watch of The Conversation three
+    # boxd.it id for the diary entry, and letterboxd.com/<user>/film/... for the
+    # member page — so keying on the uri counted one watch of The Conversation three
     # times and inflated the library by 116 phantom films. The dates disagree
     # too (2026-03-18 vs -19, a timezone), so they cannot break the tie either.
     #
     # This collapses genuine rewatches to one row. That is the right trade here
-    # — he does not rewatch, and the alternative was 117 films that do not
+    # — the owner does not rewatch, and the alternative was 117 films that do not
     # exist. If rewatch tracking is ever wanted, it needs the diary entry id as
     # its own field rather than as identity.
     def _film_key(r):

@@ -1,11 +1,11 @@
-"""T1 collections — what he owns, as distinct from what he consumed.
+"""T1 collections — what is owned, as distinct from what was consumed.
 
-Ownership is a different signal. 40,561 scrobbles say what he played; 89 records
-say what he cared enough to buy and keep in a room, and two of his blog posts are
-about how he decides which. Nothing in the store carried that until now.
+Ownership is a different signal. 40,561 scrobbles say what was played; 89 records
+say what was worth buying and keeping in a room, and two blog posts in the record
+are about how that choice gets made. Nothing in the store carried that until now.
 
-T1, author=human, grounds=True: these are his own records, hand-maintained, the
-same category as t1_visits. Several carry his prose outright — every fragrance
+T1, author=human, grounds=True: these are the owner's own records, hand-maintained,
+the same category as t1_visits. Several carry authored prose outright — every fragrance
 has a `my_thoughts`.
 
 One zone with a `kind` rather than four zones: they answer the same question and
@@ -37,7 +37,7 @@ def _json(name: str) -> list[dict]:
 
 
 def _plays(v) -> str:
-    """Scrobble count for a record he owns, as a plain number."""
+    """Scrobble count for an owned record, as a plain number."""
     if isinstance(v, dict):
         n = v.get("scrobbles")
         return str(n) if isinstance(n, int) else ""
@@ -72,13 +72,13 @@ def load() -> list[Row]:
             "year": str(r.get("release_date") or ""),
             "acquired": r.get("date_purchased") or None,
             # `listened` is the interesting column: owning a record and having
-            # played it are different facts, and he tracks both. It arrives as
+            # played it are different facts, and both are tracked. It arrives as
             # {"scrobbles": N}; the blanket str() below would render that as the
             # literal "{'scrobbles': 110}", so pull the number out here.
             "plays": _plays(r.get("listened")),
             "url": r.get("anchor", ""),
             # Present in the sheet, absent from the JSON copy Exo used
-            # to read: what he paid and where he bought it.
+            # to read: what it cost and where it was bought.
             "cost": r.get("total_cost") or r.get("record_cost") or "",
             "retailer": r.get("retailer_name", ""),
             "location": r.get("location", ""),
@@ -105,7 +105,7 @@ def load() -> list[Row]:
             "form": f.get("type", ""),
             "notes": " / ".join(x for x in (
                 f.get("top_notes"), f.get("heart_notes"), f.get("base_notes")) if x),
-            # his own words, the reason this collection is worth serving at all
+            # authored words, the reason this collection is worth serving at all
             "thoughts": f.get("my_thoughts", ""),
             "url": f.get("profile", ""),
         }))

@@ -128,7 +128,7 @@ async function recordCaller(env, req, outcome) {
  * out it happened. Never fails the request: an unlogged answer beats an outage.
  *
  * Carries the caller's ip and asn as well as the call, because with more than
- * one token holder (his own machine, and whatever assistant he has connected)
+ * one token holder (the owner's own machine, and whatever assistant is connected)
  * "what was asked" without "by whom" cannot tell a normal week from a compromise.
  *
  * Lives outside the published set, so `import.sh` protects `wh_` and will not
@@ -247,7 +247,7 @@ export default {
 
     // Token in a header, never the URL — URLs reach logs, referrers and history
     // (ADR-0007). This proves the CALLER is who they say; it cannot prove they
-    // act on his intent, which is why the caps and the log exist.
+    // act on the owner's intent, which is why the caps and the log exist.
     //
     // Several shapes accepted because clients disagree about which header an
     // "API key" belongs in, and the failure mode is an opaque 401 with no way to

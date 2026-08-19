@@ -14,7 +14,7 @@
  *
  * 16KB, not the 4KB this started at: that number was sized to what a chat turn
  * could hold, and this is a context layer for assistants generally. 16KB returns
- * ~99% of his notes whole and still makes a full-corpus pull ~250 logged calls.
+ * ~99% of notes whole and still makes a full-corpus pull ~250 logged calls.
  */
 import { search } from "./search.js";
 
@@ -91,7 +91,7 @@ function fitInto(row, field, items, notePlaceholder) {
  * The one pile that is not here. Letterboxd's watchlist is not in the corpus —
  * only ratings and reviews were ever exported — and t0_tv is watch history, not
  * a queue. Every backlog answer carries this, because an assistant that sees
- * read/resume/make/buy and no watch will otherwise conclude he has nothing
+ * read/resume/make/buy and no watch will otherwise conclude nothing is
  * queued to watch, which is the opposite of true.
  */
 const WATCH_GAP =
@@ -147,7 +147,7 @@ export const TOOLS = {
     },
     async run(env, { topic }) {
       const hits = await search(env, topic, { k: MAX_ROWS });
-      // A post hit is the one kind that has somewhere to send him. Its ref is
+      // A post hit is the one kind that has somewhere to send a reader. Its ref is
       // the slug, and the permalink is a pure function of it, so the link costs
       // no round trip — and an answer with a link beats one that paraphrases
       // an essay back at its own author.
@@ -425,8 +425,8 @@ export const TOOLS = {
     },
     async run(env, { name }) {
       // Shelf-aware, like `consumption`: t0_book is the whole Goodreads library
-      // and 436 of its rows are to-read, so an unfiltered count says he read 920
-      // books when the number is 443.
+      // and 436 of its rows are to-read, so an unfiltered count reports 920
+      // books read when the number is 443.
       const M = {
         film:  { table: "t0_film",   unit: "films",      verdicts: "films",
                  rate: { col: "rating",       scale: "0-5",  label: "title",      url: "origin_ref" },
@@ -520,7 +520,7 @@ export const TOOLS = {
       }
 
       const notes = [];
-      // Calibration is not decoration here: his dining median is 8.1, so an 8
+      // Calibration is not decoration here: the dining median is 8.1, so an 8
       // read against a 0-10 scale looks like praise and is not.
       if (d.calibrated) notes.push("his 0-10 dining scale runs high — call taste_summary(kind:'dining') before reading any of these numbers as praise");
       if (name === "film") notes.push(WATCH_GAP);
@@ -541,7 +541,7 @@ export const TOOLS = {
       // t0_book is the whole Goodreads library, not a reading log: 436 of its
       // rows are to-read and 38 partly-read, and `created` falls back to
       // date_added, so a shelved book looks consumed. Reporting one total said
-      // he had read 920 books when the number is 443.
+      // 920 books were read when the number is 443.
       const T = {
         music: { table: "t0_music", where: "" },
         books: { table: "t0_book",  where: "WHERE shelf = 'read'" },
@@ -561,8 +561,8 @@ export const TOOLS = {
         const rec = { medium: name, total: row?.n ?? 0, last_logged: row?.last_logged ?? null };
         // Beer rows are check-ins, not distinct beers.
         if (name === "tv") {
-          // Shows and episodes are different questions: 358 shows is what he
-          // watches, 7,719 episodes is how much.
+          // Shows and episodes are different questions: 358 shows is what is
+          // watched, 7,719 episodes is how much.
           const [e] = await q(env, `SELECT sum(episodes_watched) AS n FROM t0_tv`);
           rec.total_label = "shows";
           rec.episodes_watched = e?.n ?? null;
@@ -663,7 +663,7 @@ export const TOOLS = {
       // Even collapsed, ordering purely by date let the largest feed take half
       // the answer regardless of relevance. Round-robin by source so a week of
       // library sessions cannot crowd out the cinema and the venues \u2014 pool
-      // composition should not decide what he is shown.
+      // composition should not decide what gets shown.
       const rows = await q(
         env,
         `WITH f AS (
@@ -765,7 +765,7 @@ export const TOOLS = {
          GROUP BY artist ORDER BY plays DESC LIMIT 5`,
         from, to
       );
-      // Ratings ride along: "he watched X" and "he watched X and gave it 5"
+      // Ratings ride along: "X was watched" and "X was watched and rated 5"
       // are different facts, and the second is the one worth having. Each
       // branch is limited separately — a single LIMIT over the UNION let a
       // heavy film month discard the books entirely.
@@ -824,7 +824,7 @@ export const TOOLS = {
     },
     async run(env, { medium, min_rating }) {
       // scale is carried per row because the mediums disagree: Letterboxd and
-      // Goodreads are 0-5, his restaurant log is 0-10. Returning a bare 9.5
+      // Goodreads are 0-5, the restaurant log is 0-10. Returning a bare 9.5
       // invites an assistant to read it as "off the charts" on a five-point
       // scale, or a 4.5 film as mediocre.
       const SRC = {
@@ -901,10 +901,10 @@ export const TOOLS = {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const rows = await q(
         env,
-        // plays is computed, not stored. The sheet records what he owns and the
+        // plays is computed, not stored. The sheet records what is owned and the
         // store holds 40,561 scrobbles, so the count is a join rather than a
         // field to keep in sync, and fresher than the enrichment it replaces.
-        // Matched on artist AND album (74 of 89): artist alone reported his
+        // Matched on artist AND album (74 of 89): artist alone reported the
         // total Bladee plays against every Bladee record.
         `SELECT c.kind, c.title, c.creator, c.genre, c.form, c.acquired,
                 c.url, c.thoughts, c.cost, c.retailer, p.plays
@@ -1000,8 +1000,8 @@ export const TOOLS = {
       const [tot] = await q(env,
         `SELECT count(*) AS n, max(substr(created,1,10)) AS newest,
                 sum(CASE WHEN note <> '' THEN 1 ELSE 0 END) AS noted FROM t0_raindrop`);
-      // Say when his commentary is absent rather than letting silence read as
-      // "he saves things without comment". 1,906 of these carry a note in
+      // Say when the commentary is absent rather than letting silence read as
+      // "these were saved without comment". 1,906 of these carry a note in
       // raindrop; none are here until a token-based sync pulls them, because the
       // MCP that seeded this snapshot does not return the field.
       const noted = tot?.noted ?? 0;
@@ -1032,8 +1032,8 @@ export const TOOLS = {
       const dir = order === "oldest" ? "ASC" : "DESC";
 
       // The kinds are not one table. Books carry their queue state in a shelf
-      // column; the making and buying queues are raindrop collections he
-      // created by hand. Keeping them as named kinds rather than one union
+      // column; the making and buying queues are raindrop collections created
+      // by hand. Keeping them as named kinds rather than one union
       // means each can say what it actually knows.
       const SHELVES = {
         read: ["to-read"],
@@ -1209,7 +1209,7 @@ export const TOOLS = {
       };
       if (want !== "turns") {
         out.landed = hit.landed || null;
-        // Attributed, and never presented as his. The verbatim `landed` sits
+        // Attributed, and never presented as authored. The verbatim `landed` sits
         // beside it deliberately: a summary a reader can check against the
         // source is a different object from one they must believe.
         if (hit.summary) {
@@ -1219,7 +1219,7 @@ export const TOOLS = {
       }
 
       if (want === "dialogue") {
-        // Interleaved and speaker-tagged. His turns are often questions —
+        // Interleaved and speaker-tagged. Owner turns are often questions —
         // returning them alone reads as a list of half-thoughts and invites a
         // reader to reconstruct the missing half by guessing.
         const turns = await q(
@@ -1243,7 +1243,7 @@ export const TOOLS = {
       }
 
       if (want !== "conclusion") {
-        // His turns are short (176 chars average), so a thread's whole side
+        // Owner turns are short (176 chars average), so a thread's whole side
         // usually fits. Ordered, and capped by the same budget as everything
         // else rather than by a turn count, because thread lengths vary 100x.
         const turns = await q(
@@ -1307,13 +1307,13 @@ export const TOOLS = {
     },
   },
   /**
-   * The four project tools. What he builds was the one large pile this surface
-   * could not see: an assistant could quote his notes ABOUT a project and not
+   * The four project tools. The workshop was the one large pile this surface
+   * could not see: an assistant could quote the notes ABOUT a project and not
    * know whether it had been touched since spring, or that it existed at all.
    *
    * The store holds prose and metadata only — READMEs, ADRs, commit subjects,
    * TODO markers. No source code is captured at any layer, so a reader that
-   * offers to review his code from here is offering something that does not
+   * offers to review the code from here is offering something that does not
    * exist. Every description below says so, because the tool list is the only
    * thing a client reads before deciding what this server can do.
    */
@@ -1460,7 +1460,7 @@ export const TOOLS = {
 
       if (full) {
         // One document whole. Excerpting an ADR is how you end up quoting the
-        // option he rejected: the decision is at the bottom, the alternatives
+        // option that was rejected: the decision is at the bottom, the alternatives
         // are in the middle, and a keyword hit lands anywhere.
         if (!rows.length) return { rows: [], note: "no document matched" };
         return cap([rows[0]]);
