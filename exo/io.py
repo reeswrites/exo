@@ -94,3 +94,21 @@ def write_zone(tier: str, name: str, rows: list[Row]) -> Path:
 
 def row_count(path: Path) -> int:
     return pq.read_metadata(path).num_rows if path.exists() else 0
+
+
+def markdown(base, *, recursive: bool = False, exclude: set[str] | None = None):
+    """Every .md file under `base`, sorted, minus the ones that are not writing.
+
+    Dotfiles are always excluded, and that is not tidiness. macOS `tar` writes
+    AppleDouble sidecars — `._name.md` — which a listing on macOS hides and
+    which become real 163-byte binary files the moment the archive is opened on
+    Linux. They match *.md. In CI they turned one draft into three, and the
+    binary rows they produced were rejected by D1 without an error, so the
+    publish reported success and the table stayed empty.
+
+    Anything that globs a mirrored directory has this hazard; the fix belongs in
+    one place rather than in ten.
+    """
+    it = base.rglob("*.md") if recursive else base.glob("*.md")
+    skip = exclude or set()
+    return [p for p in sorted(it) if not p.name.startswith(".") and p.name not in skip]

@@ -343,3 +343,27 @@ def test_draft_projection_keeps_its_shape_when_empty():
     assert set(t.column("author").to_pylist()) == {"human"}
     assert set(t.column("grounds").to_pylist()) == {True}
     assert len(set(t.column("id").to_pylist())) == t.num_rows
+
+
+def test_markdown_listing_skips_apple_double_sidecars(tmp_path):
+    """`._name.md` is a macOS xattr sidecar, not writing.
+
+    A listing on macOS hides them; opening the same archive on Linux
+    materialises 163-byte binary files that match *.md. That is how one draft
+    became three in CI, and how a table ended up empty in production with every
+    step green.
+    """
+    from exo import io as exo_io
+    (tmp_path / "real.md").write_text("# real\n\nprose")
+    (tmp_path / "._real.md").write_bytes(b"\x00\x05\x16\x07")
+    (tmp_path / "README.md").write_text("furniture")
+    found = [p.name for p in exo_io.markdown(tmp_path, exclude={"README.md"})]
+    assert found == ["real.md"]
+
+
+def test_sql_literal_refuses_a_value_d1_would_drop():
+    """A NUL byte is not escapable — D1 takes the batch and loses it."""
+    from exo.scripts_impl import publish_cf
+    assert publish_cf._sql_literal("it's fine") == "'it''s fine'"
+    with pytest.raises(publish_cf.BinaryValue):
+        publish_cf._sql_literal("bad\x00value")

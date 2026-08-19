@@ -68,6 +68,18 @@ _INDEXES = {
 _MAX_STATEMENT_BYTES = 40_000
 
 
+# Characters that make a statement unloadable rather than merely ugly. A NUL
+# inside a string literal is the one that matters: D1 accepted such a batch,
+# reported success, and left the table empty — the publish looked green and the
+# surface served nothing. Doubling the quote handles apostrophes; nothing
+# handles a NUL, so it must not get this far.
+_UNLOADABLE = {"\x00"}
+
+
+class BinaryValue(ValueError):
+    """A value that cannot survive the trip to D1, caught before it is written."""
+
+
 def _sql_literal(v) -> str:
     if v is None:
         return "NULL"
@@ -75,7 +87,17 @@ def _sql_literal(v) -> str:
         return "1" if v else "0"
     if isinstance(v, (int, float)):
         return repr(v)
-    return "'" + str(v).replace("'", "''") + "'"
+    text = str(v)
+    bad = _UNLOADABLE & set(text)
+    if bad:
+        # Loud, and with enough of the value to recognise. A NUL here means a
+        # loader read something that is not text — an AppleDouble sidecar, a
+        # binary file that matched a glob — and the honest response is to stop
+        # rather than to publish a row that will vanish without a word.
+        raise BinaryValue(
+            f"value contains {len(bad)} unloadable byte(s) and would be dropped "
+            f"by D1 in silence: {text[:80]!r}")
+    return "'" + text.replace("'", "''") + "'"
 
 
 def _emit_table(con, parquet, table, out_dir) -> tuple[str, int]:

@@ -68,7 +68,7 @@ def notes() -> list[Row]:
     base = config.VAULT
     rows: list[Row] = []
     for sub in _NOTE_DIRS:
-        for path in sorted((base / sub).rglob("*.md")):
+        for path in io.markdown(base / sub, recursive=True):
             text = path.read_text(encoding="utf-8", errors="replace")
             fm, body = _split_frontmatter(text)
             rel = str(path.relative_to(base))
@@ -276,7 +276,7 @@ def recipes_blog() -> list[Row]:
         return []
     rows: list[Row] = []
     rid = 1000
-    for path in sorted(posts.glob("*.md")):
+    for path in io.markdown(posts):
         fm, body = _split_frontmatter(path.read_text(encoding="utf-8"))
         if str(fm.get("type", "")).strip() != "recipe":
             continue
@@ -330,7 +330,7 @@ def open_threads() -> list[Row]:
     if not base.exists():
         return []
     rows: list[Row] = []
-    for path in sorted(base.rglob("*.md")):
+    for path in io.markdown(base, recursive=True):
         text = path.read_text(encoding="utf-8", errors="replace")
         fm, body = _split_frontmatter(text)
         rows.append(Row(
@@ -364,7 +364,7 @@ def items() -> list[Row]:
     today = item_mod._d(item_mod._now_iso()[:10])
     rows: list[Row] = []
     for fam in ("task", "habit", "slot", "constraint"):
-        for path in sorted((config.ITEMS / fam).glob("*.md")):
+        for path in io.markdown(config.ITEMS / fam):
             fm = item_mod._split_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
             tid = fm.get("id")
             if not tid:
@@ -511,7 +511,7 @@ def posts() -> list[Row]:
         return []
     rows: list[Row] = []
     seen_slugs: dict[str, list[str]] = {}
-    for path in sorted(src.glob("*.md")):
+    for path in io.markdown(src):
         fm, body = _split_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
         slug = _s(fm.get("slug")) or path.stem
         title = _s(fm.get("title"))

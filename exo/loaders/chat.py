@@ -93,7 +93,7 @@ def build_units() -> list[dict]:
     base = config.VAULT
     chat_dir = base / "chat-logs"
     units: list[dict] = []
-    for p in sorted(chat_dir.glob("*.md")):
+    for p in io.markdown(chat_dir):
         if p.name == "promote-queue.md":
             continue
         fm, body = _split_frontmatter(p.read_text(encoding="utf-8", errors="replace"))

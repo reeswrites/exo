@@ -22,7 +22,7 @@ import re
 
 import yaml
 
-from .. import cache, config
+from .. import cache, config, io
 from ..api import read
 
 
@@ -65,7 +65,7 @@ def ondeck() -> list[dict]:
 def maps() -> list[dict]:
     base = config.VAULT
     rows = []
-    for p in sorted((base / "maps").glob("*.md")):
+    for p in io.markdown(base / "maps"):
         fm, body = _split_frontmatter(p.read_text(encoding="utf-8", errors="replace"))
         if fm.get("type") != "map":
             continue
@@ -88,14 +88,14 @@ def captures() -> list[dict]:
     Exo's own captures/ (the new home) AND any legacy life-terminal captures still in
     second-brain chat-logs, so display history is continuous across the retirement."""
     rows = []
-    for p in sorted(config.CAPTURES.glob("*.md")):
+    for p in io.markdown(config.CAPTURES):
         fm, body = _split_frontmatter(p.read_text(encoding="utf-8", errors="replace"))
         rows.append(cache.row("captures", {
             "title": str(fm.get("title", p.stem)), "cap_source": str(fm.get("source", "warehouse")),
             "path": "captures/" + p.name, "body": body.strip()[:400],
         }, source="warehouse.captures", created=str(fm.get("date", "") or "")[:10] or None))
     legacy = config.VAULT / "chat-logs"
-    for p in sorted(legacy.glob("*.md")) if legacy.exists() else []:
+    for p in (io.markdown(legacy) if legacy.exists() else []):
         if p.name == "promote-queue.md":
             continue
         fm, body = _split_frontmatter(p.read_text(encoding="utf-8", errors="replace"))

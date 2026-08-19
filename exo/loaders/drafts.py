@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from .. import config
+from .. import config, io
 from ..provenance import Row, stable_id
 
 # Repo furniture, not writing. md-writer's server excludes the same names.
@@ -65,9 +65,7 @@ def load() -> list[Row]:
         print("  drafts: no raw/drafts — run `wh sync-raw`")
         return []
     rows: list[Row] = []
-    for path in sorted(src.glob("*.md")):
-        if path.name in NOT_DRAFTS:
-            continue
+    for path in io.markdown(src, exclude=NOT_DRAFTS):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
             st = path.stat()
