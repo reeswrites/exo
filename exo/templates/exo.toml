@@ -27,6 +27,7 @@ exports           = "raw/exports"            # Last.fm / Letterboxd / Goodreads 
 posts             = "raw/posts"              # a mirror of your published markdown
 vault             = "raw/vault"              # a mirror of your notes
 drafts            = "raw/drafts"
+procedures        = "procedures"           # hand-written methods; NOT under raw/, nothing mirrors them
 inventory         = "raw/inventory"          # collections: records, books, games
 projects_snapshot = "raw/projects.json"      # written by `exo scan-projects`
 downloads         = "~/Downloads"            # where chat exports land before import

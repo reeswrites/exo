@@ -460,6 +460,10 @@ def run() -> None:
                      ("post", posts),
                      ("draft", lambda: __import__(
                          "exo.loaders.drafts", fromlist=["load"]).load()),
+                     # imperative, unlike everything around it — hand-written
+                     # method, published as an MCP resource (ADR-0016)
+                     ("procedure", lambda: __import__(
+                         "exo.loaders.procedure", fromlist=["load"]).load()),
                      ("item", items), ("item_event", item_events),
                      # the owner's repos, from the snapshot `wh scan-projects` writes
                      ("project", _proj("repos")), ("project_commit", _proj("commits")),
@@ -474,7 +478,7 @@ def run() -> None:
 
     # Zones no core loader writes at all — an instance's own T1 material.
     core = {"notes", "verdicts", "visits", "film_review", "collection", "recipe",
-            "open_thread", "post", "draft", "item", "item_event",
+            "open_thread", "post", "draft", "procedure", "item", "item_event",
             "project", "project_commit", "project_doc", "project_open"}
     for name, contributors in sorted(plugins.t1_loaders().items()):
         if name in core:

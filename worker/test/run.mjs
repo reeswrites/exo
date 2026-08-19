@@ -28,6 +28,60 @@ ok(list.result.tools.every((t) => t.description && t.inputSchema), "every tool h
 const res = await (await post({ jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: "warehouse://brief" } })).json();
 ok(/^# \S/.test(res.result.contents[0].text), "brief resource served from R2");
 
+console.log("\n── procedures as resources (ADR-0016) ──");
+// Data-agnostic on purpose: an instance may hold no procedures at all, and the
+// empty case is the one a fresh instance ships with. What is asserted is the
+// SHAPE — the brief still leads, every entry addresses one slug, and nothing
+// but a served slug resolves.
+const rlist = await (await post({ jsonrpc: "2.0", id: 10, method: "resources/list" })).json();
+const rs = rlist.result?.resources ?? [];
+ok(rs[0]?.uri === "exo://brief", "the brief is still pinned first");
+const procs = rs.filter((r) => r.uri.startsWith("exo://procedure/"));
+ok(procs.every((r) => /^exo:\/\/procedure\/[a-z0-9-]+$/.test(r.uri)),
+   `every procedure uri is one addressable slug (${procs.length} listed)`);
+ok(procs.every((r) => r.name && r.description && r.mimeType === "text/markdown"),
+   "each carries a name, a description and a mime type");
+ok(procs.every((r) => /Reports only\.|Acts on their behalf\./.test(r.description)),
+   "the description says whether following it acts");
+
+const readUri = (uri, id = 11) =>
+  post({ jsonrpc: "2.0", id, method: "resources/read", params: { uri } });
+
+if (procs.length) {
+  const one = await (await readUri(procs[0].uri)).json();
+  const text = one.result?.contents?.[0]?.text ?? "";
+  ok(text.includes("own method, written by hand"),
+     "a procedure reads as the owner's document, not as instructions from the server");
+  ok(/\*\*When it applies:\*\*/.test(text), "it states its own trigger");
+  const abortAt = text.indexOf("Stop before you start");
+  const stepsAt = text.indexOf("## The procedure");
+  ok(stepsAt > 0 && (abortAt === -1 || abortAt < stepsAt),
+     "blocking preconditions come above the steps, never after them");
+  ok(/Last verified|never marked this verified/.test(text), "it states its own age");
+  if (/\*\*Kind:\*\* action/.test(text))
+    ok(text.includes("may never choose or change a target"),
+       "an acting procedure fixes its own sink and target");
+  else ok(true, "the first procedure reports rather than acts (nothing to fix)");
+
+  const auditedRead = (await env.DB.prepare(
+    "SELECT count(*) AS n FROM wh_audit WHERE tool = 'resources/read'").bind().all()).results[0];
+  ok(auditedRead.n > 0, "a procedure read lands in wh_audit like any other call");
+}
+
+for (const bad of ["exo://procedure/nothing-by-this-name", "exo://procedure/../brief",
+                   "exo://procedure/Weekly-Digest", "exo://procedure/", "exo://procedure/a/b"]) {
+  const r = await (await readUri(bad, 12)).json();
+  ok(r.error?.code === -32602, `refused: ${bad}`);
+}
+// What is NOT checkable from here: that a held procedure is absent. This side
+// cannot know what was held — which is the property itself. A held procedure is
+// missing from the bundle entirely, so it answers exactly as one that never
+// existed does, and the proof lives where the decision does
+// (tests/test_procedures.py, against the manifest).
+const briefStill = await (await readUri("exo://brief", 13)).json();
+ok(/^# \S/.test(briefStill.result?.contents?.[0]?.text ?? ""),
+   "the brief still resolves beside them");
+
 console.log("\n── caps (ADR-0007) ──");
 const many = Array.from({ length: 500 }, (_, i) => ({ i, pad: "x".repeat(50) }));
 const c = cap(many);

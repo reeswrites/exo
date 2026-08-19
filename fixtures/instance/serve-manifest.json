@@ -39,6 +39,7 @@
     "t1_project_open": "serve",
     "t2_atom": "serve",
     "t2_atom_vec": "serve",
+    "t1_procedure": "serve",
     "t2_note_vec": "serve",
     "t2_post_vec": "serve",
     "t2_affinity": "serve",

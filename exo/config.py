@@ -166,6 +166,10 @@ EXPORTS = _path("EXO_EXPORTS", "paths", "exports", "raw/exports")
 POSTS = _path("EXO_POSTS", "paths", "posts", "raw/posts")
 VAULT = _path("EXO_VAULT", "paths", "vault", "raw/vault", "WH_SECOND_BRAIN_DATA")
 DRAFTS = _path("EXO_DRAFTS", "paths", "drafts", "raw/drafts")
+# Hand-written procedures — how the owner does a recurring thing. NOT under raw/:
+# nothing mirrors them and no loader derives them, so they are authored material
+# this instance holds first-hand, like items/.
+PROCEDURES = _path("EXO_PROCEDURES", "paths", "procedures", "procedures")
 INVENTORY = _path("EXO_INVENTORY", "paths", "inventory", "raw/inventory")
 MEDIA_EMBEDDINGS = _path("EXO_MEDIA_EMBEDDINGS", "paths", "media_embeddings", "raw/media_embeddings.json")
 PROJECTS_SNAPSHOT = _path("EXO_PROJECTS_SNAPSHOT", "paths", "projects_snapshot", "raw/projects.json")

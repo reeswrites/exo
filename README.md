@@ -78,6 +78,7 @@ your-instance/
   zones/                 the record itself
   plugins/               loaders only you could have
   items/                 your tasks, habits, slots
+  procedures/            how you do a recurring thing, by hand
 ```
 
 A loader ships in the engine if its input is a **format** — a Last.fm export, a
@@ -152,6 +153,7 @@ ones:
 | [0006](docs/adr/0006-the-remote-read-surface-is-permanently-read-only.md) | the remote read surface is permanently read-only |
 | [0007](docs/adr/0007-bound-the-blast-radius-of-an-injected-read.md) | bound the blast radius of an injected read |
 | [0014](docs/adr/0014-the-code-is-public-the-instance-is-private.md) | the code is public, the instance is private |
+| [0016](docs/adr/0016-procedures-are-resources-not-tools.md) | a procedure is a resource, not a tool |
 
 ## Contributing
 

@@ -57,10 +57,12 @@
     "t1_project_open": "serve",
     "t1_post": "serve",
     "t2_post_vec": "serve",
-    "t1_draft": "serve"
+    "t1_draft": "serve",
+    "t1_procedure": "serve"
   },
   "zone_notes": {
     "t0_chat": "Your own turns only. The assistant's half is another model's output, not your words.",
+    "t1_procedure": "Your own methods, published as MCP resources (ADR-0016). Listing it here only lets a procedure BE published \u2014 each one still carries its own serve: flag, and a served one that reads a held zone fails the build.",
     "rows": "The cross-zone provenance union. Held: it is a join surface, not an answer."
   },
   "note_folders": {

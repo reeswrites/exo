@@ -28,7 +28,7 @@ import hashlib
 import json
 import shutil
 
-from .. import catalog, config
+from .. import catalog, config, toolzones
 
 # Zones filtered by note provenance rather than copied wholesale.
 _NOTE_DERIVED = {"t1_notes", "t2_atom", "t2_atom_vec", "t2_note_vec"}
@@ -86,6 +86,52 @@ def _check_coverage(con, manifest: dict) -> list[str]:
         problems.append(
             f"{len(orphan)} note(s) under no declared path_zone: {sample}"
         )
+    return problems
+
+
+def _procedure_problems(rows: list[dict], manifest: dict) -> list[str]:
+    """A served procedure may not read a held zone (ADR-0016).
+
+    Every other zone is checked one row at a time against its own decision. A
+    procedure's decision is not its own: it is the AND of its `serve:` flag and
+    the serve status of everything it reads. "Call `people` for what Sam cares
+    about, then check `saves`" is a working map of what this record holds and
+    what is being kept back, and publishing that map is the leak — the tool it
+    names returning nothing does not unsay it.
+
+    A build-time check rather than a filter at read time, for the reason the
+    whole publication path exists: a filter is a promise, and an absent row is a
+    fact.
+
+    Returns problems rather than raising, so it prints alongside the manifest's
+    own coverage failures. One list of everything wrong beats three runs.
+    """
+    problems: list[str] = []
+    for row in rows:
+        if not row.get("serve"):
+            continue
+        slug = row.get("slug", "?")
+        try:
+            needs = json.loads(row.get("needs") or "{}").get("exo", [])
+        except json.JSONDecodeError:
+            problems.append(f"procedure {slug}: `needs` is not readable JSON")
+            continue
+        for tool in needs:
+            try:
+                zones = toolzones.zones_for(tool)
+            except toolzones.UnknownTool:
+                # NOT skipped. A typo that resolves to no zones passes this
+                # check by naming nothing, which publishes exactly the procedure
+                # whose dependencies nobody managed to verify.
+                problems.append(
+                    f"procedure {slug}: needs `{tool}`, which is not a tool on the surface "
+                    "(a typo here would silently empty this check)")
+                continue
+            for z in zones:
+                if manifest["zones"].get(z) == "hold":
+                    problems.append(
+                        f"procedure {slug}: serve:true but it reads `{tool}`, which is backed "
+                        f"by {z} — and {z} is held. Hold the procedure, or serve the zone.")
     return problems
 
 
@@ -185,6 +231,11 @@ def run(dry_run: bool = False) -> int:
     con = catalog.connect("full", read_only=True)
     try:
         problems = _check_coverage(con, manifest)
+        if _has_column(con, "t1_procedure", "serve"):
+            problems += _procedure_problems(
+                [dict(zip(("slug", "needs", "serve"), r)) for r in
+                 con.execute("SELECT slug, needs, serve FROM t1_procedure").fetchall()],
+                manifest)
         if problems:
             print("publish: REFUSING — the manifest does not cover everything:")
             for p in problems:
@@ -318,6 +369,34 @@ def run(dry_run: bool = False) -> int:
                            NULL::VARCHAR AS state,   NULL::VARCHAR AS body
                     FROM t1_draft
                 """
+                params = []
+            elif zone == "t1_procedure":
+                # The only zone whose rows carry their own serve decision in the
+                # payload, because it is the only one where the decision is per
+                # document rather than per category: two procedures written the
+                # same week can differ on whether an assistant should ever hold
+                # them. The build has already refused if a served one reads a
+                # held zone (_procedure_problems); this drops the ones the owner
+                # marked hold. `serve` is emitted rather than excluded, so what
+                # published says on its face that it was meant to.
+                if _has_column(con, "t1_procedure", "serve"):
+                    sql = "SELECT * FROM t1_procedure WHERE serve"
+                else:
+                    # No procedures written yet — the normal state of a fresh
+                    # instance. An envelope-only parquet would give D1 a table
+                    # with no payload columns, and `resources/list` names four of
+                    # them, so the surface would fail on the day it was deployed
+                    # rather than on the day someone wrote a procedure. Same
+                    # lesson t1_draft taught.
+                    sql = """
+                        SELECT *,
+                               NULL::VARCHAR AS slug,     NULL::VARCHAR AS title,
+                               NULL::VARCHAR AS trigger,  NULL::VARCHAR AS kind,
+                               NULL::VARCHAR AS needs,    NULL::VARCHAR AS abort_when,
+                               NULL::VARCHAR AS acts,     NULL::VARCHAR AS verified,
+                               NULL::BOOLEAN AS serve,    NULL::VARCHAR AS body
+                        FROM t1_procedure
+                    """
                 params = []
             elif zone == "t2_affinity" and _has_column(con, "t2_affinity", "score"):
                 # `score` is plays + mentions * 500. That 500 is a preference

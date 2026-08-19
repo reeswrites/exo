@@ -129,6 +129,30 @@ asked for. Pushed rather than pulled, because a pull-only surface cannot fix
 forgetting that something exists: asking for a thing requires already knowing it
 is there.
 
+### procedure
+How the owner does a recurring thing, written by hand. Every other zone is
+descriptive — what was played, rated, written; a procedure is **imperative**, and
+it is the one thing here an assistant is meant to act on rather than report.
+Published as an MCP *resource* rather than a tool (ADR-0016), because a tool is a
+named question whose answer depends on the record and a procedure is a document
+whose content does not. That inverts the trust direction, so the only defence
+that matters is authorship: hand-written only, never derived, never embedded, and
+a malformed one fails the build rather than being projected with a gap in it.
+
+A procedure's serve decision is not its own. It is the AND of its own flag and
+the serve status of everything it reads — a served procedure that names a held
+zone is a working map of what is being held, published, and the tool returning
+nothing does not unsay it.
+
+### the acting rule
+Authored text picks the verb and the target; record text may only fill the
+payload. A procedure that files something names its sink and its target *in the
+procedure*, and nothing a tool returns may move them. Enforced structurally: a
+target carrying a placeholder nothing declared fails the build, because that is
+the shape where a string injected into a save chooses where an act lands. The
+surface stays read-only either way (ADR-0006) — a procedure names the sink, the
+agent performs the act.
+
 ### staleness
 How old the served copy is, stated rather than implied. A reader that cannot see
 its own age will present last month's answer as today's.
