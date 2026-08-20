@@ -1,9 +1,14 @@
-"""T1 registration — index second-brain, DON'T move it (ADR-0001, Fig 5 Ph3).
+"""T1 registration — index the authored markdown, DON'T move it (ADR-0001, Fig 5 Ph3).
 
-second-brain's markdown stays the source of truth: human-edited, under git,
-never written by Exo. Here we only READ it and materialize a
-queryable projection into zones/t1. Losing these parquets costs nothing —
-`wh index` rebuilds them from the vault.
+The markdown stays the source of truth: human-edited, under git, and read here
+rather than owned here. This only materializes a queryable projection into
+zones/t1. Losing these parquets costs nothing — `exo index` rebuilds them.
+
+Notes come from TWO trees while the cutover runs (ADR-0017): the mirrored
+authoring vault, and the Exo-owned tree that `exo ingest-notes` lands into from
+Apple Notes, a Notion export, or a directory of text. `_note_roots` is the only
+place that knows there are two, and when an instance points EXO_VAULT at the
+notes tree it becomes one again with nothing else to change.
 
 Four zones:
   note        raw/ + refined/ markdown (frontmatter + body)
@@ -64,26 +69,86 @@ def _s(v) -> str:
     return str(v)
 
 
+def _note_roots() -> list[tuple[Path, str | None]]:
+    """The markdown trees that make up the note record, and who authored each.
+
+    Two, while the cutover runs (ADR-0017):
+
+      config.VAULT   the mirrored authoring vault. Its rows keep `source =
+                     "second-brain"` — stored identity, and every atom already
+                     on disk hashes the origin_ref that name sits beside.
+      config.NOTES   the Exo-OWNED tree that `exo ingest-notes` lands into. Its
+                     rows take their source from the file's own frontmatter, so
+                     a note says which silo it came out of (`notion`,
+                     `apple-notes`, `files`) rather than being labelled with the
+                     name of the tree it happens to sit in. A source string is
+                     data, not branding (CONTEXT).
+
+    `None` in the second slot means "read it from the file". When an instance
+    finishes the cutover it points EXO_VAULT at the notes tree and the two
+    collapse into one — which is why identical roots are read once rather than
+    twice.
+    """
+    roots: list[tuple[Path, str | None]] = []
+    seen: set[Path] = set()
+    for base, src in ((config.VAULT, "second-brain"), (config.NOTES, None)):
+        if not base.exists():
+            continue
+        key = base.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append((base, src))
+    return roots
+
+
 def notes() -> list[Row]:
-    base = config.VAULT
+    """Every note in the record, from every tree that holds one.
+
+    `origin_ref` is the join key that publication, atoms and both vector tables
+    key on, so it has to be unique across the trees — and it is only relative to
+    its own root, so two trees holding `raw/import/on-caching.md` would produce
+    one ref for two different notes. Downstream that is not a duplicate, it is a
+    corruption: the folder axis would gate both on whichever row won, and
+    `t2.atomize` hashes the ref into every atom id. So a collision stops the
+    index rather than being merged, deduped or silently preferred.
+    """
     rows: list[Row] = []
-    for sub in _NOTE_DIRS:
-        for path in io.markdown(base / sub, recursive=True):
-            text = path.read_text(encoding="utf-8", errors="replace")
-            fm, body = _split_frontmatter(text)
-            rel = str(path.relative_to(base))
-            rows.append(Row(
-                tier="t1", zone="note", source="second-brain", author="human",
-                created=_s(fm.get("created")) or None, origin_ref=rel,
-                payload={
-                    "title": _s(fm.get("title")) or path.stem,
-                    "note_type": _s(fm.get("type")) or sub,
-                    "voice": _s(fm.get("voice")),
-                    "facet": _s(fm.get("facet")),
-                    "folder": _s(fm.get("folder")),
-                    "body": body,
-                },
-            ))
+    origin: dict[str, Path] = {}
+    collisions: list[str] = []
+    for base, fixed_source in _note_roots():
+        for sub in _NOTE_DIRS:
+            for path in io.markdown(base / sub, recursive=True):
+                text = path.read_text(encoding="utf-8", errors="replace")
+                fm, body = _split_frontmatter(text)
+                rel = str(path.relative_to(base))
+                if rel in origin:
+                    collisions.append(f"{rel}  ({origin[rel]} and {path})")
+                    continue
+                origin[rel] = path
+                rows.append(Row(
+                    tier="t1", zone="note",
+                    source=fixed_source or _s(fm.get("source")) or "exo-notes",
+                    author="human",
+                    created=_s(fm.get("created")) or None, origin_ref=rel,
+                    payload={
+                        "title": _s(fm.get("title")) or path.stem,
+                        "note_type": _s(fm.get("type")) or sub,
+                        "voice": _s(fm.get("voice")),
+                        "facet": _s(fm.get("facet")),
+                        "folder": _s(fm.get("folder")),
+                        "body": body,
+                    },
+                ))
+    if collisions:
+        raise SystemExit(
+            "t1/notes: the same note path exists in two trees, and origin_ref "
+            "cannot tell them apart:\n  "
+            + "\n  ".join(collisions[:5])
+            + (f"\n  (+{len(collisions) - 5} more)" if len(collisions) > 5 else "")
+            + "\nPoint EXO_VAULT at the notes tree to finish the cutover, or land "
+              "the source somewhere the vault does not already have."
+        )
     return rows
 
 

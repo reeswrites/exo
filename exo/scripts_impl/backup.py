@@ -1,10 +1,23 @@
 """Backup — the store is load-bearing now, so it needs a restore path.
 
-Snapshots the whole store (zones + catalog + snapshots) into backups/<stamp>/.
-T1 notes themselves live in second-brain/git and are NOT copied here — the
-runbook restores them from the vault. What we back up is the record's own
-materializations + the raindrop snapshot (the one T0 pull without an external
-record on disk).
+Snapshots the record's own materializations (zones + catalog + snapshots) into
+backups/<stamp>/. That is a snapshot, not a backup: it sits on the same disk, so
+it survives a bad rebuild and nothing else.
+
+What it deliberately does NOT copy, and where each of those actually lives
+(ADR-0018):
+
+  notes/     the ONE tree with no upstream — once an export has been landed,
+             that markdown is the only original. It belongs in git, committed
+             with items/, exo.toml and serve-manifest.json, and off-machine in
+             the object-storage mirror. Copying it beside the zones would put a
+             second copy on the disk already holding the first.
+  raw/       mirrors of somebody else's directory; `exo sync-raw` refills them.
+  zones/t2   regenerable by definition; a rebuild is the restore.
+
+The tested restore path is: clone the instance repo, export EXO_HOME, rebuild.
+The raindrop snapshot IS kept here, because it is the one T0 pull with no
+external record on disk to re-pull from.
 """
 from __future__ import annotations
 

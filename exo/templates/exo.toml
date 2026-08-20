@@ -40,6 +40,21 @@ downloads         = "~/Downloads"            # where chat exports land before im
 posts = "/path/to/your-blog/_posts"
 vault = "/path/to/your-notes"
 
+[notes.sources]
+# Where notes come FROM (ADR-0017). Each key is an adapter — `apple`, `files`,
+# `notion`, or one your plugins add — and each value is what to point it at. The
+# one that needs no argument (Apple Notes reads a fixed local database) takes "".
+#
+# Bare `exo ingest-notes` runs every source listed here. Naming one runs just it:
+#   exo ingest-notes notion --from ~/Downloads/Export-1a2b3c.zip
+#
+# Notes land in notes/raw/<source>/, and each landing directory needs its own
+# decision in serve-manifest.json's path_zones before anything will publish. That
+# is deliberate: a new source is a new question about what leaves this machine,
+# and it is not answered by a decision made about a different one.
+notion = "raw/notion-export.zip"
+files  = "~/writing"
+
 [vault]
 # Folders whose notes are ABOUT you by default, before first-person density
 # flips an individual span. Stored in every atom's facet, so it is in the id:

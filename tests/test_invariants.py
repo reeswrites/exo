@@ -170,36 +170,49 @@ def test_nearest_returns_similar_atoms():
     assert all(-1.01 <= s <= 1.01 for s in sims)
 
 
-def test_notes_ingester_renders_t1_index_shape():
-    """The Apple Notes ingester renders the frontmatter t1_index reads (type: raw, uuid,
-    created, folder, title) and collapses U+2028 in a title so the file stays YAML-parseable."""
+def test_note_file_renders_the_shape_t1_index_reads():
+    """The landed file carries the frontmatter t1_index reads (type, uuid, created,
+    folder, title) and collapses U+2028 in a title so the file stays YAML-parseable."""
     import yaml
-    from exo import ingest_notes
-    from exo.applenotes.extract import NoteRecord
-    n = NoteRecord(
-        id=1, title="alpha\u2028beta", uuid="ABC-123", pinned=False,
-        created="2022-03-23T00:00:00Z", modified="2022-03-23T00:00:00Z", folder="Projects",
-        body="plain body", structured_body="# structured\n\nbody text",
-    )
-    out = ingest_notes._render(n, "2026-08-09")
+    from exo.notes import SourceNote, render
+    n = SourceNote(external_id="ABC-123", title="alpha\u2028beta", body="body text",
+                   created="2022-03-23", folder="Projects")
+    out = render(n, "apple-notes", "2026-08-09")
     fm = yaml.safe_load(out.split("---")[1])  # must parse — the U+2028 collapse is the point
     assert fm["type"] == "raw" and fm["uuid"] == "ABC-123" and str(fm["created"]) == "2022-03-23"
-    assert fm["folder"] == "Projects"
+    assert fm["folder"] == "Projects" and fm["source"] == "apple-notes"
     assert fm["title"] == "alpha beta"  # U+2028 collapsed to a space, single line
-    assert out.endswith("body text\n")  # structured_body preferred, trailing newline
+    assert out.endswith("body text\n")
 
 
-def test_notes_ingester_new_path_is_deterministic():
-    from exo import ingest_notes
-    from exo.applenotes.extract import NoteRecord
+def test_an_unfiled_note_renders_an_empty_folder_not_a_named_one():
+    """The unfiled drawer is held (ADR-0009), and it is held by being empty. A
+    source with no folder concept must not be given a plausible-looking one."""
+    import yaml
+    from exo.notes import SourceNote, render
+    fm = yaml.safe_load(render(
+        SourceNote(external_id="x", title="t", body="b"), "files", "2026-08-09"
+    ).split("---")[1])
+    assert fm["folder"] == ""
+
+
+def test_new_path_is_deterministic_and_survives_a_shared_prefix():
+    from exo.notes import SourceNote, _new_path
     from pathlib import Path
-    mk = lambda u, t: NoteRecord(id=1, title=t, uuid=u, pinned=False, created="2022-03-23",
-                                 modified="2022-03-23", folder="F", body="", structured_body="x")
+    mk = lambda i, t: SourceNote(external_id=i, title=t, body="x", created="2022-03-23")
     taken = set()
-    p1 = ingest_notes._new_path(Path("/out"), mk("U1", "same title"), taken)
-    p2 = ingest_notes._new_path(Path("/out"), mk("U2", "same title"), taken)  # collision
+    p1 = _new_path(Path("/out"), mk("U1", "same title"), taken)
+    p2 = _new_path(Path("/out"), mk("U2", "same title"), taken)   # collides on the name
     assert p1.name == "2022-03-23-same-title.md"
-    assert p2.name == "2022-03-23-same-title-u2.md"  # disambiguated by uuid tail
+    assert p2.name == "2022-03-23-same-title-u2.md"               # by the id's head
+
+    # Path-shaped ids share their head with every sibling, which is exactly
+    # where names collide — the fallback must not collide too.
+    taken = set()
+    a = _new_path(Path("/out"), mk("projects/one.md", "note"), taken)
+    b = _new_path(Path("/out"), mk("projects/two.md", "note"), taken)
+    c = _new_path(Path("/out"), mk("projects/three.md", "note"), taken)
+    assert len({a.name, b.name, c.name}) == 3
 
 
 def test_every_t2_row_declares_not_grounds():
