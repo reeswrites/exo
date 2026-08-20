@@ -63,6 +63,15 @@ def test_a_retitled_note_keeps_its_file(tmp_path):
     assert _read_fm(files[0])[0]["title"] == "New"     # the new title
 
 
+def test_a_note_titled_with_its_own_date_is_not_dated_twice(tmp_path):
+    """A vault's daily note is titled `2026-02-03` and created on 2026-02-03."""
+    from exo.notes import SourceNote, _new_path
+    from pathlib import Path
+    p = _new_path(Path("/out"), SourceNote(external_id="d", title="2026-02-03",
+                                           body="x", created="2026-02-03"), set())
+    assert p.name == "2026-02-03.md"
+
+
 def test_a_new_import_date_alone_is_not_a_change(tmp_path):
     """`imported:` moves every day. Counted as a change, every note rewrites
     itself on the first run of each day — which makes the tree's mtimes
@@ -268,3 +277,88 @@ def test_a_new_source_lands_under_no_declared_path_zone():
         assert declared in (None, f"raw/{landing}"), (
             f"{name} lands in raw/{landing}, which inherits the decision made "
             f"about {declared!r} — a source must carry its own")
+
+
+# ─────────────────────────── a markdown vault ───────────────────────────
+# Obsidian is not an adapter and does not need one: a vault IS a directory of
+# markdown, which is the format the engine has claimed to read since ADR-0001.
+# What it needs is for the `files` adapter to be right about the four things a
+# vault does that a loose pile of text files does not.
+
+
+def _vault(root):
+    (root / ".obsidian" / "plugins").mkdir(parents=True)
+    (root / ".obsidian" / "app.json").write_text('{"theme":"obsidian"}', "utf-8")
+    (root / ".trash").mkdir()
+    (root / ".trash" / "old.md").write_text("---\ntags:\n  - deleted\n---\n\ngone\n", "utf-8")
+    (root / "attachments").mkdir()
+    (root / "attachments" / "diagram.png").write_bytes(b"\x89PNG\x00\x00")
+    (root / "Daily").mkdir()
+    (root / "Daily" / "2026-02-03.md").write_text(
+        "# 2026-02-03\n\nWoke up thinking about the caching thing again.\n", "utf-8")
+    (root / "Reading").mkdir()
+    (root / "Reading" / "On caching.md").write_text(
+        "---\ntags:\n  - reading\n  - systems\n"
+        'aliases: [caching, "the cache note"]\ncreated: 2026-01-15\n---\n\n'
+        "A cache that cannot say how old it is will present last month's answer "
+        "as today's.\n\nSee also [[Daily/2026-02-03]] and ![[attachments/diagram.png]].\n",
+        "utf-8")
+    return root
+
+
+def _by_id(root):
+    from exo.notes.sources import files
+    return {n.external_id: n for n in files.read(str(root))}
+
+
+def test_a_vaults_machinery_is_not_writing(tmp_path):
+    got = _by_id(_vault(tmp_path / "v"))
+    assert set(got) == {"Daily/2026-02-03.md", "Reading/On caching.md"}
+
+
+def test_a_daily_note_named_only_for_its_date_is_dated_by_it(tmp_path):
+    """`2026-02-03.md` is the commonest filename in a markdown vault, and a date
+    pattern that demanded a separator after it landed every daily note dated the
+    day it was imported."""
+    got = _by_id(_vault(tmp_path / "v"))["Daily/2026-02-03.md"]
+    assert got.created == "2026-02-03"
+    assert got.title == "2026-02-03"
+
+
+def test_tags_and_aliases_survive_the_landing(tmp_path):
+    """Exo's copy outlives the app it came from, so it may not be worse than the
+    original — and in a vault, tags are the organising signal."""
+    got = _by_id(_vault(tmp_path / "v"))["Reading/On caching.md"]
+    assert got.extra["tags"] == "reading, systems"           # block sequence
+    assert got.extra["aliases"] == "caching, the cache note"  # flow sequence
+    assert got.created == "2026-01-15"                        # stated, not the file's
+
+
+def test_the_landed_file_parses_with_the_loader_that_reads_it(tmp_path):
+    """`t1_index` reads landed notes with `yaml.safe_load`. A carried-through
+    value that broke it would take the note out of the record silently."""
+    from exo.notes import render
+    got = _by_id(_vault(tmp_path / "v"))["Reading/On caching.md"]
+    fm = yaml.safe_load(render(got, "files", "2026-08-20").split("---")[1])
+    assert fm["folder"] == "Reading" and fm["tags"] == "reading, systems"
+
+
+def test_a_carried_key_can_never_overrule_the_contract(tmp_path):
+    """A duplicate key parses as the LAST one, so a source file carrying its own
+    `folder:` would replace the folder axis the adapter decided — and a
+    publication decision would be made by whichever line came second."""
+    from exo.notes import SourceNote, render
+    text = render(SourceNote(external_id="x", title="t", body="b", folder="Reading",
+                             extra={"folder": "Somewhere", "uuid": "other"}),
+                  "files", "2026-08-20")
+    fm = yaml.safe_load(text.split("---")[1])
+    assert fm["folder"] == "Reading" and fm["uuid"] == "x"
+    assert fm["src_folder"] == "Somewhere" and fm["src_uuid"] == "other"
+
+
+def test_wikilinks_and_embeds_pass_through_verbatim(tmp_path):
+    """The body is the note. Rewriting a link on the way in makes the copy a
+    different document from the one the author wrote."""
+    got = _by_id(_vault(tmp_path / "v"))["Reading/On caching.md"]
+    assert "[[Daily/2026-02-03]]" in got.body
+    assert "![[attachments/diagram.png]]" in got.body

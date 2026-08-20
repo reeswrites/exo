@@ -86,6 +86,15 @@ change.
 this input? A local Notes database, a directory of text, a Notion account — yes
 to all three.
 
+`files` carries more weight than its name suggests, and there is deliberately no
+fourth adapter for Obsidian: **a vault is a directory of markdown**, which is the
+format the engine has claimed to read since ADR-0001. Writing an `obsidian`
+adapter would have meant a second copy of the same walk, differing only in the
+four places a vault is not a loose pile of files — dot-directories of machinery,
+binary attachments filed beside the prose, daily notes named for nothing but
+their date, and `tags:`/`aliases:` properties. Those belong in the one walk, and
+they are there. The same is true of anything else that exports markdown.
+
 The test is **not** whether a source needs a credential. An earlier draft of this
 decision read the format/place rule that way and concluded that Notion had to be
 reached by its export, because the API needs a token and a per-page connection.
@@ -133,6 +142,11 @@ could tell.
 - Adding a source is one module: `LANDING`, `SOURCE`, `read(src)`. It cannot
   choose an id scheme, a filename, a frontmatter field or a landing path — those
   are the contract and the contract has one implementation.
+- A note's carried-through frontmatter (a vault's tags and aliases) reaches the
+  FILE but not the `t1_notes` payload. A note row's id hashes its payload values,
+  so adding a column re-mints every note id — folding tags into the record is its
+  own decision, taken deliberately or not at all. Until then they are on disk,
+  greppable, and lost by nothing.
 - Re-importing is cheap. Vectors key on `sha256(text)` (`exo/embed.py`), so a
   note whose text is unchanged reuses its vector even when its id, its path and
   its source have all changed. Moving silos costs a re-index, not a re-embed.

@@ -133,6 +133,14 @@ def slug(title: str) -> str:
     return s or "note"
 
 
+# The frontmatter this contract owns. An adapter's `extra` may not spell any of
+# them: a duplicate key parses as the LAST one under `yaml.safe_load`, which is
+# what `t1_index` reads with — so a source file carrying its own `folder:` would
+# silently replace the folder axis the adapter decided, and a publication
+# decision would be made by whichever line came second.
+_RESERVED = frozenset({"type", "created", "imported", "source", "uuid", "folder", "title"})
+
+
 def render(note: SourceNote, source: str, imported: str) -> str:
     """The note file, exactly. One writer, so the contract has one definition."""
     lines = [
@@ -146,7 +154,13 @@ def render(note: SourceNote, source: str, imported: str) -> str:
         f"title: {_yaml_str(note.title)}",
     ]
     for k, v in sorted(note.extra.items()):
-        lines.append(f"{k}: {_yaml_str(str(v))}")
+        key = str(k).strip().lower()
+        if key in _RESERVED:
+            # Prefixed rather than dropped. The value is something the source
+            # file said, and losing it makes this copy worse than the original;
+            # letting it keep the name would let it overrule the contract.
+            key = f"src_{key}"
+        lines.append(f"{key}: {_yaml_str(str(v))}")
     lines.append("---")
     return "\n".join(lines) + "\n\n" + (note.body or "").strip() + "\n"
 
@@ -215,7 +229,11 @@ def _new_path(out: Path, note: SourceNote, taken: set[str]) -> Path:
     hand `-2` to whichever note the walk reached second, which is a different
     note on a machine whose filesystem sorts differently.
     """
-    base = f"{(note.created or '')[:10]}-{slug(note.title)}" if note.created else slug(note.title)
+    stem = slug(note.title)
+    date = (note.created or "")[:10]
+    # A daily note is titled with its own date, and prefixing it again gives
+    # `2026-02-03-2026-02-03.md`. The tree is meant to be read by a person.
+    base = f"{date}-{stem}" if date and not stem.startswith(date) else (stem or date)
     name = base + ".md"
     if name in taken:
         tail = re.sub(r"[^a-z0-9]+", "-", note.external_id.lower())[:8].strip("-")

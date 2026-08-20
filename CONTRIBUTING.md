@@ -34,7 +34,8 @@ thing a stranger can hold, so `notion` ships; your team's wiki behind your SSO
 does not, so it belongs in your instance under `NOTE_SOURCES`. Either way the
 interface is the same five fields, and an adapter that reaches past them —
 choosing a filename, an id scheme, a landing path — is reimplementing the
-contract rather than answering it.
+contract rather than answering it. [docs/notes-sources.md](docs/notes-sources.md)
+is the how-to, including a worked adapter.
 
 ## Things that look like small changes and are not
 

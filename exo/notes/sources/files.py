@@ -2,10 +2,20 @@
 
 This is the adapter that makes the framework worth having. Most writing does not
 live in a product with an export format: it is a folder of markdown, a dump out
-of some app that only knew how to write .txt, an old Obsidian vault, a directory
-someone rsynced off a dead laptop, or a paragraph you want in the record right
-now with no file at all. All of that is the same shape — bytes that are text,
-with a name and a date — and none of it needs its own ingester.
+of some app that only knew how to write .txt, a directory someone rsynced off a
+dead laptop, or a paragraph you want in the record right now with no file at all.
+All of that is the same shape — bytes that are text, with a name and a date — and
+none of it needs its own ingester.
+
+**An Obsidian vault is one of these**, and deliberately does not get an adapter
+of its own: a vault IS a directory of markdown, which is the format the engine
+has claimed to read since ADR-0001. What it needed was for this module to be
+right about the four things a vault does that a loose pile of files does not —
+dot-directories full of machinery, binary attachments beside the prose, daily
+notes named for nothing but their date, and `tags:`/`aliases:` properties that
+are the whole organising signal. Each is handled below and tested against a
+vault-shaped fixture. Anything else that exports markdown — Bear, Ulysses, iA
+Writer, a Logseq graph — lands the same way.
 
     exo ingest-notes files --from ~/writing        a tree
     exo ingest-notes files --from notes.md         one file
@@ -60,29 +70,84 @@ TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".text", ".mdown"}
 # index files an export tool leaves behind.
 NOT_NOTES = {"README.md", "LICENSE.md", "CONTRIBUTING.md", "CHANGELOG.md", "index.md"}
 
-_DATE_PREFIX = re.compile(r"^(\d{4}-\d{2}-\d{2})[ _-]+")
+# A date as the WHOLE filename, or as a prefix before a separator. Obsidian's
+# daily notes are named `2026-02-03.md` exactly, and requiring a separator after
+# the date missed the single most common filename pattern in a markdown vault —
+# every daily note landed dated the day it was imported.
+_DATE_PREFIX = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:[ _-]+|$)")
 _FM_LINE = re.compile(r"^([A-Za-z][A-Za-z0-9_ -]*):\s*(.*)$")
+_FM_ITEM = re.compile(r"^-\s+(.*)$")
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, str], str]:
     """Parse frontmatter by hand rather than with yaml, for the same reason
-    `drafts` does: the fields wanted here are known and flat, and a half-typed
-    value in one file must not be able to fail the whole ingest."""
+    `drafts` does: a half-typed value in one file must not be able to fail the
+    whole ingest.
+
+    Block sequences are folded into a comma-joined string:
+
+        tags:            ->   {"tags": "reading, systems"}
+          - reading
+          - systems
+
+    Obsidian writes tags and aliases that way, and they are the primary
+    organising signal in a vault that has them. Comma-joining rather than
+    keeping a list is not a compromise — `t1_index._s` flattens every list-valued
+    frontmatter value to exactly this shape already, so the string IS what the
+    record would have held.
+    """
     if not text.startswith("---"):
         return {}, text
     end = text.find("\n---", 3)
     if end == -1:
         return {}, text
     fm: dict[str, str] = {}
-    for line in text[3:end].splitlines():
-        m = _FM_LINE.match(line.strip())
+    key = None
+    items: list[str] = []
+
+    def flush():
+        if key is not None and items:
+            fm[key] = ", ".join(items)
+
+    for raw in text[3:end].splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        item = _FM_ITEM.match(line)
+        if item and key is not None:
+            items.append(_flow(_unquote(item.group(1))))
+            continue
+        m = _FM_LINE.match(line)
         if not m:
             continue
-        v = m.group(2).strip()
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
-            v = v[1:-1]
-        fm[m.group(1).strip().lower()] = v
+        flush()
+        key, items = m.group(1).strip().lower(), []
+        value = _flow(_unquote(m.group(2).strip()))
+        if value:
+            fm[key] = value
+            key, items = None, []
+    flush()
     return fm, text[end + 4:].lstrip("\n")
+
+
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
+def _flow(value: str) -> str:
+    """`[a, "b c"]` -> `a, b c`. Obsidian writes tags both ways depending on
+    whether they were typed in the editor or in the properties panel, and a
+    vault holding both styles would otherwise land two different shapes for the
+    same field."""
+    if not (value.startswith("[") and value.endswith("]")):
+        return value
+    inner = value[1:-1].strip()
+    if not inner:
+        return ""
+    parts = [_unquote(p.strip()) for p in inner.split(",")]
+    return ", ".join(p for p in parts if p)
 
 
 def _first_heading(body: str) -> str:
@@ -117,6 +182,32 @@ def _read_text(path: Path) -> str | None:
     return None if "\x00" in text else text
 
 
+# The frontmatter keys the note contract owns. Anything else a source file
+# carries is passed through; these are re-derived and must not be shadowed.
+_CONTRACT_KEYS = {"type", "created", "imported", "source", "uuid", "folder", "title", "date"}
+
+
+def _created(path: Path, fm: dict[str, str], stem: str) -> str:
+    """When the note was written, in the order those answers can be trusted.
+
+    Frontmatter first: it is the only one the author stated. Then a date in the
+    filename. Then the file's BIRTH time where the platform records one — on a
+    vault that has been through iCloud, Dropbox or a fresh `git clone`, mtime is
+    the date of the sync rather than of the writing, and birthtime survives at
+    least the first two. Then mtime, which is a bad answer and still better than
+    no date at all (`t1_index.open_threads` reaches for it for the same reason).
+    """
+    stated = (fm.get("created") or fm.get("date") or "")[:10]
+    if stated:
+        return stated
+    m = _DATE_PREFIX.match(stem)
+    if m:
+        return m.group(1)
+    st = path.stat()
+    when = getattr(st, "st_birthtime", None) or st.st_mtime
+    return datetime.fromtimestamp(when, timezone.utc).strftime("%Y-%m-%d")
+
+
 def _one(path: Path, root: Path) -> SourceNote | None:
     text = _read_text(path)
     if text is None:
@@ -125,19 +216,13 @@ def _one(path: Path, root: Path) -> SourceNote | None:
     rel = path.relative_to(root)
     stem = path.stem
 
-    created = (fm.get("created") or fm.get("date") or "")[:10]
-    if not created:
-        m = _DATE_PREFIX.match(stem)
-        created = m.group(1) if m else datetime.fromtimestamp(
-            path.stat().st_mtime, timezone.utc).strftime("%Y-%m-%d")
-
     title = fm.get("title") or _first_heading(body) or _title_from_stem(stem)
     folder = fm.get("folder") or str(rel.parent).replace("\\", "/")
     return SourceNote(
         external_id=rel.as_posix(),
         title=title,
         body=body,
-        created=created,
+        created=_created(path, fm, stem),
         folder="" if folder in (".", "") else folder,
         # A tree may already carry the distinction the record cares about — a
         # `refined/` directory of finished prose beside a `raw/` one of thinking.
@@ -145,6 +230,17 @@ def _one(path: Path, root: Path) -> SourceNote | None:
         # would make an unrelated folder called `refined` change what its notes
         # are taken to be.
         note_type=fm.get("type") or "raw",
+        # Everything else the file declared, carried through verbatim. A vault's
+        # tags and aliases are its organising signal, and landing a note without
+        # them makes Exo's copy worse than the original — which is the one thing
+        # the copy may never be, since it is the copy that outlives the app.
+        #
+        # They reach the FILE, not the t1_notes payload. Adding a payload column
+        # re-mints every note id (CONTRIBUTING), so folding tags into the record
+        # is its own decision, taken deliberately or not at all. Until then they
+        # are on disk, greppable, and lost by nothing.
+        extra={k: v for k, v in sorted(fm.items())
+               if k not in _CONTRACT_KEYS and v},
     )
 
 

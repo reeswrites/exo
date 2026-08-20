@@ -55,8 +55,13 @@ exo ingest-notes files  --from ~/writing
 pbpaste | exo ingest-notes files --from -   # a blob; its first line is the title
 ```
 
-Adding a source is one small module. Everything downstream — atoms, vectors,
-both publication axes, the read surface — never learns which one it was.
+`files` covers more than it sounds like: a directory of markdown is the format
+the engine has read since ADR-0001, so **an Obsidian vault needs no adapter** —
+its dot-directories, attachments, bare-date daily notes and `tags:` properties
+are all handled. Adding a genuinely new source is one small module, and
+everything downstream — atoms, vectors, both publication axes, the read surface —
+never learns which one it was. [docs/notes-sources.md](docs/notes-sources.md) is
+the how-to.
 
 **The record** keeps them separated by *who may write*, not by what the data is:
 
