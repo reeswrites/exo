@@ -82,16 +82,36 @@ change.
 
 ### What ships in the engine
 
-`apple`, `files`, `notion` — all three are **formats** (CONTRIBUTING's test): a
-NoteStore.sqlite, a directory of text, an export zip. Anyone can hold one.
+`apple`, `files`, `notion`. The test is CONTRIBUTING's: could a stranger hold
+this input? A local Notes database, a directory of text, a Notion account — yes
+to all three.
 
-The Notion **export**, not the Notion API, and that is a choice rather than a
-stopgap. The API is a *place*: it needs an integration, a token, and every page
-individually shared with that integration — per-workspace configuration that
-belongs in an instance's `plugins/`. The export works offline, on a machine that
-never talks to Notion, and reproduces identically, which is what `exo verify` is
-built on. An adapter for the API is a plugin anyone can write against the same
-five-field interface.
+The test is **not** whether a source needs a credential. An earlier draft of this
+decision read the format/place rule that way and concluded that Notion had to be
+reached by its export, because the API needs a token and a per-page connection.
+That is contradicted by the engine as it already stands: Trakt ships here with a
+full OAuth refresh, Raindrop with a bearer token, collections with a Google
+service account. A place is your city's venue calendars or your team's wiki
+behind your SSO — something nobody else can point the same code at. A Notion
+account is not that.
+
+The practical half of it is worse than the theoretical half. **Notion has no
+endpoint that triggers an export.** Producing one is a human opening the app,
+clicking Export, waiting for an email and moving a zip out of Downloads — so an
+export-only adapter can never be a step in a nightly. Notes are the freshest and
+most-edited thing in the record; every other source here either self-refreshes or
+reads a file that genuinely has no API behind it. Notes were one decision away
+from being the only source that ran when somebody remembered.
+
+So **the API is the default road**, and the export is the other road of the same
+adapter rather than a second one. They agree on identity — Notion glues each
+page's id onto its export filename, and it is the same dashless UUID the API
+returns — so a page read either way lands as one note in one place, and an
+instance can switch roads or use both without landing anything twice.
+
+The export road keeps the two jobs it is genuinely best at: a one-time migration
+off Notion, and reading the archive of a workspace nobody can reach any more. It
+needs no network, which is also what lets the tests exercise it end to end.
 
 ### What each adapter must answer honestly
 
@@ -124,3 +144,10 @@ could tell.
   notes sharing one is not a duplicate, it is a corruption.
 - `exo ingest-notes` no longer means Apple Notes. Bare, it runs every source in
   `[notes.sources]`; named, it runs one.
+- An adapter may be shown what is already landed (`seen`), so a source reached
+  over a network can skip fetching a page it can already tell is unchanged.
+  Notion's search returns `last_edited_time` for a request per hundred pages,
+  while opening a page costs a request per hundred blocks — so a nightly over a
+  settled workspace spends seconds rather than minutes. It is an optimisation and
+  never a correctness mechanism: ignoring it is always right, an adapter that
+  uses it must still hand every note back, and `--full` withholds it.

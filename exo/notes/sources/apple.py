@@ -24,11 +24,14 @@ LANDING = "import"
 SOURCE = "apple-notes"
 
 
-def read(src: str | None = None) -> list[SourceNote]:
+def read(src: str | None = None, seen: dict | None = None) -> list[SourceNote]:
     """Every note in the database, minus the ones the decoder refused.
 
     `src` is an optional path to a NoteStore.sqlite — a copy, a backup, a
     fixture. Absent, the decoder looks where macOS keeps the live one.
+
+    `seen` is ignored. The database is on this disk and the decode is local, so
+    working out what has changed would cost more than reading it.
     """
     from ...applenotes.extract import extract_notes
 

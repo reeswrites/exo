@@ -27,12 +27,14 @@ A loader belongs in *your instance*, under `plugins/`, if its input is a
 Specificity is not the test — whether a stranger could hold that input at all is
 the test. See [ADR-0014](docs/adr/0014-the-code-is-public-the-instance-is-private.md).
 
-The same rule decides a **note adapter** (`exo/notes/sources/`, ADR-0017). An
-export format is a format: `apple`, `files` and `notion` ship here. An API that
-needs a token and a per-page share is a place, and belongs in your instance under
-`NOTE_SOURCES`. Either way the interface is the same five fields, and an adapter
-that reaches past them — choosing a filename, an id scheme, a landing path — is
-reimplementing the contract rather than answering it.
+The same rule decides a **note adapter** (`exo/notes/sources/`, ADR-0017), and
+needing a credential is **not** what makes something a place — Trakt, Raindrop
+and the collections fetch all need one and all ship here. A Notion account is a
+thing a stranger can hold, so `notion` ships; your team's wiki behind your SSO
+does not, so it belongs in your instance under `NOTE_SOURCES`. Either way the
+interface is the same five fields, and an adapter that reaches past them —
+choosing a filename, an id scheme, a landing path — is reimplementing the
+contract rather than answering it.
 
 ## Things that look like small changes and are not
 

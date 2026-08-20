@@ -75,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="apple|files|notion|<plugin>; omit to run every [notes.sources] entry")
     sn.add_argument("--from", dest="src", default=None,
                     help="what to read: an export, a directory, a file, or - for stdin")
+    sn.add_argument("--full", action="store_true",
+                    help="re-read every note, ignoring what is already landed")
     sub.add_parser("index")
     sub.add_parser("derive")
     sub.add_parser("build")
@@ -145,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "ingest-notes":
         from . import notes as notes_mod
         try:
-            notes_mod.run(args.source, args.src)
+            notes_mod.run(args.source, args.src, full=args.full)
         except PermissionError as e:
             # Apple Notes is the only source that can fail this way, and the
             # cause is never the path — it is that the process was not granted
@@ -153,7 +155,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  cannot read the note database ({e}).\n  Apple Notes needs Full Disk "
                   "Access — run this from a terminal that has it.", file=sys.stderr)
             return 1
-        except (ValueError, FileNotFoundError) as e:
+        except (notes_mod.SourceError, ValueError, FileNotFoundError) as e:
+            # A source that cannot be read is the owner's problem to fix, not a
+            # bug in the engine — one line, exit 1, no traceback.
             print(f"  {e}", file=sys.stderr)
             return 1
     elif args.cmd == "index":

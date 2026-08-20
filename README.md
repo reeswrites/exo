@@ -49,7 +49,8 @@ Notion export, a directory of text files, a blob on standard input — and lands
 each note as markdown you own, with the frontmatter the record reads (ADR-0017):
 
 ```bash
-exo ingest-notes notion --from ~/Downloads/Export-1a2b3c.zip
+exo ingest-notes notion                     # the API, incremental, nightly-safe
+exo ingest-notes notion --from Export.zip   # or an export, offline
 exo ingest-notes files  --from ~/writing
 pbpaste | exo ingest-notes files --from -   # a blob; its first line is the title
 ```

@@ -166,7 +166,8 @@ def _stdin() -> list[SourceNote]:
     )]
 
 
-def read(src: str | None = None) -> list[SourceNote]:
+def read(src: str | None = None, seen: dict | None = None) -> list[SourceNote]:
+    """`seen` is ignored — reading a local file is cheaper than deciding not to."""
     if src == "-":
         return _stdin()
     if not src:

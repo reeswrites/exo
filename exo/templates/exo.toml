@@ -46,13 +46,20 @@ vault = "/path/to/your-notes"
 # one that needs no argument (Apple Notes reads a fixed local database) takes "".
 #
 # Bare `exo ingest-notes` runs every source listed here. Naming one runs just it:
-#   exo ingest-notes notion --from ~/Downloads/Export-1a2b3c.zip
+#   exo ingest-notes notion                          the API
+#   exo ingest-notes notion --from ~/Export-1a2b.zip an export, offline
+#
+# `notion = ""` means the API, which needs NOTION_TOKEN in
+# ~/.config/exo/secrets/env and the integration connected to the pages you want
+# held. That connection IS the privacy boundary on Notion's side: what you did
+# not connect, Exo cannot see. Point it at an export instead if you would rather
+# it never talk to Notion at all.
 #
 # Notes land in notes/raw/<source>/, and each landing directory needs its own
 # decision in serve-manifest.json's path_zones before anything will publish. That
 # is deliberate: a new source is a new question about what leaves this machine,
 # and it is not answered by a decision made about a different one.
-notion = "raw/notion-export.zip"
+notion = ""
 files  = "~/writing"
 
 [vault]

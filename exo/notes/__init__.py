@@ -76,6 +76,16 @@ from pathlib import Path
 from .. import config
 
 
+class SourceError(RuntimeError):
+    """A note source could not be read, for a reason the owner can act on.
+
+    A missing credential, an export that is not where it was said to be, a page
+    an integration was never connected to. The CLI prints these as one line and
+    exits 1: a traceback is the right output for a bug in the engine and the
+    wrong output for a token nobody set.
+    """
+
+
 @dataclass
 class SourceNote:
     """One note, as an adapter hands it over. The whole interface.
@@ -152,22 +162,47 @@ _UUID_RE = re.compile(r"^uuid:\s*(\S+)\s*$", re.M)
 _NOT_TEXT = "\x00"
 
 
-def _existing_by_uuid(out: Path) -> dict[str, Path]:
-    """Map each already-landed note's uuid → its file, so identity is by uuid
-    rather than by filename. A retitled note keeps its file."""
-    index: dict[str, Path] = {}
+_FM_LINE = re.compile(r"^([a-z_]+):\s*(.*)$")
+
+
+def _landed(out: Path) -> dict[str, dict]:
+    """What is already on disk in a landing directory, keyed by `uuid`.
+
+    Each value is the file's frontmatter plus `_body` and `_path`. Identity is
+    the uuid rather than the filename, so a note retitled upstream keeps the file
+    it already has instead of landing a second time.
+
+    This is also what an adapter is shown as `seen`, which is why the body is in
+    it: a source that can tell a page is unchanged without opening it (Notion's
+    `last_edited_time`) still has to hand the note back, and it hands back what
+    is here. Omitting a note is not "unchanged" — it is absent.
+    """
+    index: dict[str, dict] = {}
     if not out.exists():
         return index
-    for p in sorted(out.rglob("*.md")):
-        if p.name.startswith("."):
+    for path in sorted(out.rglob("*.md")):
+        if path.name.startswith("."):
             continue
         try:
-            head = p.read_text(encoding="utf-8", errors="replace")[:1200]
+            text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        m = _UUID_RE.search(head)
-        if m:
-            index[m.group(1)] = p
+        if not text.startswith("---"):
+            continue
+        end = text.find("\n---", 3)
+        if end == -1:
+            continue
+        fm: dict = {"_path": path, "_body": text[end + 4:].lstrip("\n").strip()}
+        for line in text[3:end].splitlines():
+            m = _FM_LINE.match(line.strip())
+            if not m:
+                continue
+            value = m.group(2).strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                value = value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+            fm[m.group(1)] = value
+        if fm.get("uuid"):
+            index[fm["uuid"]] = fm
     return index
 
 
@@ -208,7 +243,7 @@ def land(notes: list[SourceNote], source: str, landing: str, *,
     out = (root or config.NOTES) / "raw" / landing
     out.mkdir(parents=True, exist_ok=True)
     imported = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    by_uuid = _existing_by_uuid(out)
+    by_uuid = {k: v["_path"] for k, v in _landed(out).items()}
     # Every name in the directory, not only the ones carrying a uuid. A file
     # that landed before the frontmatter contract, or was dropped in by hand, is
     # still a filename this run must not write over.
@@ -271,20 +306,34 @@ def _same_but_for_import(old: str, new: str) -> bool:
 # ────────────────────────────── running one ──────────────────────────────
 
 
-def run(source: str | None = None, src: str | None = None) -> dict[str, dict]:
+def run(source: str | None = None, src: str | None = None, *,
+        full: bool = False) -> dict[str, dict]:
     """Import from one source, or from every source this instance configured.
 
     Bare `exo ingest-notes` runs what `exo.toml` declares:
 
         [notes.sources]
         apple  = ""                          # no argument; reads the local database
-        notion = "raw/notion-export.zip"     # relative paths resolve against EXO_HOME
+        notion = ""                          # no argument; reads the API
+        files  = "~/writing"                 # relative paths resolve against EXO_HOME
+
+    Each adapter is shown what is already landed, as `seen`. That is an
+    OPTIMISATION and never a correctness mechanism: an adapter is free to ignore
+    it entirely, and the two local ones do, because opening a file on disk is
+    cheaper than deciding whether to. It earns its place for a source reached
+    over a network, where "has this page changed" is one field in a listing and
+    "what does this page say" is a request per hundred blocks.
+
+    `full` withholds it, which is the answer whenever an incremental import is
+    suspected of having missed something.
 
     A configured source that raises is not swallowed. A note importer that
-    reports success while one of its sources returned nothing is the same
-    failure the publication guard exists to catch three steps later, and it is
-    much cheaper to see here.
+    reports success while one of its sources returned nothing is the same failure
+    the publication guard exists to catch three steps later, and it is much
+    cheaper to see here.
     """
+    import inspect
+
     from . import sources as registry
 
     targets: list[tuple[str, str | None]]
@@ -314,10 +363,17 @@ def run(source: str | None = None, src: str | None = None) -> dict[str, dict]:
                 f"raw/{landing} — a landing directory belongs to one source")
         landings[landing] = name
 
-        notes = adapter.read(arg)
+        out = config.NOTES / "raw" / landing
+        seen = {} if full else _landed(out)
+        # An adapter that never needed `seen` keeps the one-argument signature it
+        # was written with. Checked rather than attempted: calling with two
+        # arguments and catching TypeError would also swallow one raised three
+        # frames inside the adapter, and report a network bug as a bad signature.
+        takes_seen = len(inspect.signature(adapter.read).parameters) > 1
+        notes = adapter.read(arg, seen) if takes_seen else adapter.read(arg)
+
         counts = land(notes, getattr(adapter, "SOURCE", name), landing)
         results[name] = counts
-        out = config.NOTES / "raw" / landing
         print(f"  {name:8s} -> {out}")
         print(f"    new {counts['new']:>5}   changed {counts['changed']:>5}   "
               f"same {counts['same']:>5}   skipped {counts['skipped']:>5}")

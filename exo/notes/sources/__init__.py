@@ -5,7 +5,14 @@ An adapter is a module with two names:
     LANDING   the directory under `notes/raw/` its notes land in. Its own, so a
               new source cannot inherit an existing zone's publication decision
               (see `exo.notes`).
-    read(src) -> list[SourceNote]     `src` is whatever `--from` gave, or None.
+    read(src[, seen]) -> list[SourceNote]
+
+`src` is whatever `--from` gave, or None. `seen` — optional, and the local
+adapters do not take it — is what is already landed, keyed by `external_id`, so
+a source reached over a network can skip fetching a page it can already tell is
+unchanged. It is an optimisation and never a correctness mechanism: ignoring it
+is always right, and an adapter that uses it still has to hand every note back,
+because an omitted note is absent rather than unchanged.
 
 That is the whole interface. Nothing an adapter does can reach past it: it
 cannot choose an id scheme, a filename, a frontmatter field or a landing path,
@@ -14,9 +21,11 @@ because those are the contract and the contract has one implementation.
 ## Which adapters ship in the engine
 
 The rule is CONTRIBUTING's: a loader ships here if its input is a **format**,
-and in an instance's `plugins/` if its input is a **place**. All three of these
-are formats — a NoteStore.sqlite, a Notion export, a directory of text files.
-Anyone can hold one. An adapter for *your* team's wiki is yours.
+and in an instance's `plugins/` if its input is a **place**. All three are things a stranger could
+hold: a local Notes database, a Notion account, a directory of text files. That
+is the test — not whether a source needs a credential, which Trakt, Raindrop and
+the collections fetch all do while shipping here. An adapter for *your* team's
+wiki, against *your* SSO, is yours.
 
 Instances add their own the same way plugins add loaders: `exo.plugins`
 registers them, and they get the same landing rule and the same fail-closed

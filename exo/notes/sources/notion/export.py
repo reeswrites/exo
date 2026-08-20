@@ -1,13 +1,10 @@
-"""Notion — the "Export -> Markdown & CSV" archive, as a zip or an unpacked tree.
+"""The Notion EXPORT road — `exo ingest-notes notion --from <zip|dir>`.
 
-The export, not the API, and that is a considered choice rather than a stopgap.
-An export is a **format**: a zip anyone with a Notion account can produce, which
-is what makes an adapter for it belong in the engine at all (CONTRIBUTING). The
-API is a place — it needs an integration, a token, and every page individually
-shared with that integration, which is a per-workspace act of configuration that
-belongs in an instance's `plugins/` if anyone wants it. An export also works
-offline, on a machine that never talks to Notion, and reproduces byte-for-byte,
-which is what `exo verify` is built on.
+The offline one. It needs no token and no network, which makes it the right tool
+for a one-time migration off Notion and for reading an archive of a workspace
+nobody can reach any more. It is not the default, because no endpoint triggers a
+Notion export: producing one is a human clicking Export and waiting for an email,
+so this road cannot be a step in a nightly (see the package docstring, ADR-0017).
 
     exo ingest-notes notion --from ~/Downloads/Export-1a2b3c.zip
     exo ingest-notes notion --from ~/notion-export/
@@ -55,10 +52,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from .. import SourceNote
-
-LANDING = "notion"
-SOURCE = "notion"
+from ... import SourceNote
 
 # The dashless UUID Notion appends to every exported page's filename, and the
 # dashed form older exports used.
@@ -211,9 +205,7 @@ def _walk(root: Path) -> list[SourceNote]:
 
 def read(src: str | None = None) -> list[SourceNote]:
     if not src:
-        raise ValueError(
-            "the notion source needs the export: --from <export.zip|dir>, "
-            "or a [notes.sources] entry in exo.toml")
+        raise ValueError("the notion export road needs --from <export.zip|dir>")
     path = Path(src).expanduser()
     if not path.exists():
         raise FileNotFoundError(f"no such path: {path}")
