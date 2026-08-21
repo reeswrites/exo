@@ -11,7 +11,7 @@
     "too, because t2_atom carries note text verbatim.",
     "",
     "This is the EXAMPLE. Copy to serve-manifest.json and decide every line",
-    "yourself \u2014 an inherited publication policy is not a decision, and this file",
+    "yourself — an inherited publication policy is not a decision, and this file",
     "is the only thing standing between your record and the internet."
   ],
   "zones": {
@@ -62,24 +62,27 @@
   },
   "zone_notes": {
     "t0_chat": "Your own turns only. The assistant's half is another model's output, not your words.",
-    "t1_procedure": "Your own methods, published as MCP resources (ADR-0016). Listing it here only lets a procedure BE published \u2014 each one still carries its own serve: flag, and a served one that reads a held zone fails the build.",
+    "t1_procedure": "Your own methods, published as MCP resources (ADR-0016). Listing it here only lets a procedure BE published — each one still carries its own serve: flag, and a served one that reads a held zone fails the build.",
     "rows": "The cross-zone provenance union. Held: it is a join surface, not an answer."
   },
   "note_folders": {
-    "_doc": "The folder axis. Every folder your vault contains must appear here or the build fails \u2014 that is the point: a new folder is a decision, not a default.",
+    "_doc": "The folder axis. Every folder your vault contains must appear here or the build fails — that is the point: a new folder is a decision, not a default.",
     "Notes": "serve",
     "Journal": "hold",
     "": "hold"
   },
   "path_zones": {
     "raw/import": "serve",
+    "raw/files": "hold",
+    "raw/notion": "hold",
     "raw/chat-promoted": "hold",
     "raw/daily": "hold",
     "refined/unshared": "hold",
     "refined/shared": "serve"
   },
   "path_zone_notes": {
-    "_axis": "Gradient position, independent of note_folders. A note publishes only if BOTH axes say serve."
+    "_axis": "Gradient position, independent of note_folders. A note publishes only if BOTH axes say serve.",
+    "_landing": "One entry per note source (ADR-0017). `raw/import` is Apple Notes, `raw/notion` a Notion export, `raw/files` a directory of text; a plugin's adapter brings its own. They start HELD, and the matching is by longest declared prefix — so a source with no entry here inherits nothing and fails the build instead, which is the only safe answer to a question nobody was asked."
   },
   "folder_notes": {
     "Journal": "The clearest case of a folder that must never leave. Yours will differ.",
@@ -89,10 +92,10 @@
     "_doc": "Row-level decisions inside an otherwise-served zone. Explicit, because the default for medical data should never be inherited from a zone."
   },
   "chat_topics": {
-    "_doc": "Conversation TITLES and volume only \u2014 t0_chat itself stays held. Titles are auto-generated from content, so a private conversation gets a revealing title; these two rules are the review, and both are deliberate rather than pattern-matched.",
+    "_doc": "Conversation TITLES and volume only — t0_chat itself stays held. Titles are auto-generated from content, so a private conversation gets a revealing title; these two rules are the review, and both are deliberate rather than pattern-matched.",
     "window_days": 90,
     "_window_doc": "Recency is the point: an assistant needs what the owner is working through now. Older topics carry the same exposure with far less value.",
-    "_hold_doc": "Named explicitly, not matched. A regex over titles would hold 'Therapy speak as emptiness' (criticism already published as a note) and miss anything private with a bland title \u2014 the same argument ADR-0009 made for notes.",
+    "_hold_doc": "Named explicitly, not matched. A regex over titles would hold 'Therapy speak as emptiness' (criticism already published as a note) and miss anything private with a bland title — the same argument ADR-0009 made for notes.",
     "hold_titles": []
   }
 }

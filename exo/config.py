@@ -175,6 +175,38 @@ MEDIA_EMBEDDINGS = _path("EXO_MEDIA_EMBEDDINGS", "paths", "media_embeddings", "r
 PROJECTS_SNAPSHOT = _path("EXO_PROJECTS_SNAPSHOT", "paths", "projects_snapshot", "raw/projects.json")
 DOWNLOADS = _path("EXO_DOWNLOADS", "paths", "downloads", "~/Downloads")
 
+# ────────────────────────────── note sources ──────────────────────────────
+# Which silos this instance imports notes out of, and what each one is pointed
+# at (`exo ingest-notes`, ADR-0017). A table rather than a list because most
+# adapters need an argument — an export to read, a directory to walk — and the
+# one that does not (Apple Notes reads a fixed local database) declares "".
+#
+#     [notes.sources]
+#     apple  = ""
+#     notion = "raw/notion-export.zip"
+#
+# The engine ships no default here on purpose: importing notes writes files into
+# the record, and a source nobody named is a source nobody chose.
+
+NOTES_SOURCES = setting("notes", "sources", {}) or {}
+
+
+def notes_source_path(name: str) -> str | None:
+    """What `[notes.sources].<name>` points at, resolved. None if it needs nothing.
+
+    Relative paths resolve against the instance root, like every other path in
+    this module, so an instance can be moved without editing its own config.
+    "-" is passed through untouched: it means standard input, not a file called
+    dash sitting in EXO_HOME.
+    """
+    raw = _env("EXO_NOTES_" + name.upper()) or NOTES_SOURCES.get(name) or ""
+    raw = str(raw).strip()
+    if not raw or raw == "-":
+        return raw or None
+    p = Path(raw).expanduser()
+    return str(p if p.is_absolute() else (ROOT / p))
+
+
 # ────────────────────────────── MUST-STAY upstreams ──────────────────────────────
 # Another system owns these (a published blog, a live vault), so the engine
 # SYNCs copies into the colocated paths above via `exo sync-raw` rather than

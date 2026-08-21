@@ -1,8 +1,8 @@
 """`wh` — drive the store.
 
     wh ingest [source...]   T0 loaders -> zones/t0/*.parquet   (default: all)
-    wh ingest-notes         Apple Notes -> notes/raw/import (Exo-owned; needs Full Disk Access)
-    wh index                T1: index second-brain md+verdicts -> zones/t1
+    wh ingest-notes [src]   a note source -> notes/raw/<src>/ (apple|files|notion; ADR-0017)
+    wh index                T1: index the note trees + authored records -> zones/t1
     wh derive               T2: run registered derivations (reads via the wall)
     wh build                (re)build the DuckDB catalog views
     wh query "SQL"          run SQL across all zones (full profile)
@@ -70,7 +70,13 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="exo", description="Exo — one record, write-scoped zones")
     sub = p.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("ingest"); sp.add_argument("source", nargs="*")
-    sub.add_parser("ingest-notes")
+    sn = sub.add_parser("ingest-notes")
+    sn.add_argument("source", nargs="?", default=None,
+                    help="apple|files|notion|<plugin>; omit to run every [notes.sources] entry")
+    sn.add_argument("--from", dest="src", default=None,
+                    help="what to read: an export, a directory, a file, or - for stdin")
+    sn.add_argument("--full", action="store_true",
+                    help="re-read every note, ignoring what is already landed")
     sub.add_parser("index")
     sub.add_parser("derive")
     sub.add_parser("build")
@@ -139,12 +145,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "ingest":
         _ingest(args.source); _build()
     elif args.cmd == "ingest-notes":
-        from . import ingest_notes
+        from . import notes as notes_mod
         try:
-            ingest_notes.run()
-        except (PermissionError, OSError) as e:
-            print(f"  cannot read NoteStore.sqlite ({e}).\n  Needs Full Disk Access — run from "
-                  f"the Life Terminal app or an FDA-granted terminal.", file=sys.stderr)
+            notes_mod.run(args.source, args.src, full=args.full)
+        except PermissionError as e:
+            # Apple Notes is the only source that can fail this way, and the
+            # cause is never the path — it is that the process was not granted
+            # Full Disk Access. Saying so beats reprinting errno.
+            print(f"  cannot read the note database ({e}).\n  Apple Notes needs Full Disk "
+                  "Access — run this from a terminal that has it.", file=sys.stderr)
+            return 1
+        except (notes_mod.SourceError, ValueError, FileNotFoundError) as e:
+            # A source that cannot be read is the owner's problem to fix, not a
+            # bug in the engine — one line, exit 1, no traceback.
+            print(f"  {e}", file=sys.stderr)
             return 1
     elif args.cmd == "index":
         _index(); _build()
