@@ -143,6 +143,11 @@ def main(argv: list[str] | None = None) -> int:
     isub.add_parser("constraints")
     sc = sub.add_parser("chatsearch"); sc.add_argument("query"); sc.add_argument("--k", type=int, default=10)
     sc.add_argument("--channel", choices=("his", "world", "both"), default="both")
+    sld = sub.add_parser("ledger", help="the one state a rebuild cannot regenerate")
+    ldsub = sld.add_subparsers(dest="laction", required=True)
+    lde = ldsub.add_parser("export"); lde.add_argument("dest")
+    ldm = ldsub.add_parser("merge"); ldm.add_argument("src")
+    ldsub.add_parser("status")
     sub.add_parser("rebuild")
     sub.add_parser("verify")
     sub.add_parser("backup")
@@ -234,6 +239,13 @@ def main(argv: list[str] | None = None) -> int:
             from .scripts_impl import publish_cf
             rc = publish_cf.run()
         return rc
+    elif args.cmd == "ledger":
+        from .scripts_impl import ledger
+        if args.laction == "export":
+            return ledger.export(args.dest)
+        if args.laction == "merge":
+            return ledger.merge(args.src)
+        return ledger.status()
     elif args.cmd == "sync-raw":
         from .scripts_impl import sync_raw
         # bare `sync-raw` does both; a flag narrows to just that one
