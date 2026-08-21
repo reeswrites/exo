@@ -251,11 +251,12 @@ about a privacy setting on an account this repository cannot see.
   "t1_post": "published",
   "t1_film_review": "published",
 
-  "t0_music": "TODO — profile if your Last.fm is public",
-  "t0_film": "TODO — profile if your Letterboxd is public",
-  "t0_book": "TODO — profile if your Goodreads shelves are public",
-  "t0_beer": "TODO — profile if your Untappd is public",
-  "t0_tv": "TODO — profile if your Trakt is public",
+  "t0_music": "profile",
+  "t0_film": "profile",
+  "t0_book": "profile",
+
+  "t0_beer": "private",
+  "t0_tv": "private",
 
   "t0_chat": "private",
   "t0_chat_topic": "private",
@@ -284,7 +285,7 @@ about a privacy setting on an account this repository cannot see.
 }
 ```
 
-Four of those are worth reading twice, because they are the rules working rather
+Six of those are worth reading twice, because they are the rules working rather
 than defaults falling through:
 
 - **`t1_project*`** is `private` even though some of those repos are public on
@@ -295,6 +296,36 @@ than defaults falling through:
 - **`t2_affinity`** is `private` without a special case: it joins `t0_music` to
   `t1_notes`, and §2 already says the join is as private as its most private
   input. That one is the rule proving itself.
+- **`t0_tv`** is `private` because the answer was "probably not public". §1 sends
+  an unsure answer to `private` on purpose, so the hedge costs nothing and needs
+  no research to be safe.
+- **`t0_beer`** is `private` despite a public Untappd account — see below. It is
+  the one line here that contradicts its own service's setting, and the reason is
+  the most important thing in this appendix.
+
+### Why `t0_beer` is private with a public account
+
+The loader keeps Untappd's native columns verbatim, which include `venue_lat`,
+`venue_lng`, `venue_name` and `venue_city`, against a `created_at` on every row.
+Each check-in is genuinely public: a stranger can read any one of them on the
+profile today.
+
+**All of them together are a timestamped location history**, and nobody has ever
+assembled it. That is this record's sharpest instance of the caveat in the first
+consequence, and it exposes a real limit of the axis as drafted: the grade asks
+whether a *row* is readable, and the risk lives in what the *payload* is. Bulk
+access to scrobbles is a taste profile. Bulk access to check-ins is a movement
+pattern. Same grade by the letter of §1, and not remotely the same consequence.
+
+So this zone is graded on the question the axis is actually for — does a stranger
+holding all of it cost anything — rather than on the account setting, and the
+answer is yes. Raising a cap is cheap to undo and a published movement history is
+not.
+
+The general form, for whoever grades the next zone: **a service's privacy setting
+is evidence, not the answer.** Where a payload is location, health, or anything
+whose value to a stranger is in the pattern rather than the row, the grade is
+`private` regardless of what the profile page says.
 
 Nothing here is graded above `private` by accident. Every non-private line is one
 somebody had to type.
