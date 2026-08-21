@@ -25,6 +25,7 @@ Bundle layout under zones/_serve/cf/:
     data/<table>.sql  batched INSERTs, one file per table
     vectors.f32       row-major float32, atom vectors then note vectors
     vectors.json      index sidecar — row i of the blob is rows[i]
+    exposure.json     publicity per served zone (ADR-0019), resolved by `publish`
     MANIFEST.json     counts, dim, byte sizes
 """
 from __future__ import annotations
@@ -513,6 +514,19 @@ def run() -> int:
         if src_brief.exists():
             (out / "brief.md").write_text(src_brief.read_text(encoding="utf-8"), encoding="utf-8")
             print(f"  R2  brief.md        {len(src_brief.read_bytes()):>8,} bytes")
+        # The publicity axis, already resolved by `publish` (ADR-0019). Copied
+        # rather than recomputed: this module changes shape and re-decides no
+        # policy, and a grade worked out twice is a grade that will differ once.
+        src_exposure = src / "exposure.json"
+        if src_exposure.exists():
+            (out / "exposure.json").write_text(
+                src_exposure.read_text(encoding="utf-8"), encoding="utf-8")
+            n = len(json.loads(src_exposure.read_text(encoding="utf-8"))["zones"])
+            print(f"  R2  exposure.json   {n:>8,} zones graded")
+        else:
+            # Not fatal: the worker fails closed on a missing file (every zone
+            # private), so an old projection serves tight rather than open.
+            print("  R2  exposure.json: absent — the surface will treat every zone as private")
         _emit_reconcile(out, counts)
         vinfo = _emit_vectors(con, out)
         print(f"  R2  vectors.f32     {vinfo['count']:>8,} x {vinfo['dim']}d "
