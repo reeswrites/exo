@@ -20,6 +20,12 @@ tool declares the zones whose content can reach a caller, and its grade is the
 least public of them — so a tool touching one private zone is private whatever
 else it reads.
 
+A tool that spans two grades is graded on what each CALL reads, not on
+everything it could: `backlog` is `profile` for a Goodreads shelf and `private`
+for a Raindrop collection, from the same tool. That narrowing is the only
+direction available — a test asserts the per-call set is always a subset of the
+declared one, so it can never grade a call more public than the tool says.
+
 The row cap follows that grade — 20 private, 100 profile, 200 published — and the
 byte cap does not, because 16KB protects the caller's context window rather than
 the corpus. Every tool takes an optional `limit`, which only ever narrows.

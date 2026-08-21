@@ -99,3 +99,27 @@ export function gradeOf(zones, reads) {
   }
   return GRADES[least];
 }
+
+/**
+ * The most public a tool can ever be, for the ceiling `tools/list` advertises.
+ *
+ * A tool with per-call reads has no single grade — `backlog` is `profile` for a
+ * Goodreads shelf and `private` for a Raindrop collection, decided by an
+ * argument the schema is written before anyone supplies. So the schema states
+ * the best case and the runtime clamps to the real one.
+ *
+ * That direction is chosen deliberately. Advertising the worst case would make a
+ * strict client reject `limit: 100` as out of range on a call that could have
+ * honoured it — a valid question refused by a number. Advertising the best case
+ * costs nothing: a caller who asks for more than a private call may return gets
+ * what it may return, plus `has_more` saying so, which is the same contract
+ * every capped answer already carries.
+ */
+export function bestGradeOf(zones, tool) {
+  if (!tool?.readsFor) return gradeOf(zones, tool?.reads);
+  let best = 0;
+  for (const zone of tool.reads ?? []) {
+    best = Math.max(best, Math.max(0, GRADES.indexOf(zones?.[zone] ?? DEFAULT_GRADE)));
+  }
+  return GRADES[best];
+}
