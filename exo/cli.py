@@ -87,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
     snn = sub.add_parser("nn"); snn.add_argument("atom_id"); snn.add_argument("--k", type=int, default=6)
     ssr = sub.add_parser("search"); ssr.add_argument("query"); ssr.add_argument("--k", type=int, default=10)
     sub.add_parser("fetch-goodreads")
+    sub.add_parser("fetch-lastfm")
+    sub.add_parser("fetch-letterboxd")
+    sub.add_parser("fetch-untappd")
     sub.add_parser("summarize-threads")
     sub.add_parser("fetch-collections")
     sub.add_parser("fetch-trakt")
@@ -205,6 +208,15 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "fetch-goodreads":
         from .scripts_impl import fetch_goodreads
         return fetch_goodreads.run()
+    elif args.cmd == "fetch-lastfm":
+        from .scripts_impl import fetch_lastfm
+        return fetch_lastfm.run()
+    elif args.cmd == "fetch-letterboxd":
+        from .scripts_impl import fetch_letterboxd
+        return fetch_letterboxd.run()
+    elif args.cmd == "fetch-untappd":
+        from .scripts_impl import fetch_untappd
+        return fetch_untappd.run()
     elif args.cmd == "summarize-threads":
         from .scripts_impl import summarize_threads
         return summarize_threads.run()

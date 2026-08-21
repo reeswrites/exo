@@ -136,6 +136,21 @@ ITEMS = ROOT / "items"  # item spine (ADR-0002): authored .md nouns + _events lo
 # is an instance fact, not an engine one, and the default is only a default.
 STATE = _path("EXO_STATE", "paths", "state", "~/.local/state/exo")
 
+# The clock consumption timestamps are RENDERED in, when a source hands back an
+# instant rather than a wall time (Last.fm's `uts`, Untappd's RFC-2822 pubDate).
+#
+# It has to be a stated fact rather than the runner's local zone, because the
+# runner moves. The same fetch on a laptop in one zone and a cloud runner in UTC
+# renders the same scrobble four hours apart, and `csv_sources.lastfm` splices
+# the cache onto the CSV export *by time* — so a mixed-clock cache does not fail,
+# it silently reorders an evening into the next morning.
+#
+# Empty means "whatever this machine's zone is", which is the behaviour that
+# existed before this was nameable. The fetchers say so out loud when it is
+# empty, and a cache that already declares a zone always wins over this: an
+# existing file is never reinterpreted under a new clock.
+TIMEZONE = _env("EXO_TZ") or setting("owner", "timezone") or ""
+
 SECRETS = Path.home() / ".config" / "exo" / "secrets"
 ENV_FILE = SECRETS / "env"  # KEY=VALUE, mode 600, never in the repo
 LEGACY_ENV_FILE = Path.home() / ".config" / "warehouse" / "secrets" / "env"
