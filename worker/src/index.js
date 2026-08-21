@@ -15,7 +15,7 @@
  * thing that can change under a corpus this personal.
  */
 import { loadExposure, gradeOf } from "./exposure.js";
-import { TOOLS } from "./tools.js";
+import { ROW_CAP, TOOLS } from "./tools.js";
 
 const PROTOCOL_VERSION = "2024-11-05";
 
@@ -358,28 +358,65 @@ async function handleRpc(req, env, body) {
       });
     }
 
-    case "tools/list":
+    case "tools/list": {
+      // Built per request rather than declared, because a tool's ceiling depends
+      // on how public the zones it reads are, and that is a property of the
+      // bundle rather than of this code. A static schema would have to state one
+      // number for every grade, and the number it stated would be wrong.
+      const zones = await loadExposure(env);
       return rpcResult(id, {
-        tools: Object.entries(TOOLS).map(([name, t]) => ({
-          name,
-          description: t.description,
-          inputSchema: t.schema,
-        })),
+        tools: Object.entries(TOOLS).map(([name, t]) => {
+          const ceiling = ROW_CAP[gradeOf(zones, t.reads)] ?? ROW_CAP.private;
+          return {
+            name,
+            description: t.description,
+            inputSchema: {
+              ...t.schema,
+              properties: {
+                ...(t.schema.properties ?? {}),
+                limit: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: ceiling,
+                  description:
+                    `Rows to return, at most ${ceiling}. Lower it to spend less ` +
+                    `context; it cannot be raised. There is no offset: this ` +
+                    `surface has no cursor that walks a set (ADR-0007).`,
+                },
+              },
+            },
+          };
+        }),
       });
+    }
 
     case "tools/call": {
       const tool = TOOLS[params?.name];
       if (!tool) return rpcError(id, -32602, `unknown tool: ${params?.name}`);
+      const args = params.arguments ?? {};
+      const exposure = gradeOf(await loadExposure(env), tool.reads);
+      const ctx = {
+        exposure,
+        limit: Number.isInteger(args.limit) && args.limit > 0 ? args.limit : undefined,
+      };
+      // Named, not ignored. A model that guessed at `offset` deserves to hear
+      // why the surface has none rather than to receive page one again and
+      // conclude it had reached the end.
+      if (args.offset !== undefined) {
+        return rpcError(id, -32602,
+          "this surface has no offset: a cursor that can walk the full set is the " +
+          "one thing the tool surface is not (ADR-0007). Narrow the question instead " +
+          "— every tool takes filters, and the answer carries has_more.");
+      }
       try {
-        const result = await tool.run(env, params.arguments ?? {});
+        const result = await tool.run(env, args, ctx);
         // How public this answer is (ADR-0019), stamped on every one of them.
-        // The caps do not move yet — this is the other half of the axis, and the
-        // half worth more: an assistant currently cannot tell "this is on his
-        // blog, link it" from "this is a half-formed private note, do not repeat
-        // it to whoever asked". CONTEXT states that rule and the surface has
-        // never been able to carry it.
-        const exposure = gradeOf(await loadExposure(env), tool.reads);
-        await audit(env, req, params.name, params.arguments, result.rows?.length ?? 0);
+        // It sized the caps above; it is also the half of the axis worth more on
+        // its own. An assistant otherwise cannot tell "this is on his blog, link
+        // it" from "this is a half-formed private note, do not repeat it to
+        // whoever asked" — CONTEXT has stated that rule since the blog zone
+        // existed and the surface could never carry it.
+        await audit(env, req, params.name, args, result.rows?.length ?? 0);
         return rpcResult(id, {
           content: [{ type: "text", text: JSON.stringify({ ...result, exposure }, null, 2) }],
         });

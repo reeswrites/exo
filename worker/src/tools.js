@@ -18,8 +18,44 @@
  */
 import { search } from "./search.js";
 
-export const MAX_ROWS = 20;
+/**
+ * The row cap follows the publicity axis; the byte cap does not (ADR-0019 §5).
+ *
+ * They arrived in one sentence and do different jobs. The ROW cap bounds how
+ * much of the corpus one call takes — that is ADR-0007's blast radius, and blast
+ * radius is what an injected read takes *that it could not otherwise get*. For
+ * the blog that quantity is zero: an attacker who wants it fetches the sitemap.
+ * The BYTE cap bounds how much of the caller's context one answer eats, which is
+ * true regardless of who may read the rows, so it does not move.
+ *
+ * Raised, never removed, and never unaudited — a public row is not a collected
+ * one, and nobody has ever joined a year of public check-ins into a movement
+ * pattern before this surface made it one call.
+ *
+ * In practice MAX_BYTES usually binds first anyway; these ceilings matter for
+ * narrow rows — titles, artists, slugs — which is exactly where twenty was most
+ * obviously too few.
+ */
+export const ROW_CAP = { private: 20, profile: 100, published: 200 };
+
+// The floor, and the default for anything ungraded. Kept under its old name
+// because it is load-bearing in tests and in ADR-0007's text.
+export const MAX_ROWS = ROW_CAP.private;
 export const MAX_BYTES = 16384;
+
+/**
+ * How many rows this call may return: the grade's ceiling, lowered by whatever
+ * the caller asked for and by whatever the tool caps itself at.
+ *
+ * `limit` only ever narrows. A caller asking for 500 rows of private material
+ * gets twenty, and one asking for five gets five — the parameter exists so an
+ * agent can spend less of its context, never so it can spend more of the corpus.
+ */
+export function pageSize(ctx, own = Infinity) {
+  const ceiling = Math.min(own, ROW_CAP[ctx?.exposure] ?? ROW_CAP.private);
+  const asked = Number.isInteger(ctx?.limit) && ctx.limit > 0 ? ctx.limit : ceiling;
+  return Math.max(1, Math.min(asked, ceiling));
+}
 
 /**
  * Ask a query for one row PAST the cap.
@@ -34,7 +70,7 @@ export const MAX_BYTES = 16384;
  * One extra row, thrown away after it has been counted. `cap` recognises it by
  * arithmetic — more rows arrived than fit — so nothing has to be flagged.
  */
-export const probe = (want = MAX_ROWS) => want + 1;
+export const probe = (ctx, own) => pageSize(ctx, own) + 1;
 
 /** Trim to the caps, and say so, so a client never mistakes truncation for exhaustion. */
 /**
@@ -47,11 +83,10 @@ export const probe = (want = MAX_ROWS) => want + 1;
 export const postUrl = (env, slug) =>
   env.BLOG_URL_TEMPLATE ? { url: env.BLOG_URL_TEMPLATE.replace("{slug}", slug) } : {};
 
-export function cap(rows, { want = MAX_ROWS } = {}) {
-  // `want` never raises the ceiling — a caller may ask for less than MAX_ROWS,
-  // never more. It exists so a tool with its own smaller page (ratings shows
-  // five per medium) still detects its own overflow rather than the global one.
-  const limit = Math.min(want, MAX_ROWS);
+export function cap(rows, ctx, own) {
+  // `own` is a tool's private ceiling — ratings shows five per medium — so it
+  // detects ITS overflow rather than the global one.
+  const limit = pageSize(ctx, own);
   const out = [];
   let bytes = 0;
   let byteBound = false;
@@ -97,7 +132,7 @@ export function cap(rows, { want = MAX_ROWS } = {}) {
  * Measuring raw text against a fixed allowance does not work: JSON quotes every
  * line, `summary` runs to 890 chars in the store, and the envelope varies per
  * thread. `thread` reserved a flat 1,200 and assembled a 16,665-byte row against
- * a 16,384 cap — whereupon cap() dropped the only row it had and the caller got
+ * a 16,384 cap — whereupon cap(, ctx) dropped the only row it had and the caller got
  * an empty answer advising them to narrow a question that was already one
  * thread. Budget against the real envelope and the row always fits.
  */
@@ -136,7 +171,7 @@ const q = (env, sql, ...binds) =>
  * `read_note` and `read_post` were the same forty lines twice — semantic lookup,
  * miss guard, fetch, clip against a hand-rolled byte budget, explain the clip.
  * They were also the only two places in this file that budgeted bytes by hand
- * instead of going through cap(), which is exactly the shape a second copy
+ * instead of going through cap(, ctx), which is exactly the shape a second copy
  * takes when the first one is copied.
  *
  * Semantic lookup is load-bearing, not incidental (ADR-0007): there is no id to
@@ -205,8 +240,8 @@ export const TOOLS = {
       properties: { topic: { type: "string", description: "A topic, question, or phrase." } },
       required: ["topic"],
     },
-    async run(env, { topic }) {
-      const hits = await search(env, topic, { k: probe() });
+    async run(env, { topic }, ctx) {
+      const hits = await search(env, topic, { k: probe(ctx) });
       // A post hit is the one kind that has somewhere to send a reader. Its ref is
       // the slug, and the permalink is a pure function of it, so the link costs
       // no round trip — and an answer with a link beats one that paraphrases
@@ -235,7 +270,7 @@ export const TOOLS = {
       },
       required: ["topic"],
     },
-    async run(env, { topic, full }) {
+    async run(env, { topic, full }, ctx) {
       if (full) {
         return readOne(env, {
           topic, kind: "note", table: "t1_notes", key: "origin_ref", missing: "note",
@@ -244,7 +279,7 @@ export const TOOLS = {
             `body truncated to ${kept} of ${total} chars — this is one of the owner's longer notes; ask about a specific part of it rather than requesting it again`,
         });
       }
-      const hits = await search(env, topic, { k: probe(), kind: "note" });
+      const hits = await search(env, topic, { k: probe(ctx), kind: "note" });
       return cap(hits.map((h) => ({ title: h.label, score: h.score })));
     },
   },
@@ -255,13 +290,13 @@ export const TOOLS = {
     description:
       "Questions the owner has asked themselves and not closed. The best single source of what they are currently chewing on.",
     schema: { type: "object", properties: {} },
-    async run(env) {
+    async run(env, _args, ctx) {
       const rows = await q(
         env,
         `SELECT question, state FROM t1_open_thread
          WHERE state IS NULL OR lower(state) NOT IN ('closed','done','dismissed')
          ORDER BY created DESC LIMIT ?`,
-        probe()
+        probe(ctx)
       );
       return cap(rows.map((r) => ({ question: r.question })));
     },
@@ -276,11 +311,11 @@ export const TOOLS = {
       type: "object",
       properties: { kind: { type: "string", description: "books | films | tv | music" } },
     },
-    async run(env, { kind }) {
+    async run(env, { kind }, ctx) {
       const rows = kind
-        ? await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts WHERE kind = ? LIMIT ?`, kind, probe())
-        : await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts LIMIT ?`, probe());
-      return cap(rows);
+        ? await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts WHERE kind = ? LIMIT ?`, kind, probe(ctx))
+        : await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts LIMIT ?`, probe(ctx));
+      return cap(rows, ctx);
     },
   },
 
@@ -290,13 +325,13 @@ export const TOOLS = {
     description:
       "What the owner actually listens to, by play count — the revealed preference, as distinct from what they say.",
     schema: { type: "object", properties: {} },
-    async run(env) {
+    async run(env, _args, ctx) {
       const rows = await q(
         env,
         `SELECT artist, plays, mentions FROM t2_affinity ORDER BY plays DESC LIMIT ?`,
-        probe()
+        probe(ctx)
       );
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
 
@@ -312,7 +347,7 @@ export const TOOLS = {
         include_done: { type: "boolean", description: "Include finished tasks (default false)." },
       },
     },
-    async run(env, { family, include_done }) {
+    async run(env, { family, include_done }, ctx) {
       // "Live" is family-specific, which is the point of the spine: a habit is
       // never 'todo' and a slot is never 'done'. Filtering on one status
       // vocabulary would silently empty three of the four families.
@@ -329,7 +364,7 @@ export const TOOLS = {
          ${where.length ? "WHERE " + where.join(" AND ") : ""}
          ORDER BY family, due IS NULL, due, created DESC
          LIMIT ?`,
-        ...binds, probe()
+        ...binds, probe(ctx)
       );
 
       // Counts alongside, so "3 rows" is never read as "3 items exist".
@@ -347,7 +382,7 @@ export const TOOLS = {
         return item;
       });
       return {
-        ...cap(out),
+        ...cap(out, ctx),
         shape: shape.map((r) => `${r.family}/${r.status}: ${r.n}`).join(" \u00b7 "),
         // Completion is not available here and never will be \u2014 this surface is
         // read-only (ADR-0006). Saying so stops an assistant offering to tick
@@ -366,7 +401,7 @@ export const TOOLS = {
       type: "object",
       properties: { title: { type: "string", description: "Match against the item's title." } },
     },
-    async run(env, { title }) {
+    async run(env, { title }, ctx) {
       const like = title ? `%${title.toLowerCase()}%` : null;
       const rows = await q(
         env,
@@ -377,7 +412,7 @@ export const TOOLS = {
          WHERE (? IS NULL OR lower(COALESCE(i.title, e.title)) LIKE ?)
          ORDER BY COALESCE(e.date, e.ts) DESC
          LIMIT ?`,
-        like, like, probe()
+        like, like, probe(ctx)
       );
       return cap(rows.map((r) => ({
         item: r.item, event: r.event,
@@ -403,7 +438,7 @@ export const TOOLS = {
         full: { type: "boolean", description: "Return ingredients and steps for one recipe." },
       },
     },
-    async run(env, { topic, full }) {
+    async run(env, { topic, full }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const match = "(? IS NULL OR lower(title) LIKE ? OR lower(cuisine) LIKE ? OR lower(tags) LIKE ?)";
       const binds = [like, like, like, like];
@@ -421,16 +456,16 @@ export const TOOLS = {
         // Both columns are JSON on the wire \u2014 D1 has no list type \u2014 so parse
         // here rather than handing a reader a string that only looks like data.
         const parse = (v) => { try { return JSON.parse(v || "[]"); } catch { return []; } };
-        return cap([{ ...r, ingredients: parse(r.ingredients), steps: parse(r.steps) }]);
+        return cap([{ ...r, ingredients: parse(r.ingredients), steps: parse(r.steps) }], ctx);
       }
 
       const rows = await q(
         env,
         `SELECT title, cuisine, time_min, effort, yield_servings, source_url
          FROM t1_recipe WHERE ${match} ORDER BY title LIMIT ?`,
-        ...binds, probe()
+        ...binds, probe(ctx)
       );
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
   drafts: {
@@ -446,7 +481,7 @@ export const TOOLS = {
         full: { type: "boolean", description: "Return the entire text of the best match." },
       },
     },
-    async run(env, { topic, stale_days, full }) {
+    async run(env, { topic, stale_days, full }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const match = "(? IS NULL OR lower(title) LIKE ? OR lower(body) LIKE ?)";
       const stale = "(? IS NULL OR julianday('now') - julianday(modified) >= ?)";
@@ -475,7 +510,7 @@ export const TOOLS = {
         `SELECT title, slug, description, started, modified, words, state,
                 CAST(julianday('now') - julianday(modified) AS INTEGER) AS days_since_touched
          FROM t1_draft WHERE ${match} AND ${stale} ORDER BY modified DESC LIMIT ?`,
-        ...binds, probe()
+        ...binds, probe(ctx)
       );
       if (!rows.length) {
         return {
@@ -487,7 +522,7 @@ export const TOOLS = {
             : "no drafts are in progress right now",
         };
       }
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
   medium: {
@@ -511,7 +546,7 @@ export const TOOLS = {
         name: { type: "string", description: "film | book | tv | music | beer | restaurant" },
       },
     },
-    async run(env, { name }) {
+    async run(env, { name }, ctx) {
       // Shelf-aware, like `consumption`: t0_book is the whole Goodreads library
       // and 436 of its rows are to-read, so an unfiltered count reports 920
       // books read when the number is 443.
@@ -539,7 +574,7 @@ export const TOOLS = {
           out.push({ medium: k, unit: d.unit, total: r?.n ?? 0 });
         }
         return {
-          ...cap(out),
+          ...cap(out, ctx),
           note: name
             ? `no medium called '${name}' — ask for one of these`
             : "ask for one by name to get ratings, what is owned, and what was written about it",
@@ -627,7 +662,7 @@ export const TOOLS = {
       type: "object",
       properties: { medium: { type: "string", description: "music | books | films | beer" } },
     },
-    async run(env, { medium }) {
+    async run(env, { medium }, ctx) {
       // t0_book is the whole Goodreads library, not a reading log: 436 of its
       // rows are to-read and 38 partly-read, and `created` falls back to
       // date_added, so a shelved book looks consumed. Reporting one total said
@@ -669,7 +704,7 @@ export const TOOLS = {
         }
         out.push(rec);
       }
-      return cap(out);
+      return cap(out, ctx);
     },
   },
 
@@ -690,7 +725,7 @@ export const TOOLS = {
       },
       required: ["topic"],
     },
-    async run(env, { topic, kind, full }) {
+    async run(env, { topic, kind, full }, ctx) {
       if (full) {
         return readOne(env, {
           topic, kind: "post", table: "t1_post", key: "slug", missing: "post",
@@ -702,7 +737,7 @@ export const TOOLS = {
       // Over-fetch, then filter: the vector index carries no post kind, so a
       // kind filter applied after the search would return 3 rows out of 20 and
       // look like the blog is empty on that kind.
-      const hits = await search(env, topic, { k: kind ? 60 : probe(), kind: "post" });
+      const hits = await search(env, topic, { k: kind ? 60 : probe(ctx), kind: "post" });
       if (!hits.length) return { rows: [], note: "nothing on the blog matched" };
 
       const slugs = hits.map((h) => h.ref).filter(Boolean);
@@ -727,7 +762,7 @@ export const TOOLS = {
         });
       }
       if (!rows.length) return { rows: [], note: `matched posts, but none of kind '${kind}'` };
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
 
@@ -745,7 +780,7 @@ export const TOOLS = {
         free: { type: "boolean", description: "Only free events." },
       },
     },
-    async run(env, { topic, free, from, to }) {
+    async run(env, { topic, free, from, to }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       // Two corrections to "ORDER BY start LIMIT 20":
       //
@@ -814,9 +849,9 @@ export const TOOLS = {
          ORDER BY start
          LIMIT ?`,
         from ?? null, to ?? null, to ?? null,
-        like, like, like, like, free ? 1 : null, probe()
+        like, like, like, like, free ? 1 : null, probe(ctx)
       );
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
 
@@ -826,9 +861,9 @@ export const TOOLS = {
     description:
       "What the owner SAYS they like — stated preferences: venues and orgs they rate, things they seek out, things they avoid. Distinct from `taste`, which is revealed behaviour (play counts). When the two disagree, that gap is usually the interesting part.",
     schema: { type: "object", properties: {} },
-    async run(env) {
-      const rows = await q(env, `SELECT kind, key, value FROM t1_taste ORDER BY kind, key LIMIT ?`, probe());
-      return cap(rows);
+    async run(env, _args, ctx) {
+      const rows = await q(env, `SELECT kind, key, value FROM t1_taste ORDER BY kind, key LIMIT ?`, probe(ctx));
+      return cap(rows, ctx);
     },
   },
 
@@ -848,7 +883,7 @@ export const TOOLS = {
       },
       required: ["from", "to"],
     },
-    async run(env, { from, to }) {
+    async run(env, { from, to }, ctx) {
       const notes = await q(
         env,
         `SELECT 'note' AS kind, title AS label, substr(created,1,10) AS when_
@@ -905,7 +940,7 @@ export const TOOLS = {
         for (const b of branches) if (i < b.length) all.push(b[i]);
       }
       return all.length
-        ? cap(all)
+        ? cap(all, ctx)
         : { rows: [], note: `nothing recorded between ${from} and ${to} — check the last_logged dates from consumption, the exports lag` };
     },
   },
@@ -922,7 +957,7 @@ export const TOOLS = {
         min_rating: { type: "number", description: "Only at or above this, on that medium's own scale." },
       },
     },
-    async run(env, { medium, min_rating }) {
+    async run(env, { medium, min_rating }, ctx) {
       // scale is carried per row because the mediums disagree: Letterboxd and
       // Goodreads are 0-5, the restaurant log is 0-10. Returning a bare 9.5
       // invites an assistant to read it as "off the charts" on a five-point
@@ -951,11 +986,11 @@ export const TOOLS = {
              AND CAST(${d.col} AS REAL) >= ? ${d.where ?? ""}
            ORDER BY CAST(${d.col} AS REAL) DESC, created DESC
            LIMIT ?`,
-          floor, medium ? probe() : probe(5)
+          floor, medium ? probe(ctx) : probe(ctx, 5)
         );
         for (const r of rows) out.push({ medium: name, scale: d.scale, ...r });
       }
-      return cap(out);
+      return cap(out, ctx);
     },
   },
 
@@ -971,7 +1006,7 @@ export const TOOLS = {
         min_rating: { type: "number", description: "Only films rated at least this, 0-5." },
       },
     },
-    async run(env, { topic, min_rating }) {
+    async run(env, { topic, min_rating }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const rows = await q(
         env,
@@ -983,9 +1018,9 @@ export const TOOLS = {
          LIMIT ?`,
         like, like, like,
         min_rating ?? null, min_rating ?? 0,
-        probe()
+        probe(ctx)
       );
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
 
@@ -1001,7 +1036,7 @@ export const TOOLS = {
         topic: { type: "string", description: "Match against title, creator or genre." },
       },
     },
-    async run(env, { kind, topic }) {
+    async run(env, { kind, topic }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const rows = await q(
         env,
@@ -1025,7 +1060,7 @@ export const TOOLS = {
          LIMIT ?`,
         kind ?? null, kind ?? null,
         like, like, like, like,
-        probe()
+        probe(ctx)
       );
       // Drop the columns a given kind does not use rather than emitting a wall
       // of nulls — a board game has no genre and a DVD has no thoughts.
@@ -1052,7 +1087,7 @@ export const TOOLS = {
         with_note: { type: "boolean", description: "Only saves with a note written on them." },
       },
     },
-    async run(env, { topic, platform, collection, kind, tag, since, with_note }) {
+    async run(env, { topic, platform, collection, kind, tag, since, with_note }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
 
       // With nothing to narrow by, return the AXES rather than 20 arbitrary
@@ -1101,7 +1136,7 @@ export const TOOLS = {
         tag ?? null, tag ? `%${tag.toLowerCase()}%` : "",
         since ?? null, since ?? "",
         with_note ? 1 : null,
-        probe()
+        probe(ctx)
       );
       const [tot] = await q(env,
         `SELECT count(*) AS n, max(substr(created,1,10)) AS newest,
@@ -1112,7 +1147,7 @@ export const TOOLS = {
       // MCP that seeded this snapshot does not return the field.
       const noted = tot?.noted ?? 0;
       return {
-        ...cap(rows),
+        ...cap(rows, ctx),
         scope: `searched ${tot?.n ?? 0} saves, newest ${tot?.newest ?? "?"}`,
         ...(noted === 0
           ? { notes: "the owner's own notes on these saves are not synced yet — absence here is not evidence none were written" }
@@ -1135,7 +1170,7 @@ export const TOOLS = {
         order: { type: "string", description: "recent (default) | oldest" },
       },
     },
-    async run(env, { kind, topic, since, order }) {
+    async run(env, { kind, topic, since, order }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const dir = order === "oldest" ? "ASC" : "DESC";
 
@@ -1196,14 +1231,14 @@ export const TOOLS = {
           ...shelves,
           like, like, like,
           since ?? null, since ?? "",
-          probe()
+          probe(ctx)
         );
         const [tot] = await q(env,
           `SELECT count(*) AS n, min(substr(date_added,1,10)) AS oldest
            FROM t0_book WHERE lower(shelf) IN (${shelves.map(() => "?").join(",")})`,
           ...shelves);
         return {
-          ...cap(rows),
+          ...cap(rows, ctx),
           scope: `${tot?.n ?? 0} on this shelf, oldest queued ${tot?.oldest ?? "?"}`,
           // my_rating is 0 across every unread row, so it is omitted rather
           // than emitted as a zero an assistant would read as a verdict.
@@ -1227,13 +1262,13 @@ export const TOOLS = {
           ...cols,
           like, like, like,
           since ?? null, since ?? "",
-          probe()
+          probe(ctx)
         );
         const [tot] = await q(env,
           `SELECT count(*) AS n FROM t0_raindrop WHERE collection IN (${cols.map(() => "?").join(",")})`,
           ...cols);
         return {
-          ...cap(rows),
+          ...cap(rows, ctx),
           scope: `${tot?.n ?? 0} in ${cols.join(" + ")}`,
           // 'want-to-make' holds 9 items against 285 untagged Pinterest saves
           // and a wall of TikToks. Reporting 9 as the making backlog without
@@ -1266,7 +1301,7 @@ export const TOOLS = {
         min_turns: { type: "number", description: "Only conversations at least this long." },
       },
     },
-    async run(env, { topic, min_turns }) {
+    async run(env, { topic, min_turns }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const rows = await q(
         env,
@@ -1281,9 +1316,9 @@ export const TOOLS = {
            AND (? IS NULL OR turns >= ?)
          ORDER BY last_seen DESC, turns DESC
          LIMIT ?`,
-        like, like, min_turns ?? null, min_turns ?? 0, probe()
+        like, like, min_turns ?? null, min_turns ?? 0, probe(ctx)
       );
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
 
@@ -1300,7 +1335,7 @@ export const TOOLS = {
       },
       required: ["topic"],
     },
-    async run(env, { topic, include }) {
+    async run(env, { topic, include }, ctx) {
       const want = include || "both";
       const [hit] = await q(
         env,
@@ -1351,7 +1386,7 @@ export const TOOLS = {
         if (kept.length < turns.length) {
           out.note = `${kept.length} of ${turns.length} turns shown \u2014 ask about a narrower part`;
         }
-        return cap([out]);
+        return cap([out], ctx);
       }
 
       if (want !== "conclusion") {
@@ -1370,7 +1405,7 @@ export const TOOLS = {
           out.note = `${kept.length} of ${turns.length} of the owner's turns shown — ask about a narrower part`;
         }
       }
-      return cap([out]);
+      return cap([out], ctx);
     },
   },
 
@@ -1383,7 +1418,7 @@ export const TOOLS = {
       type: "object",
       properties: { kind: { type: "string", description: "dining | clusters" } },
     },
-    async run(env, { kind }) {
+    async run(env, { kind }, ctx) {
       const rows = kind
         ? await q(env, `SELECT kind, text FROM t0_taste_derived WHERE kind = ?`, kind)
         : await q(env, `SELECT kind, text FROM t0_taste_derived`);
@@ -1396,7 +1431,7 @@ export const TOOLS = {
           note: "ask for one by kind — these are documents, and clipping them loses the point",
         };
       }
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
 
@@ -1409,7 +1444,7 @@ export const TOOLS = {
       type: "object",
       properties: { city: { type: "string" }, cuisine: { type: "string" } },
     },
-    async run(env, { city, cuisine }) {
+    async run(env, { city, cuisine }, ctx) {
       const rows = await q(
         env,
         `SELECT restaurant, city, neighborhood, cuisine_1, rating, notes
@@ -1417,9 +1452,9 @@ export const TOOLS = {
          WHERE (? IS NULL OR lower(city) = lower(?))
            AND (? IS NULL OR lower(cuisine_1) = lower(?))
          ORDER BY rating DESC LIMIT ?`,
-        city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, probe()
+        city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, probe(ctx)
       );
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
   /**
@@ -1447,7 +1482,7 @@ export const TOOLS = {
         order: { type: "string", description: "worked (default, commits in 90d) | recent | biggest" },
       },
     },
-    async run(env, { topic, status, group, order }) {
+    async run(env, { topic, status, group, order }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
 
@@ -1469,7 +1504,7 @@ export const TOOLS = {
            ORDER BY c.n DESC LIMIT 8`,
           since);
         return {
-          ...cap(hot),
+          ...cap(hot, ctx),
           statuses: bands,
           note: "no filter given — these are the status bands and the repos with the most commits in the last 90 days; call again with topic, status or group",
         };
@@ -1493,9 +1528,9 @@ export const TOOLS = {
          ORDER BY ${sort} LIMIT ?`,
         since,
         like, like, like, like, status ?? null, status ?? null,
-        group ?? null, group ?? null, probe()
+        group ?? null, group ?? null, probe(ctx)
       );
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
 
@@ -1512,7 +1547,7 @@ export const TOOLS = {
         to: { type: "string", description: "ISO date, inclusive. Defaults to today." },
       },
     },
-    async run(env, { repo, from, to }) {
+    async run(env, { repo, from, to }, ctx) {
       const start = from ?? new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
       const end = to ?? new Date().toISOString().slice(0, 10);
 
@@ -1525,10 +1560,10 @@ export const TOOLS = {
            FROM t1_project_commit c
            WHERE substr(c.committed_at,1,10) BETWEEN ? AND ?
            GROUP BY c.repo ORDER BY commits DESC LIMIT ?`,
-          start, end, probe()
+          start, end, probe(ctx)
         );
         return {
-          ...cap(rows),
+          ...cap(rows, ctx),
           window: { from: start, to: end },
           note: rows.length ? "per-repo totals — ask again with a repo for the subjects" : "no commits in this window",
         };
@@ -1542,9 +1577,9 @@ export const TOOLS = {
          WHERE (lower(c.repo) = lower(?) OR lower(c.repo) LIKE ?)
            AND substr(c.committed_at,1,10) BETWEEN ? AND ?
          ORDER BY c.committed_at DESC LIMIT ?`,
-        repo, like, start, end, probe()
+        repo, like, start, end, probe(ctx)
       );
-      return { ...cap(rows), window: { from: start, to: end } };
+      return { ...cap(rows, ctx), window: { from: start, to: end } };
     },
   },
 
@@ -1562,7 +1597,7 @@ export const TOOLS = {
         full: { type: "boolean", description: "Return one whole document rather than excerpts." },
       },
     },
-    async run(env, { topic, repo, kind, full }) {
+    async run(env, { topic, repo, kind, full }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const rlike = repo ? `%${repo.toLowerCase()}%` : null;
 
@@ -1577,7 +1612,7 @@ export const TOOLS = {
                             WHEN 'adr' THEN 2 ELSE 3 END, repo, path
          LIMIT ?`,
         like, like, like, rlike ? repo : null, repo ?? null, rlike,
-        kind ?? null, kind ?? null, full ? 1 : probe()
+        kind ?? null, kind ?? null, full ? 1 : probe(ctx)
       );
 
       if (full) {
@@ -1585,7 +1620,7 @@ export const TOOLS = {
         // option that was rejected: the decision is at the bottom, the alternatives
         // are in the middle, and a keyword hit lands anywhere.
         if (!rows.length) return { rows: [], note: "no document matched" };
-        return cap([rows[0]]);
+        return cap([rows[0]], ctx);
       }
 
       // Excerpt around the hit rather than shipping bodies. A CONTEXT.md is
@@ -1602,7 +1637,7 @@ export const TOOLS = {
         };
       });
       return {
-        ...cap(out),
+        ...cap(out, ctx),
         note: "excerpts — ask again with full=true and a narrower repo/kind to read one whole",
       };
     },
@@ -1620,7 +1655,7 @@ export const TOOLS = {
         kind: { type: "string", description: "marker | unchecked | uncommitted" },
       },
     },
-    async run(env, { repo, kind }) {
+    async run(env, { repo, kind }, ctx) {
       if (!repo) {
         const rows = await q(
           env,
@@ -1631,9 +1666,9 @@ export const TOOLS = {
            FROM t1_project_open o
            WHERE (? IS NULL OR o.kind = ?)
            GROUP BY o.repo ORDER BY open_items DESC LIMIT ?`,
-          kind ?? null, kind ?? null, probe()
+          kind ?? null, kind ?? null, probe(ctx)
         );
-        return { ...cap(rows), note: "where unfinished work sits — ask again with a repo for the items" };
+        return { ...cap(rows, ctx), note: "where unfinished work sits — ask again with a repo for the items" };
       }
 
       const like = `%${repo.toLowerCase()}%`;
@@ -1645,9 +1680,9 @@ export const TOOLS = {
            AND (? IS NULL OR kind = ?)
          ORDER BY CASE kind WHEN 'unchecked' THEN 0 WHEN 'marker' THEN 1 ELSE 2 END, path, line
          LIMIT ?`,
-        repo, like, kind ?? null, kind ?? null, probe()
+        repo, like, kind ?? null, kind ?? null, probe(ctx)
       );
-      return cap(rows);
+      return cap(rows, ctx);
     },
   },
 };
