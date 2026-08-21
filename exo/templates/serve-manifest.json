@@ -102,13 +102,16 @@
   },
   "path_zones": {
     "raw/import": "serve",
+    "raw/files": "hold",
+    "raw/notion": "hold",
     "raw/chat-promoted": "hold",
     "raw/daily": "hold",
     "refined/unshared": "hold",
     "refined/shared": "serve"
   },
   "path_zone_notes": {
-    "_axis": "Gradient position, independent of note_folders. A note publishes only if BOTH axes say serve."
+    "_axis": "Gradient position, independent of note_folders. A note publishes only if BOTH axes say serve.",
+    "_landing": "One entry per note source (ADR-0017). `raw/import` is Apple Notes, `raw/notion` a Notion export, `raw/files` a directory of text; a plugin's adapter brings its own. They start HELD, and the matching is by longest declared prefix — so a source with no entry here inherits nothing and fails the build instead, which is the only safe answer to a question nobody was asked."
   },
   "folder_notes": {
     "Journal": "The clearest case of a folder that must never leave. Yours will differ.",

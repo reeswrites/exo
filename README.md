@@ -43,6 +43,26 @@ Letterboxd, Goodreads, Untappd, Trakt, Raindrop, your Claude and ChatGPT
 exports, your markdown notes, your published writing, your git repos. Each
 loader writes exactly one zone and nothing else.
 
+**Notes get their own front door**, because notes are the one thing that keeps
+changing address. `exo ingest-notes` reads a *note source* — Apple Notes, a
+Notion export, a directory of text files, a blob on standard input — and lands
+each note as markdown you own, with the frontmatter the record reads (ADR-0017):
+
+```bash
+exo ingest-notes notion                     # the API, incremental, nightly-safe
+exo ingest-notes notion --from Export.zip   # or an export, offline
+exo ingest-notes files  --from ~/writing
+pbpaste | exo ingest-notes files --from -   # a blob; its first line is the title
+```
+
+`files` covers more than it sounds like: a directory of markdown is the format
+the engine has read since ADR-0001, so **an Obsidian vault needs no adapter** —
+its dot-directories, attachments, bare-date daily notes and `tags:` properties
+are all handled. Adding a genuinely new source is one small module, and
+everything downstream — atoms, vectors, both publication axes, the read surface —
+never learns which one it was. [docs/notes-sources.md](docs/notes-sources.md) is
+the how-to.
+
 **The record** keeps them separated by *who may write*, not by what the data is:
 
 | tier | what it is | written by |
@@ -75,6 +95,7 @@ your-instance/
   exo.toml              who you are, where your inputs live
   serve-manifest.json    what may leave this machine
   raw/                   your exports and mirrors
+  notes/                 notes you own, landed by `exo ingest-notes`
   zones/                 the record itself
   plugins/               loaders only you could have
   items/                 your tasks, habits, slots
@@ -154,6 +175,8 @@ ones:
 | [0007](docs/adr/0007-bound-the-blast-radius-of-an-injected-read.md) | bound the blast radius of an injected read |
 | [0014](docs/adr/0014-the-code-is-public-the-instance-is-private.md) | the code is public, the instance is private |
 | [0016](docs/adr/0016-procedures-are-resources-not-tools.md) | a procedure is a resource, not a tool |
+| [0017](docs/adr/0017-a-note-source-is-an-adapter.md) | a note source is an adapter, and the note file is the contract |
+| [0018](docs/adr/0018-the-notes-tree-is-the-original-and-the-bucket-is-a-mirror.md) | the notes tree is the original; the bucket is a mirror |
 | [0019](docs/adr/0019-publicity-is-an-axis-not-an-adjective.md) | publicity is an axis, not an adjective |
 
 ## Contributing

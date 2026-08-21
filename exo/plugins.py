@@ -13,6 +13,7 @@ A plugin is a module or package under `plugins/` that may declare any of:
     DERIVATIONS  = {"name": fn}       T2, read through the wall only
     COMMANDS     = {"fetch-ra": (fn, "one-line help")}
     SYNCS        = {"taste": fn}      mirror an upstream into raw/, on sync-raw
+    NOTE_SOURCES = {"wiki": adapter}  a place notes come out of (exo.notes.sources)
 
 Two rules make the failure modes legible:
 
@@ -137,3 +138,30 @@ def syncs() -> dict[str, list[tuple[str, Callable]]]:
     the thing the split is for.
     """
     return _collect("SYNCS")
+
+
+def note_sources() -> dict[str, object]:
+    """name -> note adapter, for `exo ingest-notes` (see `exo.notes.sources`).
+
+    An adapter is anything carrying `LANDING`, `SOURCE` and `read(src)`. A module
+    is the usual shape; a small object works too.
+
+    Unlike a zone loader, a name collision here is an ERROR rather than a merge.
+    Two loaders feeding one zone is normal — the zone is the *subject* and the
+    loaders are its feeders. Two adapters answering to one source name is not
+    the same thing: identity inside a landing directory is `uuid`, so two
+    adapters sharing one would overwrite each other's notes in place, and the
+    counts would report a healthy import both times.
+    """
+    out: dict[str, object] = {}
+    from .notes.sources import BUILTIN
+    for mod in discover():
+        for name, adapter in getattr(mod, "NOTE_SOURCES", {}).items():
+            if name in BUILTIN:
+                raise ValueError(
+                    f"plugin {mod.__name__} declares note source {name!r}, which "
+                    "the engine already ships — pick another name")
+            if name in out:
+                raise ValueError(f"two plugins declare note source {name!r}")
+            out[name] = adapter
+    return out

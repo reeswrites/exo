@@ -27,6 +27,16 @@ A loader belongs in *your instance*, under `plugins/`, if its input is a
 Specificity is not the test — whether a stranger could hold that input at all is
 the test. See [ADR-0014](docs/adr/0014-the-code-is-public-the-instance-is-private.md).
 
+The same rule decides a **note adapter** (`exo/notes/sources/`, ADR-0017), and
+needing a credential is **not** what makes something a place — Trakt, Raindrop
+and the collections fetch all need one and all ship here. A Notion account is a
+thing a stranger can hold, so `notion` ships; your team's wiki behind your SSO
+does not, so it belongs in your instance under `NOTE_SOURCES`. Either way the
+interface is the same five fields, and an adapter that reaches past them —
+choosing a filename, an id scheme, a landing path — is reimplementing the
+contract rather than answering it. [docs/notes-sources.md](docs/notes-sources.md)
+is the how-to, including a worked adapter.
+
 ## Things that look like small changes and are not
 
 - **`source=` strings.** Every row id is a hash of its content *and* its source
@@ -40,6 +50,10 @@ the test. See [ADR-0014](docs/adr/0014-the-code-is-public-the-instance-is-privat
 - **The publication path.** `serve-manifest.json` is fail-closed on purpose: an
   unlisted zone fails the build rather than defaulting either way. A patch that
   makes it default is a patch that publishes things by forgetting them.
+- **Where a note source lands.** Path zones match by longest declared prefix, so
+  a new adapter landing inside an existing zone silently inherits that zone's
+  serve decision. Each source gets its own top-level landing directory; the
+  build failing on the first import is the feature (ADR-0017).
 
 ## Running it
 
