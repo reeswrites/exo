@@ -44,6 +44,46 @@ Two caveats, both by design rather than by omission:
   written. Rewriting a link on the way in would make the copy a different
   document from the one you wrote.
 
+## Where it runs, and in what order
+
+**Landing comes before indexing, and nothing enforces it.** `exo ingest-notes`
+writes files; `exo rebuild` reads them. Run them the other way round and the
+import still reports every note landed, `rebuild` still reports every step green,
+and the notes you just imported are simply not in the record until the next run.
+There is no error, because nothing went wrong — the index was correct about a
+tree that had not been written yet.
+
+```sh
+exo ingest-notes        # land: files on disk
+exo rebuild             # index -> derive -> catalog
+exo publish --cf        # the filtered copy that may leave
+```
+
+**The engine ships no scheduler and will not.** There is no cron, no launchd
+unit, no nightly workflow in this repository — the pipeline above is a dependency
+order, which is a property of the tiers, and *when* to run it is a property of
+one person's life. Composing these verbs is the instance's job
+([ADR-0005](adr/0005-split-the-etl-laptop-ingests-cloud-rebuilds.md) splits ETL
+by what a source physically requires, not by tier).
+
+**Pick one leg to write `notes/`, and only one.** The tree is committed
+([ADR-0018](adr/0018-the-notes-tree-is-the-original-and-the-bucket-is-a-mirror.md)),
+so two legs landing into it is a merge conflict rather than a merge. Which leg
+depends on the source, and the question is whether it has an upstream to re-read:
+
+| source | lands where | because |
+|---|---|---|
+| `apple` | the machine holding the database | no cloud runner can read a local NoteStore, and nobody re-decodes one for a note they deleted |
+| `files` | wherever the directory is | same reason, less absolutely |
+| `notion` (API) | anywhere, including CI | network-only, and a cloud runner may land it *provided it commits the tree back* |
+| `notion` (export) | wherever the zip is | producing one is a human clicking Export |
+
+A cloud runner that lands notes and does not commit them publishes writing the
+record never held — a served copy holding what the original does not, which is
+backwards from what the serve projection is. For a source with a live upstream
+that is merely wasteful (the next run re-fetches, because `seen` never advanced).
+For one without, it is a loss.
+
 ## The contract
 
 A note file is markdown with the frontmatter the record reads:

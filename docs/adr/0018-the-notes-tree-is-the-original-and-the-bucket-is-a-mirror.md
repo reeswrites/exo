@@ -9,11 +9,26 @@ the directory *is*.
 
 Everything else an instance ignores has an upstream. `raw/` mirrors somebody
 else's directory and `exo sync-raw` refills it. `zones/` and `catalog/` rebuild
-from `exo rebuild`. `backups/` are copies of those. `notes/` is now the one that
-does not: once an Apple Notes database has been decoded or a Notion export
-unpacked, that tree is the only original. The silo it came out of may be gone,
-may have lost the note, or may simply be a product you no longer pay for — which
-is the situation this whole system exists because of.
+from `exo rebuild`. `backups/` are copies of those. `notes/` is the one where
+that question has to be asked **per source** rather than answered for the tree:
+
+| source | is there an upstream to re-read? |
+|---|---|
+| `apple` | Not in practice. The database is on one machine, it is decoded once, and nobody re-decodes a NoteStore for a note they deleted last year. |
+| `files` | Whatever directory was pointed at — until it is the one that was lost, which is usually why it was imported. |
+| `notion`, API | Yes, live, while the account exists. |
+| `notion`, export | No. The zip is a moment, and it was produced by a human clicking Export. |
+
+So a landed note is somewhere on a line between a mirror and an original, and
+which end it sits at is not a property this tree can be asked about — it is a
+property of a silo, and it changes without notice. A Notion page is a mirror
+while you still pay for Notion and an original the morning you do not. That
+transition is the situation this whole system exists because of, and it is not
+one there is any warning before.
+
+The tree is therefore treated as an original throughout, because the cost of
+being wrong is asymmetric: treating an original as a mirror loses writing, and
+treating a mirror as an original costs some disk.
 
 And it was gitignored. `exo backup` did not help: it copies `zones/` and the
 catalog, skips `notes/` entirely, and writes into `backups/` **on the same
@@ -29,7 +44,7 @@ free by keeping things in sync.
 
 ## Decision
 
-**1. `notes/` is committed.** It is markdown. Git holds it for nothing, diffs it
+**1. `notes/` is committed**, whatever it was landed from. It is markdown. Git holds it for nothing, diffs it
 usefully, and gives point-in-time restore of the whole tree with `git checkout` —
 which is exactly the operation a backup is for and exactly the one object
 versioning is worst at. New instances get this from `exo init`; an existing one
@@ -92,9 +107,19 @@ embedder.
 - The restore path is: clone the instance repo, `export EXO_HOME`, `exo rebuild`.
   Notes and items come back from git; zones, catalog and vectors regenerate; the
   bucket is not needed. That is the path to test.
-- The mirror is a step in the nightly, beside the existing R2 uploads, and it is
-  `--delete`-free: a note removed locally stays in the bucket until versioning
-  ages it out. A sync that can delete is a sync that can delete everything.
+- The mirror runs wherever the instance already publishes from — the engine
+  ships no scheduler and this ADR does not give it one. It is `--delete`-free: a
+  note removed locally stays in the bucket until versioning ages it out. A sync
+  that can delete is a sync that can delete everything.
+- **Who writes `notes/` is one decision an instance makes once.** The tree is
+  landed by whichever leg runs `exo ingest-notes`, and two legs writing it is a
+  merge conflict rather than a merge. A source with a live upstream (the Notion
+  API) can be landed by a cloud runner that commits the tree back, because a
+  failed push costs a re-fetch and nothing else. A source without one (`apple`,
+  an export) must be landed where the input physically is, and a runner that
+  landed it and was then destroyed would publish notes the record never held —
+  a served copy holding what the original does not, which inverts what the serve
+  projection is.
 - An instance repo now grows with every note. Markdown is small and git is good
   at it; a decade of notes is smaller than one Last.fm export.
 - The isolate has a ceiling. `vectors.f32` is loaded whole into the Worker —

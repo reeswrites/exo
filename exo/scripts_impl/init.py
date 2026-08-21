@@ -77,14 +77,20 @@ Instance created at {dest}
      a Goodreads dump. Point [paths].vault at a folder of markdown.
 
      For notes out of a silo, declare a source in exo.toml and import it:
-       exo ingest-notes notion --from ~/Downloads/Export-....zip
-       exo ingest-notes files  --from ~/writing
+       exo ingest-notes notion                     the API
+       exo ingest-notes files --from ~/writing     a folder of markdown
      They land in notes/raw/<source>/, and the first publish afterwards will
      refuse until you decide their path_zone. That refusal is the design.
 
   4. export EXO_HOME={dest}
-     exo rebuild
-     exo publish --dry-run
+     exo ingest-notes                 land notes BEFORE indexing them
+     exo rebuild                      ingest -> index -> derive -> catalog
+     exo publish --dry-run            what would leave, and what is held
+
+     That order matters and nothing enforces it: rebuild indexes the tree as it
+     finds it, so importing after it succeeds at everything and leaves the new
+     notes out of the record until the next run. Exo ships no scheduler — how
+     often this runs, and on which machine, is yours to decide (docs/notes-sources.md).
 """
 
 

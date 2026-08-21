@@ -7,10 +7,11 @@ it survives a bad rebuild and nothing else.
 What it deliberately does NOT copy, and where each of those actually lives
 (ADR-0018):
 
-  notes/     the ONE tree with no upstream — once an export has been landed,
-             that markdown is the only original. It belongs in git, committed
-             with items/, exo.toml and serve-manifest.json, and off-machine in
-             the object-storage mirror. Copying it beside the zones would put a
+  notes/     landed writing, treated as an original whether or not the silo it
+             came from still has it — which is a question about a silo and not
+             about this tree (ADR-0018). It belongs in git, committed with
+             items/, exo.toml and serve-manifest.json, and off-machine in the
+             object-storage mirror. Copying it beside the zones would put a
              second copy on the disk already holding the first.
   raw/       mirrors of somebody else's directory; `exo sync-raw` refills them.
   zones/t2   regenerable by definition; a rebuild is the restore.
