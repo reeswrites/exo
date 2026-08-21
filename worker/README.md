@@ -20,11 +20,21 @@ tool declares the zones whose content can reach a caller, and its grade is the
 least public of them — so a tool touching one private zone is private whatever
 else it reads.
 
-The caps do not move yet. What the grade buys today is on every answer: an
-`exposure` field saying whether the rows may be quoted onward or are the owner's
-own material handed back to them. A missing or unreadable `exposure.json` grades
-everything private, so a worker deployed ahead of its bundle serves tight rather
-than open.
+The row cap follows that grade — 20 private, 100 profile, 200 published — and the
+byte cap does not, because 16KB protects the caller's context window rather than
+the corpus. Every tool takes an optional `limit`, which only ever narrows.
+`tools/list` is built per request so the ceiling a model is told about is the
+real one.
+
+**There is no `offset`, and passing one is an error rather than a no-op.** A
+cursor that can walk the full set is the one thing the tool surface is not
+(ADR-0007 §3). Answers carry `has_more`; the way to see more is a narrower
+question.
+
+Every answer also carries `exposure` itself, which says whether the rows may be
+quoted onward or are the owner's own material handed back to them. A missing or
+unreadable `exposure.json` grades everything private, so a worker deployed ahead
+of its bundle serves tight rather than open.
 
 Hand-rolled JSON-RPC, no MCP SDK: the surface used here is five methods, and a
 dependency-free Worker is one less thing that can change under a corpus this

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { env, corpus } from "./harness.mjs";
-import { TOOLS, CLASSES, DOMAINS, KINDS, cap, probe, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
+import { TOOLS, CLASSES, DOMAINS, KINDS, cap, probe, pageSize, ROW_CAP, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
 import { GRADES, DEFAULT_GRADE, gradeOf, loadExposure, TTL_MS } from "../src/exposure.js";
 import worker from "../src/index.js";
 
@@ -82,6 +82,47 @@ for (const bad of ["exo://procedure/nothing-by-this-name", "exo://procedure/../b
 const briefStill = await (await readUri("exo://brief", 13)).json();
 ok(/^# \S/.test(briefStill.result?.contents?.[0]?.text ?? ""),
    "the brief still resolves beside them");
+
+console.log("\n── the row cap follows the axis, the byte cap does not ──");
+ok(ROW_CAP.private === MAX_ROWS, "private is the floor, and the floor is ADR-0007's twenty");
+ok(ROW_CAP.profile > ROW_CAP.private && ROW_CAP.published >= ROW_CAP.profile,
+   `ceilings rise with publicity (${ROW_CAP.private}/${ROW_CAP.profile}/${ROW_CAP.published})`);
+ok(pageSize({ exposure: "published" }) === ROW_CAP.published, "a published tool may return more");
+ok(pageSize({}) === ROW_CAP.private, "an ungraded call gets the private ceiling");
+ok(pageSize(undefined) === ROW_CAP.private, "and so does one with no context at all");
+ok(pageSize({ exposure: "nonsense" }) === ROW_CAP.private, "an unknown grade gets the private ceiling");
+
+// `limit` narrows and can never widen. This is the whole difference between an
+// ergonomics parameter and a hole in ADR-0007.
+ok(pageSize({ exposure: "published", limit: 5 }) === 5, "limit narrows");
+ok(pageSize({ exposure: "private", limit: 500 }) === MAX_ROWS, "limit cannot widen past the grade");
+ok(pageSize({ exposure: "published", limit: 0 }) >= 1, "a zero limit is not a zero-row answer");
+ok(pageSize({ exposure: "published", limit: -3 }) === ROW_CAP.published, "a negative limit is ignored, not obeyed");
+ok(pageSize({ exposure: "published" }, 5) === 5, "a tool's own ceiling narrows below the grade");
+
+// The byte cap does NOT follow the axis: it protects the caller's context
+// window, which does not care who may read the rows.
+const wide = Array.from({ length: ROW_CAP.published }, () => ({ t: "y".repeat(400) }));
+ok(JSON.stringify(cap(wide, { exposure: "published" }).rows).length <= MAX_BYTES,
+   "a published answer still fits the 16KB budget");
+
+// A raised ceiling must not cost the honesty won in the previous phase.
+const over = Array.from({ length: probe({ exposure: "profile" }) }, (_, i) => ({ i }));
+ok(cap(over, { exposure: "profile" }).returned_count === ROW_CAP.profile, "profile returns its ceiling");
+ok(cap(over, { exposure: "profile" }).has_more === true, "and still says there is more");
+ok(cap(over).returned_count === MAX_ROWS, "the same rows with no context stay at twenty");
+
+// Every tool survives being called with and without a context. A tool that
+// destructured `ctx` in a branch nobody exercised would throw only in
+// production, on whichever grade nobody tested.
+let scoped = 0;
+for (const [, t] of Object.entries(TOOLS)) {
+  for (const c of [undefined, { exposure: "published", limit: 3 }]) {
+    try { await t.run(env, { topic: "x" }, c); scoped++; }
+    catch (e) { if (!/is not defined/.test(e.message)) scoped++; }
+  }
+}
+ok(scoped === Object.keys(TOOLS).length * 2, "every tool runs with and without a context");
 
 console.log("\n── the publicity axis (ADR-0019) ──");
 // Every path that cannot produce an answer must produce the tightest one. These
