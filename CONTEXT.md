@@ -76,6 +76,42 @@ built from it: the ledger reads a life's worth of rows as new, and the surface
 announces them as recently added. Source strings written before a rename keep
 their old spelling on purpose (ADR-0014 §7).
 
+## Notes
+
+### note source
+A place notes come out of — Apple Notes, a Notion export, a directory of text
+files, a paragraph on standard input. Not a category of file: a *front door*.
+Notes are the one part of the record that keeps changing address, and the shape
+that survives that is one where the address is the only thing a new source has
+to say (ADR-0017).
+
+### adapter
+The code that answers a note source. Five fields — an id, a title, a body, a
+date, a folder — and nothing else it may decide. Filenames, frontmatter, identity
+and where a note lands are the contract, and the contract has one
+implementation, so an adapter cannot get them subtly wrong in its own way.
+
+### the note file
+The landed markdown: frontmatter the record reads, body verbatim. It is the
+original, not a cache of one. `zones/t1/notes.parquet` is a projection thrown
+away on every rebuild; the file is the thing itself, greppable and diffable and
+readable by tools that have never heard of Exo.
+
+### landing
+The directory a source's notes land in, `notes/raw/<source>/`, one per source.
+Its own, because publication matches a note's path zone by longest declared
+prefix: a source landing inside an existing zone would inherit that zone's serve
+decision on its first run. A landing nothing prefixes fails the build instead,
+which is the right answer to a question nobody was asked.
+
+### the mirror
+The copy of the record in object storage. One-directional, always: disk is the
+record, the bucket receives it, and nothing reads a note back out of a bucket
+(ADR-0018). "Keep it in sync" is one phrase doing two jobs — mirroring out is a
+backup, mirroring back is a new and unauthenticated author of the authored tier.
+Versioning on the bucket is a safety net for the case where the machine is gone;
+the restore path that gets tested is git.
+
 ## Publication
 
 ### serve projection

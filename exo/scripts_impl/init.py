@@ -27,8 +27,9 @@ GITIGNORE = """\
 # An instance is private. Everything here is either your data or derived from it.
 #
 # What is NOT ignored, and should be committed: exo.toml, serve-manifest.json,
-# plugins/, and items/ — your config, your publication policy, your own loaders
-# and your authored task spine. Those are the parts worth version history.
+# plugins/, items/ and notes/ — your config, your publication policy, your own
+# loaders, your authored task spine and your notes. Those are the parts worth
+# version history.
 
 # Anchored with a leading slash, deliberately: an unanchored `raw/` matches at
 # any depth and will quietly swallow a directory of the same name nested
@@ -47,8 +48,14 @@ GITIGNORE = """\
 # inputs and records: large, and yours
 /raw/
 /captures/
-/notes/
 /backups/
+
+# notes/ is deliberately NOT here (ADR-0018). Everything else ignored above has
+# an upstream: raw/ mirrors somebody else's directory, zones/ rebuild, backups/
+# are copies. notes/ is the one that does not — once `exo ingest-notes` has
+# landed a Notion export or an Apple Notes database, that tree is the only
+# original, and the silo it came out of may be gone or may have lost the note.
+# It is markdown, so git holds it for nothing and diffs it usefully.
 
 .venv/
 __pycache__/
@@ -69,9 +76,21 @@ Instance created at {dest}
   3. Put your exports in raw/exports/ — a Last.fm CSV, a Letterboxd export,
      a Goodreads dump. Point [paths].vault at a folder of markdown.
 
+     For notes out of a silo, declare a source in exo.toml and import it:
+       exo ingest-notes notion                     the API
+       exo ingest-notes files --from ~/writing     a folder of markdown
+     They land in notes/raw/<source>/, and the first publish afterwards will
+     refuse until you decide their path_zone. That refusal is the design.
+
   4. export EXO_HOME={dest}
-     exo rebuild
-     exo publish --dry-run
+     exo ingest-notes                 land notes BEFORE indexing them
+     exo rebuild                      ingest -> index -> derive -> catalog
+     exo publish --dry-run            what would leave, and what is held
+
+     That order matters and nothing enforces it: rebuild indexes the tree as it
+     finds it, so importing after it succeeds at everything and leaves the new
+     notes out of the record until the next run. Exo ships no scheduler — how
+     often this runs, and on which machine, is yours to decide (docs/notes-sources.md).
 """
 
 
