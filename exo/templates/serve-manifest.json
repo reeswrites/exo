@@ -11,7 +11,7 @@
     "too, because t2_atom carries note text verbatim.",
     "",
     "This is the EXAMPLE. Copy to serve-manifest.json and decide every line",
-    "yourself \u2014 an inherited publication policy is not a decision, and this file",
+    "yourself — an inherited publication policy is not a decision, and this file",
     "is the only thing standing between your record and the internet."
   ],
   "zones": {
@@ -62,11 +62,40 @@
   },
   "zone_notes": {
     "t0_chat": "Your own turns only. The assistant's half is another model's output, not your words.",
-    "t1_procedure": "Your own methods, published as MCP resources (ADR-0016). Listing it here only lets a procedure BE published \u2014 each one still carries its own serve: flag, and a served one that reads a held zone fails the build.",
+    "t1_procedure": "Your own methods, published as MCP resources (ADR-0016). Listing it here only lets a procedure BE published — each one still carries its own serve: flag, and a served one that reads a held zone fails the build.",
     "rows": "The cross-zone provenance union. Held: it is a join surface, not an answer."
   },
+  "zone_exposure": {
+    "_doc": [
+      "The publicity axis (ADR-0019). INDEPENDENT of serve/hold above: this",
+      "says nothing about whether a row may leave, only about whether a",
+      "stranger holding ALL of them costs anything.",
+      "",
+      "  published  a URL you own, intending readers — a post, a review",
+      "  profile    readable by anyone who visits an account you own; nobody has",
+      "  private    Exo is the only place a stranger could read it",
+      "",
+      "Absent = private, silently. An unrecognised value FAILS the build, so a",
+      "TODO left here stays loud instead of quietly becoming the safe default.",
+      "",
+      "A grade is a claim about the outside world, and the outside world does",
+      "not notify this file. Setting an account private is a line to change",
+      "here. When unsure, leave it out: the cost of `private` is twenty rows,",
+      "and the cost of the other error is the corpus.",
+      "",
+      "Two rules bite more often than they look. A zone holding rows of",
+      "different grades takes the LEAST public of them — your public repos and",
+      "your private ones share t1_project, so it is private. And every *_vec",
+      "zone is private whatever it was derived from: an embedding is not a",
+      "hash, it is an approximately invertible encoding of the text.",
+      "",
+      "The two below are illustrations. Delete them and decide your own."
+    ],
+    "t1_post": "published",
+    "t0_music": "profile"
+  },
   "note_folders": {
-    "_doc": "The folder axis. Every folder your vault contains must appear here or the build fails \u2014 that is the point: a new folder is a decision, not a default.",
+    "_doc": "The folder axis. Every folder your vault contains must appear here or the build fails — that is the point: a new folder is a decision, not a default.",
     "Notes": "serve",
     "Journal": "hold",
     "": "hold"
@@ -89,10 +118,10 @@
     "_doc": "Row-level decisions inside an otherwise-served zone. Explicit, because the default for medical data should never be inherited from a zone."
   },
   "chat_topics": {
-    "_doc": "Conversation TITLES and volume only \u2014 t0_chat itself stays held. Titles are auto-generated from content, so a private conversation gets a revealing title; these two rules are the review, and both are deliberate rather than pattern-matched.",
+    "_doc": "Conversation TITLES and volume only — t0_chat itself stays held. Titles are auto-generated from content, so a private conversation gets a revealing title; these two rules are the review, and both are deliberate rather than pattern-matched.",
     "window_days": 90,
     "_window_doc": "Recency is the point: an assistant needs what the owner is working through now. Older topics carry the same exposure with far less value.",
-    "_hold_doc": "Named explicitly, not matched. A regex over titles would hold 'Therapy speak as emptiness' (criticism already published as a note) and miss anything private with a bland title \u2014 the same argument ADR-0009 made for notes.",
+    "_hold_doc": "Named explicitly, not matched. A regex over titles would hold 'Therapy speak as emptiness' (criticism already published as a note) and miss anything private with a bland title — the same argument ADR-0009 made for notes.",
     "hold_titles": []
   }
 }

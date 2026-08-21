@@ -13,6 +13,11 @@ assistant's vendor ever holding them.
 - `src/tools.js` — the 28 tools, and the caps
 - `src/search.js` — vector search over `vectors.f32` from R2
 
+`exposure.json` rides along beside the brief: how public each served zone is
+(ADR-0019), resolved by `exo publish` so nothing out here re-decides it. It is
+not yet read — the worker fails closed on its absence, which is also what it does
+today, so a bundle carrying it and a worker ignoring it behave identically.
+
 Hand-rolled JSON-RPC, no MCP SDK: the surface used here is five methods, and a
 dependency-free Worker is one less thing that can change under a corpus this
 personal.
@@ -49,7 +54,7 @@ do this for you. By hand:
 cd "$EXO_HOME" && uv run exo publish --cf                        # builds the bundle
 WRANGLER="npx wrangler" ./scripts/guard-publication.sh exo       # refuse a shrunken corpus
 cd zones/_serve/cf && WRANGLER="npx wrangler" ./import.sh exo    # reconciles + loads D1
-for f in vectors.f32 vectors.json brief.md; do
+for f in vectors.f32 vectors.json brief.md exposure.json; do
   npx wrangler r2 object put "exo-vectors/$f" --file "$f" --remote
 done
 ```
