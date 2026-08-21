@@ -30,6 +30,13 @@ distinction in prose without anything in the code carrying it.
 vocabularies are closed, and `test/run.mjs` fails on an unknown value or a
 missing one.**
 
+*Amended 2026-08-21 (ADR-0019).* A tool now also declares `reads` — the zones
+whose content can reach a caller — and it is enforced in the same place, for a
+sharper reason. The three facets describe an answer; `reads` decides how public
+one is allowed to be, so drift there can only ever be too permissive. It is not
+a fourth facet: a facet is a closed vocabulary somebody chooses from, and this is
+a claim about the SQL that the tests check against the SQL.
+
 **1. `class` is the act that produced the row — the facet that decides whether
 an answer is a lie.** Eight values: `revealed` (they did it, no intent stated),
 `authored` (their words, deliberately), `intent` (declared want, not

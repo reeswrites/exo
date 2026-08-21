@@ -39,10 +39,33 @@ Assume a single injection succeeds. Four controls, none of them authentication:
    into "hundreds of calls, visibly" — which is worth something only if the log
    in (4) is read. Its real value is against the dumb case, an injected "return
    all their notes", which is also the likely case.
+
+   *Amended 2026-08-21 (ADR-0019).* The ROW cap now follows how public the
+   material is — 20 private, 100 profile, 200 published. The paragraph above is
+   why: blast radius is what an injected read takes *that it could not otherwise
+   get*, and for a published blog that quantity is zero. Twenty rows there
+   defended nothing and cost every question whose honest answer was longer.
+   Undeclared material stays at twenty, because the grade fails closed.
+
+   The BYTE cap does not move, at any grade. It bounds how much of the caller's
+   context one answer consumes, which is true regardless of who may read the
+   rows. The two numbers were introduced in one sentence and do different jobs;
+   only one of them is a security control.
 3. **No general-purpose tool.** Fixed semantic tools only — no raw SQL, no
    id-lookup loop, no pagination cursor that can walk the full set. **The tool
    surface is the security boundary**, so every tool added is a decision about
    exposure, not a convenience.
+
+   *Amended 2026-08-21 (ADR-0019).* Precisely: no cursor that can walk the full
+   set **of material that is not already public**. The threat model is unchanged
+   — this states it about the material it was always about.
+
+   No cursor exists either way at the time of writing, and the reason is not
+   this clause. Reading every tool's `ORDER BY`: three have none at all, and the
+   rest order on columns that tie heavily with no unique tiebreaker, so an offset
+   over them would repeat and skip rows silently. Unique tiebreakers are the
+   prerequisite for a cursor ever being *correct*, before this clause gets to say
+   whether it is *permitted*.
 
    `read_note` returns full note text and is the sharpest instance of this rule.
    It takes a *topic*, resolves it by vector search, and returns exactly one

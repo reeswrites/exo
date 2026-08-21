@@ -1,6 +1,6 @@
 # ADR-0019 — Publicity is an axis, not an adjective
 
-Status: proposed · 2026-08-21
+Status: accepted · 2026-08-21
 
 ## Context
 

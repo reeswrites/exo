@@ -154,6 +154,7 @@ ones:
 | [0007](docs/adr/0007-bound-the-blast-radius-of-an-injected-read.md) | bound the blast radius of an injected read |
 | [0014](docs/adr/0014-the-code-is-public-the-instance-is-private.md) | the code is public, the instance is private |
 | [0016](docs/adr/0016-procedures-are-resources-not-tools.md) | a procedure is a resource, not a tool |
+| [0019](docs/adr/0019-publicity-is-an-axis-not-an-adjective.md) | publicity is an axis, not an adjective |
 
 ## Contributing
 
