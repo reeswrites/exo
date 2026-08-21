@@ -158,6 +158,17 @@ could tell.
   notes sharing one is not a duplicate, it is a corruption.
 - `exo ingest-notes` no longer means Apple Notes. Bare, it runs every source in
   `[notes.sources]`; named, it runs one.
+- **One behaviour changed, and it is the kind CONTRIBUTING warns about.** The old
+  Apple ingester wrote `folder: Unfiled` for a note with no folder; the contract
+  writes `folder: ""`. `""` is the unfiled drawer that ADR-0009 holds, while
+  `Unfiled` is a folder name that has to be separately declared and reads like a
+  real place someone filed something. But `folder` is a payload value, so any
+  note this affects gets a new row id: the ledger reads it as new, and the
+  surface announces it as recently added. Apple gives every note a folder
+  (`ZTITLE2` of its folder row, `Notes` for the default drawer), so in practice
+  this is empty — which is why it is written down rather than worked around. An
+  instance that finds otherwise should expect one noisy first import and a
+  `note_folders` entry for `Unfiled` it can then delete.
 - An adapter may be shown what is already landed (`seen`), so a source reached
   over a network can skip fetching a page it can already tell is unchanged.
   Notion's search returns `last_edited_time` for a request per hundred pages,

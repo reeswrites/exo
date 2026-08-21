@@ -362,3 +362,95 @@ def test_wikilinks_and_embeds_pass_through_verbatim(tmp_path):
     got = _by_id(_vault(tmp_path / "v"))["Reading/On caching.md"]
     assert "[[Daily/2026-02-03]]" in got.body
     assert "![[attachments/diagram.png]]" in got.body
+
+
+# ─────────────────────── the refusals, actually exercised ───────────────────
+# Every one of these is a branch that only runs when something is wrong, which
+# is exactly the kind that ships broken because nobody ever took it.
+
+
+def test_two_trees_holding_one_path_stops_the_index(tmp_path, monkeypatch):
+    """`origin_ref` is what publication, atoms and both vector tables join on,
+    and it is relative to its own root. Two trees holding `raw/import/x.md`
+    would produce one ref for two different notes — not a duplicate, a
+    corruption — so the index refuses rather than picking one."""
+    from exo import config
+    from exo.loaders import t1_index
+
+    for root in ("vault", "notes"):
+        d = tmp_path / root / "raw" / "import"
+        d.mkdir(parents=True)
+        (d / "x.md").write_text(
+            f"---\ntitle: {root}\nfolder: F\n---\n\nbody from {root}\n", "utf-8")
+
+    monkeypatch.setattr(config, "VAULT", tmp_path / "vault")
+    monkeypatch.setattr(config, "NOTES", tmp_path / "notes")
+    with pytest.raises(SystemExit, match="raw/import/x.md"):
+        t1_index.notes()
+
+
+def test_one_tree_read_once_when_the_cutover_is_finished(tmp_path, monkeypatch):
+    """Pointing EXO_VAULT at the notes tree is how an instance finishes the
+    cutover. The two roots collapse into one, and reading it twice would collide
+    with itself on every single note."""
+    from exo import config
+    from exo.loaders import t1_index
+
+    d = tmp_path / "notes" / "raw" / "import"
+    d.mkdir(parents=True)
+    (d / "x.md").write_text("---\ntitle: One\nfolder: F\nsource: notion\n---\n\nbody\n", "utf-8")
+    monkeypatch.setattr(config, "VAULT", tmp_path / "notes")
+    monkeypatch.setattr(config, "NOTES", tmp_path / "notes")
+
+    rows = t1_index.notes()
+    assert len(rows) == 1
+    # read as the vault, so it keeps the vault's stored source string
+    assert rows[0].source == "second-brain"
+
+
+def test_two_sources_may_not_share_a_landing(tmp_path, monkeypatch):
+    """`uuid` is unique within a directory, not globally — so the second
+    source's notes would overwrite the first's in place and both imports would
+    print healthy counts."""
+    from exo import config, notes as notes_mod
+    from exo.notes import sources as registry
+
+    class _A:
+        LANDING = SOURCE = "shared"
+        @staticmethod
+        def read(src=None, seen=None): return []
+
+    class _B:
+        LANDING = "shared"
+        SOURCE = "b"
+        @staticmethod
+        def read(src=None, seen=None): return []
+
+    monkeypatch.setattr(config, "NOTES", tmp_path / "notes")
+    monkeypatch.setattr(registry, "get", lambda n: {"a": _A, "b": _B}[n])
+    monkeypatch.setattr(config, "NOTES_SOURCES", {"a": "", "b": ""})
+    monkeypatch.setattr(config, "notes_source_path", lambda n: None)
+    with pytest.raises(ValueError, match="landing directory belongs to one source"):
+        notes_mod.run()
+
+
+def test_no_configured_source_says_what_to_do(tmp_path, monkeypatch):
+    from exo import config, notes as notes_mod
+    monkeypatch.setattr(config, "NOTES_SOURCES", {})
+    with pytest.raises(ValueError, match="notes.sources"):
+        notes_mod.run()
+
+
+def test_an_unknown_source_names_the_ones_that_exist(tmp_path):
+    from exo.notes import sources
+    with pytest.raises(ValueError, match="have: apple, files, notion"):
+        sources.get("evernote")
+
+
+def test_a_configured_relative_path_resolves_against_the_instance(monkeypatch):
+    from exo import config
+    monkeypatch.setattr(config, "NOTES_SOURCES", {"notion": "raw/export.zip", "apple": ""})
+    monkeypatch.delenv("EXO_NOTES_NOTION", raising=False)
+    monkeypatch.delenv("EXO_NOTES_APPLE", raising=False)
+    assert config.notes_source_path("notion") == str(config.ROOT / "raw/export.zip")
+    assert config.notes_source_path("apple") is None      # needs no argument
