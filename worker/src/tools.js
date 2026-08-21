@@ -21,6 +21,21 @@ import { search } from "./search.js";
 export const MAX_ROWS = 20;
 export const MAX_BYTES = 16384;
 
+/**
+ * Ask a query for one row PAST the cap.
+ *
+ * Without it a tool cannot tell "that is all of them" from "there are four
+ * hundred more": every SQL tool here bound its LIMIT to MAX_ROWS and then handed
+ * the result to `cap`, so `cap` never saw a row it had to drop and the count it
+ * reported was the count it was given. `truncated to 20 of 20` is not a fact
+ * about the corpus, and an assistant reading it concluded the shelf was twenty
+ * books long.
+ *
+ * One extra row, thrown away after it has been counted. `cap` recognises it by
+ * arithmetic — more rows arrived than fit — so nothing has to be flagged.
+ */
+export const probe = (want = MAX_ROWS) => want + 1;
+
 /** Trim to the caps, and say so, so a client never mistakes truncation for exhaustion. */
 /**
  * The live URL of a published post, as a spreadable fragment.
@@ -32,34 +47,49 @@ export const MAX_BYTES = 16384;
 export const postUrl = (env, slug) =>
   env.BLOG_URL_TEMPLATE ? { url: env.BLOG_URL_TEMPLATE.replace("{slug}", slug) } : {};
 
-export function cap(rows) {
+export function cap(rows, { want = MAX_ROWS } = {}) {
+  // `want` never raises the ceiling — a caller may ask for less than MAX_ROWS,
+  // never more. It exists so a tool with its own smaller page (ratings shows
+  // five per medium) still detects its own overflow rather than the global one.
+  const limit = Math.min(want, MAX_ROWS);
   const out = [];
   let bytes = 0;
-  let truncated = false;
+  let byteBound = false;
 
-  for (const r of rows.slice(0, MAX_ROWS)) {
+  for (const r of rows.slice(0, limit)) {
     const size = JSON.stringify(r).length;
-    if (bytes + size > MAX_BYTES) { truncated = true; break; }
+    if (bytes + size > MAX_BYTES) { byteBound = true; break; }
     out.push(r);
     bytes += size;
   }
-  if (rows.length > out.length) truncated = true;
+  // More arrived than fit. Whether that is the probe row or the twenty-first of
+  // four hundred, the fact a caller needs is the same: this is not all of it.
+  const has_more = rows.length > out.length;
 
   return {
     rows: out,
+    // Structured, not only prose. The old note carried both numbers inside a
+    // sentence, which meant a model had to parse English to learn whether it had
+    // seen everything — and parse it correctly, every time, to avoid answering a
+    // question about four hundred books from twenty.
+    returned_count: out.length,
+    has_more,
     // A single row too large to emit is a different fact from a list too long,
     // and the generic advice is wrong for it: there is nothing to narrow. Say
     // which happened, so the audit log distinguishes a big answer from a bug.
-    ...(truncated
+    ...(has_more
       ? {
           note:
             out.length === 0 && rows.length === 1
               ? `the one row matched exceeded the ${MAX_BYTES}-byte cap and was withheld — the tool that built it did not budget for its own envelope`
-              : `truncated to ${out.length} of ${rows.length} — ask a narrower question rather than paging`,
+              : byteBound
+                ? `${out.length} rows fit the ${MAX_BYTES}-byte budget and more matched — ask a narrower question`
+                : `showing ${out.length}; more matched — ask a narrower question rather than paging`,
         }
       : {}),
   };
 }
+
 
 /**
  * Fill a list field against what the row will ACTUALLY serialise to.
@@ -175,7 +205,7 @@ export const TOOLS = {
       required: ["topic"],
     },
     async run(env, { topic }) {
-      const hits = await search(env, topic, { k: MAX_ROWS });
+      const hits = await search(env, topic, { k: probe() });
       // A post hit is the one kind that has somewhere to send a reader. Its ref is
       // the slug, and the permalink is a pure function of it, so the link costs
       // no round trip — and an answer with a link beats one that paraphrases
@@ -212,7 +242,7 @@ export const TOOLS = {
             `body truncated to ${kept} of ${total} chars — this is one of the owner's longer notes; ask about a specific part of it rather than requesting it again`,
         });
       }
-      const hits = await search(env, topic, { k: MAX_ROWS, kind: "note" });
+      const hits = await search(env, topic, { k: probe(), kind: "note" });
       return cap(hits.map((h) => ({ title: h.label, score: h.score })));
     },
   },
@@ -228,7 +258,7 @@ export const TOOLS = {
         `SELECT question, state FROM t1_open_thread
          WHERE state IS NULL OR lower(state) NOT IN ('closed','done','dismissed')
          ORDER BY created DESC LIMIT ?`,
-        MAX_ROWS
+        probe()
       );
       return cap(rows.map((r) => ({ question: r.question })));
     },
@@ -244,8 +274,8 @@ export const TOOLS = {
     },
     async run(env, { kind }) {
       const rows = kind
-        ? await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts WHERE kind = ? LIMIT ?`, kind, MAX_ROWS)
-        : await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts LIMIT ?`, MAX_ROWS);
+        ? await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts WHERE kind = ? LIMIT ?`, kind, probe())
+        : await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts LIMIT ?`, probe());
       return cap(rows);
     },
   },
@@ -259,7 +289,7 @@ export const TOOLS = {
       const rows = await q(
         env,
         `SELECT artist, plays, mentions FROM t2_affinity ORDER BY plays DESC LIMIT ?`,
-        MAX_ROWS
+        probe()
       );
       return cap(rows);
     },
@@ -293,7 +323,7 @@ export const TOOLS = {
          ${where.length ? "WHERE " + where.join(" AND ") : ""}
          ORDER BY family, due IS NULL, due, created DESC
          LIMIT ?`,
-        ...binds, MAX_ROWS
+        ...binds, probe()
       );
 
       // Counts alongside, so "3 rows" is never read as "3 items exist".
@@ -340,7 +370,7 @@ export const TOOLS = {
          WHERE (? IS NULL OR lower(COALESCE(i.title, e.title)) LIKE ?)
          ORDER BY COALESCE(e.date, e.ts) DESC
          LIMIT ?`,
-        like, like, MAX_ROWS
+        like, like, probe()
       );
       return cap(rows.map((r) => ({
         item: r.item, event: r.event,
@@ -390,7 +420,7 @@ export const TOOLS = {
         env,
         `SELECT title, cuisine, time_min, effort, yield_servings, source_url
          FROM t1_recipe WHERE ${match} ORDER BY title LIMIT ?`,
-        ...binds, MAX_ROWS
+        ...binds, probe()
       );
       return cap(rows);
     },
@@ -436,7 +466,7 @@ export const TOOLS = {
         `SELECT title, slug, description, started, modified, words, state,
                 CAST(julianday('now') - julianday(modified) AS INTEGER) AS days_since_touched
          FROM t1_draft WHERE ${match} AND ${stale} ORDER BY modified DESC LIMIT ?`,
-        ...binds, MAX_ROWS
+        ...binds, probe()
       );
       if (!rows.length) {
         return {
@@ -650,7 +680,7 @@ export const TOOLS = {
       // Over-fetch, then filter: the vector index carries no post kind, so a
       // kind filter applied after the search would return 3 rows out of 20 and
       // look like the blog is empty on that kind.
-      const hits = await search(env, topic, { k: kind ? 60 : MAX_ROWS, kind: "post" });
+      const hits = await search(env, topic, { k: kind ? 60 : probe(), kind: "post" });
       if (!hits.length) return { rows: [], note: "nothing on the blog matched" };
 
       const slugs = hits.map((h) => h.ref).filter(Boolean);
@@ -761,7 +791,7 @@ export const TOOLS = {
          ORDER BY start
          LIMIT ?`,
         from ?? null, to ?? null, to ?? null,
-        like, like, like, like, free ? 1 : null, MAX_ROWS
+        like, like, like, like, free ? 1 : null, probe()
       );
       return cap(rows);
     },
@@ -773,7 +803,7 @@ export const TOOLS = {
       "What the owner SAYS they like — stated preferences: venues and orgs they rate, things they seek out, things they avoid. Distinct from `taste`, which is revealed behaviour (play counts). When the two disagree, that gap is usually the interesting part.",
     schema: { type: "object", properties: {} },
     async run(env) {
-      const rows = await q(env, `SELECT kind, key, value FROM t1_taste ORDER BY kind, key LIMIT ?`, MAX_ROWS);
+      const rows = await q(env, `SELECT kind, key, value FROM t1_taste ORDER BY kind, key LIMIT ?`, probe());
       return cap(rows);
     },
   },
@@ -895,7 +925,7 @@ export const TOOLS = {
              AND CAST(${d.col} AS REAL) >= ? ${d.where ?? ""}
            ORDER BY CAST(${d.col} AS REAL) DESC, created DESC
            LIMIT ?`,
-          floor, medium ? MAX_ROWS : 5
+          floor, medium ? probe() : probe(5)
         );
         for (const r of rows) out.push({ medium: name, scale: d.scale, ...r });
       }
@@ -926,7 +956,7 @@ export const TOOLS = {
          LIMIT ?`,
         like, like, like,
         min_rating ?? null, min_rating ?? 0,
-        MAX_ROWS
+        probe()
       );
       return cap(rows);
     },
@@ -967,7 +997,7 @@ export const TOOLS = {
          LIMIT ?`,
         kind ?? null, kind ?? null,
         like, like, like, like,
-        MAX_ROWS
+        probe()
       );
       // Drop the columns a given kind does not use rather than emitting a wall
       // of nulls — a board game has no genre and a DVD has no thoughts.
@@ -1042,7 +1072,7 @@ export const TOOLS = {
         tag ?? null, tag ? `%${tag.toLowerCase()}%` : "",
         since ?? null, since ?? "",
         with_note ? 1 : null,
-        MAX_ROWS
+        probe()
       );
       const [tot] = await q(env,
         `SELECT count(*) AS n, max(substr(created,1,10)) AS newest,
@@ -1136,7 +1166,7 @@ export const TOOLS = {
           ...shelves,
           like, like, like,
           since ?? null, since ?? "",
-          MAX_ROWS
+          probe()
         );
         const [tot] = await q(env,
           `SELECT count(*) AS n, min(substr(date_added,1,10)) AS oldest
@@ -1167,7 +1197,7 @@ export const TOOLS = {
           ...cols,
           like, like, like,
           since ?? null, since ?? "",
-          MAX_ROWS
+          probe()
         );
         const [tot] = await q(env,
           `SELECT count(*) AS n FROM t0_raindrop WHERE collection IN (${cols.map(() => "?").join(",")})`,
@@ -1220,7 +1250,7 @@ export const TOOLS = {
            AND (? IS NULL OR turns >= ?)
          ORDER BY last_seen DESC, turns DESC
          LIMIT ?`,
-        like, like, min_turns ?? null, min_turns ?? 0, MAX_ROWS
+        like, like, min_turns ?? null, min_turns ?? 0, probe()
       );
       return cap(rows);
     },
@@ -1353,7 +1383,7 @@ export const TOOLS = {
          WHERE (? IS NULL OR lower(city) = lower(?))
            AND (? IS NULL OR lower(cuisine_1) = lower(?))
          ORDER BY rating DESC LIMIT ?`,
-        city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, MAX_ROWS
+        city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, probe()
       );
       return cap(rows);
     },
@@ -1428,7 +1458,7 @@ export const TOOLS = {
          ORDER BY ${sort} LIMIT ?`,
         since,
         like, like, like, like, status ?? null, status ?? null,
-        group ?? null, group ?? null, MAX_ROWS
+        group ?? null, group ?? null, probe()
       );
       return cap(rows);
     },
@@ -1459,7 +1489,7 @@ export const TOOLS = {
            FROM t1_project_commit c
            WHERE substr(c.committed_at,1,10) BETWEEN ? AND ?
            GROUP BY c.repo ORDER BY commits DESC LIMIT ?`,
-          start, end, MAX_ROWS
+          start, end, probe()
         );
         return {
           ...cap(rows),
@@ -1476,7 +1506,7 @@ export const TOOLS = {
          WHERE (lower(c.repo) = lower(?) OR lower(c.repo) LIKE ?)
            AND substr(c.committed_at,1,10) BETWEEN ? AND ?
          ORDER BY c.committed_at DESC LIMIT ?`,
-        repo, like, start, end, MAX_ROWS
+        repo, like, start, end, probe()
       );
       return { ...cap(rows), window: { from: start, to: end } };
     },
@@ -1510,7 +1540,7 @@ export const TOOLS = {
                             WHEN 'adr' THEN 2 ELSE 3 END, repo, path
          LIMIT ?`,
         like, like, like, rlike ? repo : null, repo ?? null, rlike,
-        kind ?? null, kind ?? null, full ? 1 : MAX_ROWS
+        kind ?? null, kind ?? null, full ? 1 : probe()
       );
 
       if (full) {
@@ -1563,7 +1593,7 @@ export const TOOLS = {
            FROM t1_project_open o
            WHERE (? IS NULL OR o.kind = ?)
            GROUP BY o.repo ORDER BY open_items DESC LIMIT ?`,
-          kind ?? null, kind ?? null, MAX_ROWS
+          kind ?? null, kind ?? null, probe()
         );
         return { ...cap(rows), note: "where unfinished work sits — ask again with a repo for the items" };
       }
@@ -1577,7 +1607,7 @@ export const TOOLS = {
            AND (? IS NULL OR kind = ?)
          ORDER BY CASE kind WHEN 'unchecked' THEN 0 WHEN 'marker' THEN 1 ELSE 2 END, path, line
          LIMIT ?`,
-        repo, like, kind ?? null, kind ?? null, MAX_ROWS
+        repo, like, kind ?? null, kind ?? null, probe()
       );
       return cap(rows);
     },

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { env, corpus } from "./harness.mjs";
-import { TOOLS, CLASSES, DOMAINS, KINDS, cap, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
+import { TOOLS, CLASSES, DOMAINS, KINDS, cap, probe, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
 import worker from "../src/index.js";
 
 let pass = 0, fail = 0;
@@ -88,6 +88,50 @@ const c = cap(many);
 ok(c.rows.length <= MAX_ROWS, `row cap holds (${c.rows.length} <= ${MAX_ROWS})`);
 ok(JSON.stringify(c.rows).length <= MAX_BYTES, `byte cap holds (${JSON.stringify(c.rows).length} <= ${MAX_BYTES})`);
 ok(!!c.note, "truncation is announced, not silent");
+
+console.log("\n── has_more (a cap that cannot say \"there is more\" is a cap that lies) ──");
+// The defect this replaces: every SQL tool bound its LIMIT to MAX_ROWS and then
+// handed the result to cap(), so cap() never saw a row it had to drop. It
+// reported "20 of 20" for a shelf of 436, and an assistant reading that
+// concluded the shelf was twenty books long.
+const exact = cap(Array.from({ length: MAX_ROWS }, (_, i) => ({ i })));
+ok(exact.returned_count === MAX_ROWS && exact.has_more === false,
+   `exactly ${MAX_ROWS} rows -> has_more=false`);
+ok(exact.note === undefined, "and nothing is announced, because nothing was dropped");
+
+const probed = cap(Array.from({ length: probe() }, (_, i) => ({ i })));
+ok(probed.returned_count === MAX_ROWS && probed.has_more === true,
+   `one row past the cap -> has_more=true, ${probed.returned_count} returned`);
+ok(!probed.rows.some((r) => r.i === MAX_ROWS), "the probe row is counted, never emitted");
+
+// A tool with its own smaller page must detect ITS overflow, not the global one.
+// `ratings` shows five per medium; without this it would report has_more=false
+// on a medium with fifty rated films.
+const small = cap(Array.from({ length: probe(5) }, (_, i) => ({ i })), { want: 5 });
+ok(small.returned_count === 5 && small.has_more === true, "want=5 overflows at 5, not at 20");
+ok(cap([{ i: 1 }], { want: 5 }).has_more === false, "want=5 under-full -> has_more=false");
+ok(cap(Array.from({ length: 100 }, (_, i) => ({ i })), { want: 999 }).returned_count === MAX_ROWS,
+   "want narrows the page and can never widen it past MAX_ROWS");
+
+// The regression that actually bites: a tool binding MAX_ROWS instead of probe()
+// loses the ability to say there is more, and NOTHING ELSE FAILS — the rows come
+// back, the caps hold, the tests pass, and the answer quietly claims to be whole.
+// So the guard is over the source, not over behaviour.
+const CAP_DEFS = [
+  /^\s*(\/\/|\*)/,                    // prose about the cap
+  /export const MAX_ROWS/,
+  /export const probe = \(want = MAX_ROWS\)/,
+  /\{ want = MAX_ROWS \}/,
+  /Math\.min\(want, MAX_ROWS\)/,
+];
+const bareBinds = readFileSync(new URL("../src/tools.js", import.meta.url), "utf8")
+  .split("\n")
+  .map((line, n) => [n + 1, line])
+  .filter(([, line]) => /\bMAX_ROWS\b/.test(line) && !CAP_DEFS.some((re) => re.test(line)));
+ok(bareBinds.length === 0,
+   `every row limit probes — bare MAX_ROWS binds: ${bareBinds.map(([n]) => n).join(", ") || "none"}`);
+
+console.log("\n── caps, continued ──");
 // sized from MAX_BYTES so raising the cap cannot silently retire this check
 const fatRow = Math.ceil(MAX_BYTES / 3);
 const fat = cap(Array.from({ length: 5 }, () => ({ t: "y".repeat(fatRow) })));
