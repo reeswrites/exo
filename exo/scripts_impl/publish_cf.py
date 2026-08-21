@@ -142,11 +142,34 @@ def _emit_table(con, parquet, table, out_dir) -> tuple[str, int]:
     return "\n".join(ddl), len(rows)
 
 
-def _emit_vectors(con, out) -> dict:
-    """One flat float32 blob plus a sidecar whose row i is blob row i."""
+# Every vector kind the blob is made of. `vectors.f32` is ONE artifact — the
+# Worker loads it whole and indexes into it — so it cannot be built a piece at a
+# time, and a run that holds only some of these cannot produce a valid one.
+VEC_KINDS = ("t2_atom_vec", "t2_note_vec", "t2_post_vec")
+
+
+def _emit_vectors(con, out, *, partial: bool) -> dict:
+    """One flat float32 blob plus a sidecar whose row i is blob row i.
+
+    `partial` changes what a MISSING kind means, and the difference matters
+    enough to be the reason this argument exists.
+
+    On a full run, missing means "not built yet" — a zone can be added to the
+    manifest and reach D1 before its vectors exist — and skipping costs recall
+    on one kind while a crash costs the whole nightly.
+
+    On a scoped run it may instead mean "this lane did not rebuild it", and
+    skipping then does something far worse than cost recall: it writes a blob
+    with that kind absent, which the instance uploads over a complete one. A
+    notes lane would delete post search from the surface and report success.
+    A scoped run therefore emits vectors only when it holds every kind, and
+    says so in the manifest either way so the upload can be conditional rather
+    than hopeful.
+    """
     blob = array("f")
     index: list[dict] = []
     dim = None
+    missing: list[str] = []
 
     for kind, parquet, join in (
         ("atom", config.SERVE / "t2_atom_vec.parquet", config.SERVE / "t2_atom.parquet"),
@@ -159,6 +182,7 @@ def _emit_vectors(con, out) -> dict:
         # whole nightly.
         if not parquet.exists() or not join.exists():
             print(f"  R2  {kind}_vec: no parquet yet \u2014 skipping")
+            missing.append(f"t2_{kind}_vec")
             continue
         # carry enough metadata to render a hit without a second round trip
         label = "text" if kind == "atom" else "title"
@@ -199,6 +223,14 @@ def _emit_vectors(con, out) -> dict:
                 "label": (label_val or "")[:180],
             })
 
+    if partial and missing:
+        # No file, deliberately. An incomplete blob on disk is something a
+        # workflow uploads; an absent one is something it has to notice.
+        print(f"  R2  vectors: NOT WRITTEN — this scoped run holds no "
+              f"{', '.join(missing)}, and the blob is all-or-nothing. "
+              "Uploading it would delete those vectors from the surface.")
+        return {"complete": False, "missing": missing, "count": 0, "dim": dim, "bytes": 0}
+
     if sys.byteorder != "little":
         blob.byteswap()  # the Worker reads little-endian Float32Array
     (out / "vectors.f32").write_bytes(blob.tobytes())
@@ -206,7 +238,7 @@ def _emit_vectors(con, out) -> dict:
         json.dumps({"dim": dim, "count": len(index), "normalized": True, "rows": index}),
         encoding="utf-8",
     )
-    return {"count": len(index), "dim": dim, "bytes": len(blob) * 4}
+    return {"complete": True, "count": len(index), "dim": dim, "bytes": len(blob) * 4}
 
 
 
@@ -592,9 +624,10 @@ def run() -> int:
             (out / "brief.md").write_text(src_brief.read_text(encoding="utf-8"), encoding="utf-8")
             print(f"  R2  brief.md        {len(src_brief.read_bytes()):>8,} bytes")
         _emit_reconcile(out, counts, scope)
-        vinfo = _emit_vectors(con, out)
-        print(f"  R2  vectors.f32     {vinfo['count']:>8,} x {vinfo['dim']}d "
-              f"= {vinfo['bytes'] / 1e6:.2f} MB")
+        vinfo = _emit_vectors(con, out, partial=(scope == "partial"))
+        if vinfo.get("complete"):
+            print(f"  R2  vectors.f32     {vinfo['count']:>8,} x {vinfo['dim']}d "
+                  f"= {vinfo['bytes'] / 1e6:.2f} MB")
 
         (out / "MANIFEST.json").write_text(json.dumps({
             "d1_tables": counts,

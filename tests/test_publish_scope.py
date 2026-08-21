@@ -206,3 +206,37 @@ def test_a_bundle_with_a_junk_scope_is_refused(tmp_path):
     (out / "bundle-scope.txt").write_text("everything\n", encoding="utf-8")
     proc = _run_import(out, log)
     assert proc.returncode == 1
+
+
+# ───────────────── vectors.f32 is one artifact, so it is all or nothing ─────────────────
+
+
+def test_a_scoped_run_that_lacks_a_vector_kind_writes_no_blob(tmp_path, monkeypatch):
+    # A notes lane holds atom and note vectors but not post ones. `vectors.f32`
+    # is loaded whole by the Worker and indexed into, so a blob missing a kind
+    # is not a smaller blob — it is post search deleted, uploaded over a good
+    # copy, with every step green.
+    import duckdb
+    monkeypatch.setattr(publish_cf.config, "SERVE", tmp_path)
+    out = tmp_path / "cf"
+    out.mkdir()
+    con = duckdb.connect(":memory:")
+    info = publish_cf._emit_vectors(con, out, partial=True)
+    assert info["complete"] is False
+    assert not (out / "vectors.f32").exists(), (
+        "an incomplete blob on disk is something a workflow uploads; "
+        "an absent one is something it has to notice")
+    assert "t2_t2_post_vec" in " ".join(info["missing"]) or info["missing"]
+
+
+def test_a_full_run_still_skips_a_kind_that_was_never_built(tmp_path, monkeypatch):
+    # Unchanged behaviour: a zone can reach the manifest before its vectors
+    # exist, and a crash there would cost the whole nightly.
+    import duckdb
+    monkeypatch.setattr(publish_cf.config, "SERVE", tmp_path)
+    out = tmp_path / "cf"
+    out.mkdir()
+    con = duckdb.connect(":memory:")
+    info = publish_cf._emit_vectors(con, out, partial=False)
+    assert info["complete"] is True
+    assert (out / "vectors.f32").exists()
