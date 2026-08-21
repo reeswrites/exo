@@ -151,7 +151,10 @@ def main(argv: list[str] | None = None) -> int:
     ldsub.add_parser("status")
     sub.add_parser("rebuild")
     sub.add_parser("verify")
-    sub.add_parser("backup")
+    sbk = sub.add_parser("backup")
+    sbk.add_argument("--out", default=None,
+                     help="write a portable snapshot here (no catalog, with a "
+                          "row-count manifest) instead of backups/<stamp>/")
     args = p.parse_args(argv)
 
     if args.cmd == "ingest":
@@ -322,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
         return init.run(args.dest)
     elif args.cmd == "backup":
         from .scripts_impl import backup
+        if args.out:
+            return backup.portable(args.out)
         backup.run()
     elif args.cmd in plugins.commands():
         fn, _ = plugins.commands()[args.cmd]
