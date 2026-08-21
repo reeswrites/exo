@@ -134,6 +134,24 @@ right response is the **link**, not a paraphrase. Every post row carries its liv
 URL for that reason, built from the instance's own URL template against the
 frontmatter slug the site actually resolves permalinks with, never from a filename.
 
+### publicity
+How public a served zone already is, independent of whether it may be served at
+all (ADR-0019). `serve` answers *may a reader see this row*; publicity answers
+*does a reader seeing all of them cost anything*, and for a blog the answer is
+no. Three grades — **published** (a URL you own, intending readers), **profile**
+(readable by anyone who visits an account you own; nobody has), **private** —
+declared by the instance, absent meaning private.
+
+It sizes the row cap, and more usefully it tells a reader which answers are
+quotable: a published row can be linked, a private one is the owner's own
+material handed back to them. A zone is as public as its least public row, a tool
+as its least public zone.
+
+The caveat it turns on: **already-public is not already-collected.** A public
+Letterboxd is public one film at a time; nobody has joined a year of it to a
+Goodreads shelf and a commit history. Publicity lowers the blast radius of a row
+and not of the join, so grades raise a ceiling rather than remove one.
+
 ### the two axes
 Publication requires **both** an organisational and a semantic yes.
 

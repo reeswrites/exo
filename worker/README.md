@@ -12,6 +12,29 @@ assistant's vendor ever holding them.
 - `src/index.js` — JSON-RPC, auth, the brief and procedure resources, the audit and caller logs
 - `src/tools.js` — the 28 tools, and the caps
 - `src/search.js` — vector search over `vectors.f32` from R2
+- `src/exposure.js` — how public each zone is (ADR-0019), and what that makes a tool
+
+`exposure.json` rides along beside the brief: how public each served zone is
+(ADR-0019), resolved by `exo publish` so nothing out here re-decides it. Every
+tool declares the zones whose content can reach a caller, and its grade is the
+least public of them — so a tool touching one private zone is private whatever
+else it reads.
+
+The row cap follows that grade — 20 private, 100 profile, 200 published — and the
+byte cap does not, because 16KB protects the caller's context window rather than
+the corpus. Every tool takes an optional `limit`, which only ever narrows.
+`tools/list` is built per request so the ceiling a model is told about is the
+real one.
+
+**There is no `offset`, and passing one is an error rather than a no-op.** A
+cursor that can walk the full set is the one thing the tool surface is not
+(ADR-0007 §3). Answers carry `has_more`; the way to see more is a narrower
+question.
+
+Every answer also carries `exposure` itself, which says whether the rows may be
+quoted onward or are the owner's own material handed back to them. A missing or
+unreadable `exposure.json` grades everything private, so a worker deployed ahead
+of its bundle serves tight rather than open.
 
 Hand-rolled JSON-RPC, no MCP SDK: the surface used here is five methods, and a
 dependency-free Worker is one less thing that can change under a corpus this
@@ -49,7 +72,7 @@ do this for you. By hand:
 cd "$EXO_HOME" && uv run exo publish --cf                        # builds the bundle
 WRANGLER="npx wrangler" ./scripts/guard-publication.sh exo       # refuse a shrunken corpus
 cd zones/_serve/cf && WRANGLER="npx wrangler" ./import.sh exo    # reconciles + loads D1
-for f in vectors.f32 vectors.json brief.md; do
+for f in vectors.f32 vectors.json brief.md exposure.json; do
   npx wrangler r2 object put "exo-vectors/$f" --file "$f" --remote
 done
 ```

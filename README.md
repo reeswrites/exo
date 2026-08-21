@@ -177,6 +177,7 @@ ones:
 | [0016](docs/adr/0016-procedures-are-resources-not-tools.md) | a procedure is a resource, not a tool |
 | [0017](docs/adr/0017-a-note-source-is-an-adapter.md) | a note source is an adapter, and the note file is the contract |
 | [0018](docs/adr/0018-the-notes-tree-is-the-original-and-the-bucket-is-a-mirror.md) | the notes tree is the original; the bucket is a mirror |
+| [0019](docs/adr/0019-publicity-is-an-axis-not-an-adjective.md) | publicity is an axis, not an adjective |
 
 ## Contributing
 

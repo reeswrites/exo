@@ -33,6 +33,13 @@ from .. import catalog, config, toolzones
 # Zones filtered by note provenance rather than copied wholesale.
 _NOTE_DERIVED = {"t1_notes", "t2_atom", "t2_atom_vec", "t2_note_vec"}
 
+# The publicity axis (ADR-0019). Independent of serve/hold: this says nothing
+# about whether a row may leave, only about whether a stranger holding ALL of
+# them costs anything. Closed vocabulary, ordered least public first, because
+# "least public wins" is the rule at every level.
+EXPOSURE_GRADES = ("private", "profile", "published")
+DEFAULT_EXPOSURE = "private"
+
 
 def _load_manifest() -> dict:
     with open(config.SERVE_MANIFEST, encoding="utf-8") as f:
@@ -147,6 +154,50 @@ def _has_column(con, view: str, col: str) -> bool:
         return False
 
 
+def _exposure_problems(manifest: dict, served_zones: list[str]) -> list[str]:
+    """Fail-loud on a grade that was typed, fail-quiet on one that was not.
+
+    The two are different and both are deliberate (ADR-0019 §1). A zone with **no
+    entry** is `private` silently — that is the safe reading of silence, and a
+    manifest that failed on every ungraded zone would make adding a zone a chore
+    rather than a decision. A zone with an **unrecognised** grade fails the build,
+    because somebody typed something and the one thing it certainly is not is a
+    considered `private`. It is also what keeps a `TODO` left in the block loud
+    rather than quietly becoming the safe default and never being answered.
+    """
+    problems: list[str] = []
+    graded = {k: v for k, v in manifest.get("zone_exposure", {}).items()
+              if not k.startswith("_")}
+
+    bad = {z: g for z, g in graded.items() if g not in EXPOSURE_GRADES}
+    if bad:
+        problems.append(
+            "zone_exposure carries values that are not grades: "
+            + ", ".join(f"{z}={g!r}" for z, g in sorted(bad.items()))
+            + f" (must be one of {', '.join(EXPOSURE_GRADES)})")
+
+    # A grade on a held zone is not harmless — it is the shape of somebody
+    # believing they published something. The zone has no rows on the surface to
+    # be public ABOUT, so say so rather than storing a claim about nothing.
+    held = sorted(set(graded) - set(served_zones))
+    if held:
+        problems.append(
+            "zone_exposure grades zones that are not served: " + ", ".join(held)
+            + " — a held zone has no rows on the surface to grade")
+    return problems
+
+
+def _resolve_exposure(manifest: dict, served_zones: list[str]) -> dict[str, str]:
+    """Every served zone, explicitly graded. Absence resolved here and nowhere else.
+
+    The remote end must never have to reason about a missing key: a bundle that
+    omitted a zone would leave the worker choosing a default, and a default chosen
+    twice is a default that will eventually differ.
+    """
+    graded = manifest.get("zone_exposure", {})
+    return {z: graded.get(z, DEFAULT_EXPOSURE) for z in sorted(served_zones)}
+
+
 def _zone_of(ref: str, zones: dict) -> str | None:
     """Longest declared prefix wins, so raw/import can serve while raw/daily holds."""
     best = None
@@ -231,6 +282,7 @@ def run(dry_run: bool = False) -> int:
     con = catalog.connect("full", read_only=True)
     try:
         problems = _check_coverage(con, manifest)
+        problems += _exposure_problems(manifest, served_zones)
         if _has_column(con, "t1_procedure", "serve"):
             problems += _procedure_problems(
                 [dict(zip(("slug", "needs", "serve"), r)) for r in
@@ -571,6 +623,17 @@ def run(dry_run: bool = False) -> int:
         (out / "brief.md").write_text(text, encoding="utf-8")
         print(f"  brief             {len(text.encode()):>8,} bytes")
 
+        exposure = _resolve_exposure(manifest, [z for z, _n in summary])
+        with open(out / "exposure.json", "w", encoding="utf-8") as f:
+            json.dump({
+                "_doc": "Resolved publicity per served zone (ADR-0019). Absence is "
+                        "already applied — every served zone is listed explicitly, so "
+                        "no reader downstream chooses a default of its own.",
+                "grades": list(EXPOSURE_GRADES),
+                "zones": exposure,
+            }, f, indent=2)
+        by_grade = {g: sum(1 for v in exposure.values() if v == g) for g in EXPOSURE_GRADES}
+        print("  exposure: " + " · ".join(f"{n} {g}" for g, n in by_grade.items()))
         _write_receipt(out, manifest, held_folders, summary)
 
         # Carried across rather than rebuilt: `cf/` is derived from the parquets
