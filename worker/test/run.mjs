@@ -83,6 +83,34 @@ const briefStill = await (await readUri("exo://brief", 13)).json();
 ok(/^# \S/.test(briefStill.result?.contents?.[0]?.text ?? ""),
    "the brief still resolves beside them");
 
+console.log("\n── a total order, so the same question gets the same answer ──");
+// Ties are the bug, not missing ORDER BY clauses alone. `places` sorted a
+// restaurant list on a 1-10 rating: an enormous tied block ordered arbitrarily
+// inside itself, presented as a ranking. Two identical calls could return two
+// different twenties with nothing saying either was a sample.
+//
+// Checked over the SQL because it cannot be checked over one run: an unstable
+// order is stable until an index changes, a D1 version changes, or a re-import
+// rewrites the table — and import.sh DROPs and re-INSERTs every table, every
+// publish.
+const UNIQUE = /,\s*(?:[a-z]\.)?(?:id|url|repo|slug)\s*(?:LIMIT|`|$)/i;
+const unstable = [];
+for (const [name, t] of Object.entries(TOOLS)) {
+  const src = t.run.toString();
+  for (const m of src.matchAll(/(ORDER BY[\s\S]{0,400}?)LIMIT \?/g)) {
+    const clause = m[1].replace(/--[^\n]*/g, " ").replace(/\s+/g, " ").trim();
+    if (!UNIQUE.test(clause + "LIMIT")) unstable.push(`${name}: ${clause.slice(0, 70)}`);
+  }
+  // A LIMIT with no ORDER BY at all is the same bug, louder.
+  for (const m of src.matchAll(/`[^`]*\bLIMIT \?[^`]*`/g)) {
+    if (/\bFROM\s+t[012]_/.test(m[0]) && !/ORDER BY/i.test(m[0])) {
+      unstable.push(`${name}: a LIMIT with no ORDER BY`);
+    }
+  }
+}
+ok(unstable.length === 0,
+   `every limited query has a unique tiebreaker${unstable.length ? ":\n         " + unstable.join("\n         ") : ""}`);
+
 console.log("\n── the row cap follows the axis, the byte cap does not ──");
 ok(ROW_CAP.private === MAX_ROWS, "private is the floor, and the floor is ADR-0007's twenty");
 ok(ROW_CAP.profile > ROW_CAP.private && ROW_CAP.published >= ROW_CAP.profile,

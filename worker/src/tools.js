@@ -295,7 +295,7 @@ export const TOOLS = {
         env,
         `SELECT question, state FROM t1_open_thread
          WHERE state IS NULL OR lower(state) NOT IN ('closed','done','dismissed')
-         ORDER BY created DESC LIMIT ?`,
+         ORDER BY created DESC, id LIMIT ?`,
         probe(ctx)
       );
       return cap(rows.map((r) => ({ question: r.question })));
@@ -313,8 +313,10 @@ export const TOOLS = {
     },
     async run(env, { kind }, ctx) {
       const rows = kind
-        ? await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts WHERE kind = ? LIMIT ?`, kind, probe(ctx))
-        : await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts LIMIT ?`, probe(ctx));
+        ? await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts WHERE kind = ?
+            ORDER BY created DESC, id LIMIT ?`, kind, probe(ctx))
+        : await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts
+            ORDER BY created DESC, id LIMIT ?`, probe(ctx));
       return cap(rows, ctx);
     },
   },
@@ -328,7 +330,7 @@ export const TOOLS = {
     async run(env, _args, ctx) {
       const rows = await q(
         env,
-        `SELECT artist, plays, mentions FROM t2_affinity ORDER BY plays DESC LIMIT ?`,
+        `SELECT artist, plays, mentions FROM t2_affinity ORDER BY plays DESC, id LIMIT ?`,
         probe(ctx)
       );
       return cap(rows, ctx);
@@ -362,7 +364,7 @@ export const TOOLS = {
         `SELECT family, title, status, streak, cadence, due, pile, est_minutes
          FROM t1_item
          ${where.length ? "WHERE " + where.join(" AND ") : ""}
-         ORDER BY family, due IS NULL, due, created DESC
+         ORDER BY family, due IS NULL, due, created DESC, id
          LIMIT ?`,
         ...binds, probe(ctx)
       );
@@ -410,7 +412,7 @@ export const TOOLS = {
          FROM t1_item_event e
          LEFT JOIN t1_item i ON i.origin_ref = e.item_id OR i.id = e.item_id
          WHERE (? IS NULL OR lower(COALESCE(i.title, e.title)) LIKE ?)
-         ORDER BY COALESCE(e.date, e.ts) DESC
+         ORDER BY COALESCE(e.date, e.ts) DESC, e.id
          LIMIT ?`,
         like, like, probe(ctx)
       );
@@ -462,7 +464,7 @@ export const TOOLS = {
       const rows = await q(
         env,
         `SELECT title, cuisine, time_min, effort, yield_servings, source_url
-         FROM t1_recipe WHERE ${match} ORDER BY title LIMIT ?`,
+         FROM t1_recipe WHERE ${match} ORDER BY title, id LIMIT ?`,
         ...binds, probe(ctx)
       );
       return cap(rows, ctx);
@@ -509,7 +511,7 @@ export const TOOLS = {
         env,
         `SELECT title, slug, description, started, modified, words, state,
                 CAST(julianday('now') - julianday(modified) AS INTEGER) AS days_since_touched
-         FROM t1_draft WHERE ${match} AND ${stale} ORDER BY modified DESC LIMIT ?`,
+         FROM t1_draft WHERE ${match} AND ${stale} ORDER BY modified DESC, id LIMIT ?`,
         ...binds, probe(ctx)
       );
       if (!rows.length) {
@@ -846,7 +848,7 @@ export const TOOLS = {
                 -- sending the reader to a paid night expecting a free one.
                 CASE WHEN free_min <> free_max THEN 1 END AS price_varies
          FROM ranked WHERE rn <= 4
-         ORDER BY start
+         ORDER BY start, url
          LIMIT ?`,
         from ?? null, to ?? null, to ?? null,
         like, like, like, like, free ? 1 : null, probe(ctx)
@@ -862,7 +864,7 @@ export const TOOLS = {
       "What the owner SAYS they like — stated preferences: venues and orgs they rate, things they seek out, things they avoid. Distinct from `taste`, which is revealed behaviour (play counts). When the two disagree, that gap is usually the interesting part.",
     schema: { type: "object", properties: {} },
     async run(env, _args, ctx) {
-      const rows = await q(env, `SELECT kind, key, value FROM t1_taste ORDER BY kind, key LIMIT ?`, probe(ctx));
+      const rows = await q(env, `SELECT kind, key, value FROM t1_taste ORDER BY kind, key, id LIMIT ?`, probe(ctx));
       return cap(rows, ctx);
     },
   },
@@ -984,7 +986,7 @@ export const TOOLS = {
            FROM ${d.table}
            WHERE ${d.col} IS NOT NULL AND CAST(${d.col} AS REAL) > 0
              AND CAST(${d.col} AS REAL) >= ? ${d.where ?? ""}
-           ORDER BY CAST(${d.col} AS REAL) DESC, created DESC
+           ORDER BY CAST(${d.col} AS REAL) DESC, created DESC, id
            LIMIT ?`,
           floor, medium ? probe(ctx) : probe(ctx, 5)
         );
@@ -1014,7 +1016,7 @@ export const TOOLS = {
          FROM t1_film_review
          WHERE (? IS NULL OR lower(title) LIKE ? OR lower(review) LIKE ?)
            AND (? IS NULL OR CAST(nullif(rating,'') AS REAL) >= ?)
-         ORDER BY created DESC
+         ORDER BY created DESC, id
          LIMIT ?`,
         like, like, like,
         min_rating ?? null, min_rating ?? 0,
@@ -1056,7 +1058,7 @@ export const TOOLS = {
          WHERE (? IS NULL OR c.kind = ?)
            AND (? IS NULL OR lower(c.title) LIKE ? OR lower(COALESCE(c.creator,'')) LIKE ?
                           OR lower(COALESCE(c.genre,'')) LIKE ?)
-         ORDER BY COALESCE(c.acquired,'') DESC, c.title
+         ORDER BY COALESCE(c.acquired,'') DESC, c.title, c.id
          LIMIT ?`,
         kind ?? null, kind ?? null,
         like, like, like, like,
@@ -1127,7 +1129,7 @@ export const TOOLS = {
            AND (? IS NULL OR lower(COALESCE(tags,'')) LIKE ?)
            AND (? IS NULL OR substr(created,1,10) >= ?)
            AND (? IS NULL OR note <> '')
-         ORDER BY created DESC
+         ORDER BY created DESC, id
          LIMIT ?`,
         like, like, like, like,
         platform ?? null, platform ?? "",
@@ -1226,7 +1228,7 @@ export const TOOLS = {
            WHERE lower(shelf) IN (${shelves.map(() => "?").join(",")})
              AND (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(book_author,'')) LIKE ?)
              AND (? IS NULL OR substr(date_added,1,10) >= ?)
-           ORDER BY substr(date_added,1,10) ${dir}, title
+           ORDER BY substr(date_added,1,10) ${dir}, title, id
            LIMIT ?`,
           ...shelves,
           like, like, like,
@@ -1257,7 +1259,7 @@ export const TOOLS = {
            WHERE collection IN (${cols.map(() => "?").join(",")})
              AND (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?)
              AND (? IS NULL OR substr(created,1,10) >= ?)
-           ORDER BY substr(created,1,10) ${dir}, title
+           ORDER BY substr(created,1,10) ${dir}, title, id
            LIMIT ?`,
           ...cols,
           like, like, like,
@@ -1314,7 +1316,7 @@ export const TOOLS = {
          FROM t0_chat_topic
          WHERE (? IS NULL OR lower(title) LIKE ?)
            AND (? IS NULL OR turns >= ?)
-         ORDER BY last_seen DESC, turns DESC
+         ORDER BY last_seen DESC, turns DESC, id
          LIMIT ?`,
         like, like, min_turns ?? null, min_turns ?? 0, probe(ctx)
       );
@@ -1451,7 +1453,7 @@ export const TOOLS = {
          FROM t1_visits
          WHERE (? IS NULL OR lower(city) = lower(?))
            AND (? IS NULL OR lower(cuisine_1) = lower(?))
-         ORDER BY rating DESC LIMIT ?`,
+         ORDER BY rating DESC, id LIMIT ?`,
         city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, probe(ctx)
       );
       return cap(rows, ctx);
@@ -1525,7 +1527,7 @@ export const TOOLS = {
                             OR lower(p.languages) LIKE ?)
            AND (? IS NULL OR p.status = ?)
            AND (? IS NULL OR lower(p.grouping) = lower(?))
-         ORDER BY ${sort} LIMIT ?`,
+         ORDER BY ${sort}, p.id LIMIT ?`,
         since,
         like, like, like, like, status ?? null, status ?? null,
         group ?? null, group ?? null, probe(ctx)
@@ -1559,7 +1561,7 @@ export const TOOLS = {
                   max(substr(c.committed_at,1,10)) AS last
            FROM t1_project_commit c
            WHERE substr(c.committed_at,1,10) BETWEEN ? AND ?
-           GROUP BY c.repo ORDER BY commits DESC LIMIT ?`,
+           GROUP BY c.repo ORDER BY commits DESC, c.repo LIMIT ?`,
           start, end, probe(ctx)
         );
         return {
@@ -1576,7 +1578,7 @@ export const TOOLS = {
          FROM t1_project_commit c
          WHERE (lower(c.repo) = lower(?) OR lower(c.repo) LIKE ?)
            AND substr(c.committed_at,1,10) BETWEEN ? AND ?
-         ORDER BY c.committed_at DESC LIMIT ?`,
+         ORDER BY c.committed_at DESC, c.id LIMIT ?`,
         repo, like, start, end, probe(ctx)
       );
       return { ...cap(rows, ctx), window: { from: start, to: end } };
@@ -1609,7 +1611,7 @@ export const TOOLS = {
            AND (? IS NULL OR lower(repo) = lower(?) OR lower(repo) LIKE ?)
            AND (? IS NULL OR kind = ?)
          ORDER BY CASE kind WHEN 'context' THEN 0 WHEN 'readme' THEN 1
-                            WHEN 'adr' THEN 2 ELSE 3 END, repo, path
+                            WHEN 'adr' THEN 2 ELSE 3 END, repo, path, id
          LIMIT ?`,
         like, like, like, rlike ? repo : null, repo ?? null, rlike,
         kind ?? null, kind ?? null, full ? 1 : probe(ctx)
@@ -1665,7 +1667,7 @@ export const TOOLS = {
                   sum(CASE WHEN o.kind = 'uncommitted' THEN 1 ELSE 0 END) AS uncommitted
            FROM t1_project_open o
            WHERE (? IS NULL OR o.kind = ?)
-           GROUP BY o.repo ORDER BY open_items DESC LIMIT ?`,
+           GROUP BY o.repo ORDER BY open_items DESC, o.repo LIMIT ?`,
           kind ?? null, kind ?? null, probe(ctx)
         );
         return { ...cap(rows, ctx), note: "where unfinished work sits — ask again with a repo for the items" };
@@ -1678,7 +1680,7 @@ export const TOOLS = {
          FROM t1_project_open
          WHERE (lower(repo) = lower(?) OR lower(repo) LIKE ?)
            AND (? IS NULL OR kind = ?)
-         ORDER BY CASE kind WHEN 'unchecked' THEN 0 WHEN 'marker' THEN 1 ELSE 2 END, path, line
+         ORDER BY CASE kind WHEN 'unchecked' THEN 0 WHEN 'marker' THEN 1 ELSE 2 END, path, line, id
          LIMIT ?`,
         repo, like, kind ?? null, kind ?? null, probe(ctx)
       );

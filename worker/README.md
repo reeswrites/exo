@@ -106,9 +106,17 @@ repo's `src/index.js`.
 ## Test
 
 ```sh
-EXO_HOME=/path/to/your-instance node test/run.mjs    # 289 tests, D1/R2/AI stubbed
+EXO_HOME=/path/to/your-instance node test/run.mjs      # D1/R2/AI stubbed
+EXO_HOME=/path/to/your-instance node test/sqlcheck.mjs # every query, against the real schema
 node test/verify-embedding-space.mjs https://<your-worker>.workers.dev <token>
 ```
+
+`sqlcheck.mjs` prepares every statement the tools can emit against the published
+`schema.sql`. SQLite validates table and column references at prepare time, which
+catches the one class of mistake a stub returning `{rows: []}` cannot: a clause
+naming a column that is not in scope parses fine as a string and fails only when
+somebody asks that question. Zones a bundle happens not to carry are shimmed, so
+an incomplete fixture cannot quietly skip the most intricate SQL on the surface.
 
 `run.mjs` reads the bundle from `$EXO_HOME/zones/_serve/cf`, so publish once
 before running it.
