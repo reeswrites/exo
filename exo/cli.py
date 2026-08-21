@@ -103,6 +103,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("scan-projects")
     ssy = sub.add_parser("sync-raw")
     spb = sub.add_parser("publish"); spb.add_argument("--dry-run", action="store_true"); spb.add_argument("--cf", action="store_true")
+    spb.add_argument("--only", default=None,
+                     help="comma-separated zones to rebuild; the rest are carried "
+                          "forward and kept OUT of the bundle (ADR-0015)")
     ssy.add_argument("--posts", action="store_true"); ssy.add_argument("--vault", action="store_true")
     sci = sub.add_parser("chatimport"); sci.add_argument("--dry-run", action="store_true")
     sub.add_parser("chatindex")
@@ -225,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         return scan_projects.run()
     elif args.cmd == "publish":
         from .scripts_impl import publish
-        rc = publish.run(dry_run=args.dry_run)
+        only = [z.strip() for z in args.only.split(",") if z.strip()] if args.only else None
+        rc = publish.run(dry_run=args.dry_run, only=only)
         if rc == 0 and args.cf and not args.dry_run:
             from .scripts_impl import publish_cf
             rc = publish_cf.run()
