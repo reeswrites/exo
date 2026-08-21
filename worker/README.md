@@ -12,11 +12,19 @@ assistant's vendor ever holding them.
 - `src/index.js` — JSON-RPC, auth, the brief and procedure resources, the audit and caller logs
 - `src/tools.js` — the 28 tools, and the caps
 - `src/search.js` — vector search over `vectors.f32` from R2
+- `src/exposure.js` — how public each zone is (ADR-0019), and what that makes a tool
 
 `exposure.json` rides along beside the brief: how public each served zone is
-(ADR-0019), resolved by `exo publish` so nothing out here re-decides it. It is
-not yet read — the worker fails closed on its absence, which is also what it does
-today, so a bundle carrying it and a worker ignoring it behave identically.
+(ADR-0019), resolved by `exo publish` so nothing out here re-decides it. Every
+tool declares the zones whose content can reach a caller, and its grade is the
+least public of them — so a tool touching one private zone is private whatever
+else it reads.
+
+The caps do not move yet. What the grade buys today is on every answer: an
+`exposure` field saying whether the rows may be quoted onward or are the owner's
+own material handed back to them. A missing or unreadable `exposure.json` grades
+everything private, so a worker deployed ahead of its bundle serves tight rather
+than open.
 
 Hand-rolled JSON-RPC, no MCP SDK: the surface used here is five methods, and a
 dependency-free Worker is one less thing that can change under a corpus this

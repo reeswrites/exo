@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { env, corpus } from "./harness.mjs";
 import { TOOLS, CLASSES, DOMAINS, KINDS, cap, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
+import { GRADES, DEFAULT_GRADE, gradeOf, loadExposure, TTL_MS } from "../src/exposure.js";
 import worker from "../src/index.js";
 
 let pass = 0, fail = 0;
@@ -81,6 +82,63 @@ for (const bad of ["exo://procedure/nothing-by-this-name", "exo://procedure/../b
 const briefStill = await (await readUri("exo://brief", 13)).json();
 ok(/^# \S/.test(briefStill.result?.contents?.[0]?.text ?? ""),
    "the brief still resolves beside them");
+
+console.log("\n── the publicity axis (ADR-0019) ──");
+// Every path that cannot produce an answer must produce the tightest one. These
+// are not edge cases: a missing file is what a worker deployed ahead of its
+// bundle sees, and it has to serve tight rather than open.
+const zones = { t1_post: "published", t0_music: "profile", t1_notes: "private" };
+ok(gradeOf(zones, ["t1_post"]) === "published", "a published zone grades published");
+ok(gradeOf(zones, ["t1_post", "t1_notes"]) === "private", "least public zone wins over the tool");
+ok(gradeOf(zones, ["t1_post", "t0_music"]) === "profile", "published + profile -> profile");
+ok(gradeOf(zones, ["t0_nonexistent"]) === DEFAULT_GRADE, "a zone the bundle never graded is private");
+ok(gradeOf(zones, []) === DEFAULT_GRADE, "a tool that declares nothing is private");
+ok(gradeOf(zones, undefined) === DEFAULT_GRADE, "an absent declaration is private");
+ok(gradeOf({ x: "semi-public" }, ["x"]) === DEFAULT_GRADE,
+   "a grade this build cannot interpret is private, not passed through");
+ok(GRADES[0] === DEFAULT_GRADE, "the vocabulary is ordered least public first");
+
+// Absent R2 object, and an R2 that throws. Neither may take the surface down:
+// turning a publicity question into a 500 is a worse failure than answering it
+// conservatively.
+const noR2 = { VECTORS: { head: async () => null, get: async () => null } };
+ok(Object.keys(await loadExposure(noR2, Date.now() + TTL_MS * 99)).length === 0,
+   "a missing exposure.json yields no grades, which reads as all-private");
+const angryR2 = { VECTORS: { head: async () => { throw new Error("R2 down"); } } };
+ok(typeof (await loadExposure(angryR2, Date.now() + TTL_MS * 198)) === "object",
+   "an R2 outage returns a map rather than throwing");
+
+// Every tool declares what it reads, and the declaration is checked against the
+// SQL it actually runs. A tool edited to query a new table without updating
+// `reads` would be graded on the zones it USED to touch — the one direction of
+// drift that can only ever be too permissive.
+const undeclared = Object.entries(TOOLS).filter(([, t]) => !Array.isArray(t.reads) || !t.reads.length);
+ok(undeclared.length === 0, `every tool declares reads (${undeclared.map(([n]) => n).join(", ") || "none"})`);
+
+const ZONE = /^t[012]_[a-z_]+$/;
+const badZone = Object.entries(TOOLS).flatMap(([n, t]) => (t.reads ?? []).filter((z) => !ZONE.test(z)).map((z) => `${n}:${z}`));
+ok(badZone.length === 0, `reads name zones, not tables or CTEs (${badZone.join(", ") || "none"})`);
+
+// A vector zone in `reads` is a category error, and a costly one: it would drag
+// `posts` to private forever. search.js returns labels and scores, never a
+// vector, so a vector index ranks an answer and can never be one.
+const vecReads = Object.entries(TOOLS).flatMap(([n, t]) => (t.reads ?? []).filter((z) => z.endsWith("_vec")).map((z) => `${n}:${z}`));
+ok(vecReads.length === 0, `no tool claims to read a vector zone (${vecReads.join(", ") || "none"})`);
+
+let unverifiable = 0;
+const drift = [];
+for (const [name, t] of Object.entries(TOOLS)) {
+  const src = t.run.toString();
+  if (/\b(?:FROM|JOIN)\s+\$\{/.test(src)) unverifiable++;   // table chosen at runtime
+  const declared = new Set(t.reads ?? []);
+  for (const m of src.matchAll(/\b(?:FROM|JOIN)\s+(t[012]_[a-z_]+)/g)) {
+    if (!declared.has(m[1])) drift.push(`${name} queries ${m[1]} and does not declare it`);
+  }
+}
+ok(drift.length === 0, `reads match the SQL (${drift.join("; ") || "no drift"})`);
+// Said out loud rather than passed silently: a check that quietly covers 24 of
+// 28 tools reads exactly like one that covers all of them.
+console.log(`  note ${unverifiable} tool(s) choose a table at runtime — their reads are declared, not verified`);
 
 console.log("\n── caps (ADR-0007) ──");
 const many = Array.from({ length: 500 }, (_, i) => ({ i, pad: "x".repeat(50) }));

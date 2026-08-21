@@ -14,6 +14,7 @@
  * surface used here is five methods, and a dependency-free Worker is one less
  * thing that can change under a corpus this personal.
  */
+import { loadExposure, gradeOf } from "./exposure.js";
 import { TOOLS } from "./tools.js";
 
 const PROTOCOL_VERSION = "2024-11-05";
@@ -371,9 +372,16 @@ async function handleRpc(req, env, body) {
       if (!tool) return rpcError(id, -32602, `unknown tool: ${params?.name}`);
       try {
         const result = await tool.run(env, params.arguments ?? {});
+        // How public this answer is (ADR-0019), stamped on every one of them.
+        // The caps do not move yet — this is the other half of the axis, and the
+        // half worth more: an assistant currently cannot tell "this is on his
+        // blog, link it" from "this is a half-formed private note, do not repeat
+        // it to whoever asked". CONTEXT states that rule and the surface has
+        // never been able to carry it.
+        const exposure = gradeOf(await loadExposure(env), tool.reads);
         await audit(env, req, params.name, params.arguments, result.rows?.length ?? 0);
         return rpcResult(id, {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify({ ...result, exposure }, null, 2) }],
         });
       } catch (err) {
         await audit(env, req, params.name, params.arguments, -1);

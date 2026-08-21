@@ -167,6 +167,7 @@ export const KINDS = ["event", "judgement", "text", "entity", "pointer", "vector
 export const TOOLS = {
   whats_relevant: {
     class: "derived", domain: "mind", kind: "vector",
+    reads: ["t2_atom", "t1_notes", "t1_post"],
     description:
       "What has the owner written that bears on a topic? Searches their notes and the verbatim spans lifted from them, by meaning. Use this first when you want to know their thinking on something.",
     schema: {
@@ -193,6 +194,7 @@ export const TOOLS = {
 
   notes_on: {
     class: "authored", domain: "mind", kind: "text",
+    reads: ["t1_notes"],
     description:
       "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents. Pass full:true for the entire text of the single best match.",
     schema: {
@@ -219,6 +221,7 @@ export const TOOLS = {
 
   open_threads: {
     class: "intent", domain: "mind", kind: "pointer",
+    reads: ["t1_open_thread"],
     description:
       "Questions the owner has asked themselves and not closed. The best single source of what they are currently chewing on.",
     schema: { type: "object", properties: {} },
@@ -236,6 +239,7 @@ export const TOOLS = {
 
   verdicts: {
     class: "authored", domain: "culture", kind: "text",
+    reads: ["t1_verdicts"],
     description:
       "The owner's written opinions on books, films, tv and music — in their own words, with reasoning. The highest-signal material here for judging how they think.",
     schema: {
@@ -252,6 +256,7 @@ export const TOOLS = {
 
   taste: {
     class: "revealed", domain: "culture", kind: "event",
+    reads: ["t2_affinity"],
     description:
       "What the owner actually listens to, by play count — the revealed preference, as distinct from what they say.",
     schema: { type: "object", properties: {} },
@@ -267,6 +272,7 @@ export const TOOLS = {
 
   agenda: {
     class: "intent", domain: "commitments", kind: "pointer",
+    reads: ["t1_item"],
     description:
       "What the owner has committed to and where it stands \u2014 the item spine Kairos schedules from. Four families with different lifecycles: tasks are todo/done, habits carry a streak and a cadence, slots are open or filled, constraints are standing rules. Ask with no arguments for what is live right now.",
     schema: {
@@ -323,6 +329,7 @@ export const TOOLS = {
 
   history: {
     class: "revealed", domain: "commitments", kind: "event",
+    reads: ["t1_item", "t1_item_event"],
     description:
       "What actually happened to the owner's commitments \u2014 the append-only log behind the item spine. Status changes with dates, so you can see when a habit lapsed or how long a task sat before it moved, rather than only where it stands now.",
     schema: {
@@ -356,6 +363,7 @@ export const TOOLS = {
 
   recipes: {
     class: "authored", domain: "table", kind: "text",
+    reads: ["t1_recipe"],
     description:
       "What the owner actually cooks \u2014 recipes they wrote up and published, with their source links. Small and real: these are ones they made and posted, not a recipe database. Pass full:true for the ingredients and steps of the best match.",
     schema: {
@@ -397,6 +405,7 @@ export const TOOLS = {
   },
   drafts: {
     class: "authored", domain: "mind", kind: "text",
+    reads: ["t1_draft"],
     description:
       "Longform pieces the owner is in the middle of writing \u2014 the state between a private note and a published post. Ask with no arguments for everything open, oldest-touched last. `stale_days` finds the ones that have gone cold, which is the question a writer cannot answer about themselves. Pass full:true for the whole text of one.",
     schema: {
@@ -453,6 +462,17 @@ export const TOOLS = {
   },
   medium: {
     class: "lens", domain: "*", kind: "mixed",
+    reads: [
+      "t0_beer",
+      "t0_book",
+      "t0_film",
+      "t0_music",
+      "t0_tv",
+      "t1_collection",
+      "t1_film_review",
+      "t1_verdicts",
+      "t1_visits",
+    ],
     description:
       "Everything about one medium in a single call: how much of it the owner consumes, how they rate it ON ITS OWN SCALE, what they own, and what they have written about it. Answering 'what are they like about film' otherwise takes four calls to four tools, and an assistant has to know all four exist.",
     schema: {
@@ -570,6 +590,7 @@ export const TOOLS = {
 
   consumption: {
     class: "revealed", domain: "*", kind: "event",
+    reads: ["t0_beer", "t0_book", "t0_film", "t0_music", "t0_tv"],
     description:
       "Shape and recency of what the owner consumes, per medium: how much, and how current the record is. Returns aggregates, not a list of titles.",
     schema: {
@@ -624,6 +645,7 @@ export const TOOLS = {
 
   posts: {
     class: "authored", domain: "mind", kind: "text",
+    reads: ["t1_post"],
     description:
       "The owner's published blog — articles, essays, lists, project write-ups — as opposed to the private notes behind them. Searches by meaning and returns each post's live URL. Pass full:true for the entire text of the best match.",
     schema: {
@@ -681,6 +703,7 @@ export const TOOLS = {
 
   events: {
     class: "world", domain: "world", kind: "entity",
+    reads: ["t0_event"],
     description:
       "Upcoming DC events the owner could actually go to \u2014 a live pool merged from eight sources (library, theatre, improv, cinema, parties, music venues). Recurring series are collapsed to their next date, and no single source is allowed to dominate the answer. Filter by a topic word or free-only; pair with `taste_profile` for the venues and orgs they rate.",
     schema: {
@@ -769,6 +792,7 @@ export const TOOLS = {
 
   taste_profile: {
     class: "authored", domain: "world", kind: "judgement",
+    reads: ["t1_taste"],
     description:
       "What the owner SAYS they like — stated preferences: venues and orgs they rate, things they seek out, things they avoid. Distinct from `taste`, which is revealed behaviour (play counts). When the two disagree, that gap is usually the interesting part.",
     schema: { type: "object", properties: {} },
@@ -783,6 +807,7 @@ export const TOOLS = {
   // scrobbles` can be asked as one question.
   around_the_time: {
     class: "lens", domain: "*", kind: "mixed",
+    reads: ["t0_book", "t0_film", "t0_music", "t0_tv", "t1_notes"],
     description:
       "What was going on around a period: what the owner wrote, listened to, read or watched. Answers 'what were they thinking about in March' — a window, not a topic. Periods are forgotten more easily than subjects, so this is often the useful lens.",
     schema: {
@@ -857,6 +882,7 @@ export const TOOLS = {
 
   ratings: {
     class: "revealed", domain: "*", kind: "judgement",
+    reads: ["t0_beer", "t0_book", "t0_film", "t1_visits"],
     description:
       "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film.",
     schema: {
@@ -905,6 +931,7 @@ export const TOOLS = {
 
   reviews: {
     class: "authored", domain: "culture", kind: "text",
+    reads: ["t1_film_review"],
     description:
       "The owner's written film reviews from Letterboxd \u2014 115 of them, in their own words, each with a link. Far more of their actual criticism than `verdicts` (10). Search by topic or filter to a minimum rating; quote them rather than paraphrasing.",
     schema: {
@@ -934,6 +961,7 @@ export const TOOLS = {
 
   collection: {
     class: "possession", domain: "culture", kind: "entity",
+    reads: ["t0_music", "t1_collection"],
     description:
       "What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes.",
     schema: {
@@ -979,6 +1007,7 @@ export const TOOLS = {
 
   saves: {
     class: "intent", domain: "*", kind: "pointer",
+    reads: ["t0_raindrop"],
     description:
       "Links the owner bookmarked \u2014 2,188 of them across nine years. Filter by platform (youtube, substack, x, pinterest, tiktok, soundcloud...), by collection (the owner's own buckets: Gift Ideas, thought-provoking, aesthetically-pleasing, want-to-think-about, Tattoo Inspiration, yummy...), by kind, by tag, or by topic. Call with no arguments to see which platforms and collections exist before narrowing. A save is intent, not consumption: it caught their attention, they did not necessarily finish it.",
     schema: {
@@ -1064,6 +1093,7 @@ export const TOOLS = {
 
   backlog: {
     class: "intent", domain: "*", kind: "pointer",
+    reads: ["t0_book", "t0_raindrop"],
     description:
       "What the owner has queued but not done — things they decided they wanted and have not gotten to. Shelving a book or filing a link into a bucket is a deliberate act, which is what separates this from `saves` (attention) and from `collection` (already owned). Kinds: 'read' (436 shelved to-read), 'resume' (41 books started and abandoned mid-way — the strongest candidates, since they already began), 'make' (things they want to build or cook), 'buy' (gift and shopping ideas). Call with no kind to see the sizes. Default order is newest-first; pass order='oldest' to dig up what has been sitting, which is usually the point of asking.",
     schema: {
@@ -1196,6 +1226,7 @@ export const TOOLS = {
 
   recent_topics: {
     class: "dialogue", domain: "mind", kind: "event",
+    reads: ["t0_chat_topic"],
     description:
       "What the owner has been working through in conversation lately \u2014 titles and volume, not transcripts. Fresher than their notes, which lag a deliberate act of capture. Turn count is the signal a title cannot carry: 40 turns is a preoccupation, 3 is a passing look. Use this to know what is live for them right now.",
     schema: {
@@ -1228,6 +1259,7 @@ export const TOOLS = {
 
   thread: {
     class: "dialogue", domain: "mind", kind: "text",
+    reads: ["t0_chat", "t0_chat_topic"],
     description:
       "One conversation. `include` chooses what comes back: 'conclusion' (where the owner landed, plus the machine distillation), 'turns' (only what THEY typed), 'dialogue' (both sides interleaved, speaker-tagged), or 'both' (default: conclusion + owner turns). Prefer 'dialogue' when those turns read as questions or fragments \u2014 45% of them are under 80 chars and answer something you cannot otherwise see. Lines tagged assistant are another model's output: context for reading the owner, not verified fact, and never quote them as the owner's.",
     schema: {
@@ -1314,6 +1346,7 @@ export const TOOLS = {
 
   taste_summary: {
     class: "derived", domain: "*", kind: "judgement",
+    reads: ["t0_taste_derived"],
     description:
       "Derived summaries of the owner's taste: how their rating scales actually behave, and the clusters their loved items fall into. Read the dining one BEFORE interpreting any restaurant rating \u2014 that 0-10 scale has a median of 8.1, so an 8 is average, not a rave.",
     schema: {
@@ -1339,6 +1372,7 @@ export const TOOLS = {
 
   places: {
     class: "authored", domain: "table", kind: "entity",
+    reads: ["t1_visits"],
     description:
       "Restaurants the owner has been to, with their own notes and ratings. Filter by city or cuisine.",
     schema: {
@@ -1371,6 +1405,7 @@ export const TOOLS = {
    */
   projects: {
     class: "possession", domain: "workshop", kind: "entity",
+    reads: ["t1_project", "t1_project_commit"],
     description:
       "The owner's repos — what they are building, what they set down, and what each one claims to be. `status` is heat, not judgement: active (commit in 21 days), warm (90), stalled (a year), dormant (older, which includes everything that simply shipped). Repos filed under a group like 'hiatus' were deliberately set aside — that is deliberate shelving, not a guess. Call with no arguments for the shape of the workshop: the status counts plus what has actually been worked on, ranked by commits in the last 90 days rather than by last-commit date, because half these repos were git-init'd the same week and recency alone floats a one-commit import above a year of work. Prose and metadata only — no source code is in this store.",
     schema: {
@@ -1436,6 +1471,7 @@ export const TOOLS = {
 
   project_activity: {
     class: "revealed", domain: "workshop", kind: "event",
+    reads: ["t1_project_commit"],
     description:
       "What the owner actually worked on, dated — commit subjects from their own repos. This is the closest thing in the store to a work log, and unlike their notes it cannot be stale: a commit is written at the moment of the work. Use it to answer what they have been doing lately, when a project came alive or died, or what was happening around a date. With no repo it returns per-repo totals for the window; with a repo it returns the subjects themselves. Subjects only — never a diff, and no source code is in this store.",
     schema: {
@@ -1484,6 +1520,7 @@ export const TOOLS = {
 
   project_docs: {
     class: "authored", domain: "workshop", kind: "text",
+    reads: ["t1_project_doc"],
     description:
       "The prose those repos carry: READMEs, CONTEXT glossaries, architecture decision records and plan documents. This is where a project states what it is FOR and why it was built the way it was — an ADR is the owner arguing with themselves and recording who won, which is the same category of writing as their notes and usually more decided. Search by topic to find which project already settled a question, or pass a repo to read what it says about itself. Returns matching excerpts; ask with full=true and a title to read one whole document.",
     schema: {
@@ -1543,6 +1580,7 @@ export const TOOLS = {
 
   project_open: {
     class: "intent", domain: "workshop", kind: "pointer",
+    reads: ["t1_project_open"],
     description:
       "What is visibly unfinished in those repos: TODO and FIXME markers left in code, unchecked items in plan documents, and files sitting uncommitted. Useful for 'what could I pick up' and for reading intent — a marker is a note written to oneself at the moment of choosing not to do something. Treat it as a trail, not a backlog: nobody prunes these, so an old marker may name work that was done another way. With no repo it returns where the unfinished work is concentrated. Paths and marker text only, never file contents.",
     schema: {
