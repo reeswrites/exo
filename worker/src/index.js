@@ -14,7 +14,7 @@
  * surface used here is five methods, and a dependency-free Worker is one less
  * thing that can change under a corpus this personal.
  */
-import { loadExposure, gradeOf } from "./exposure.js";
+import { bestGradeOf, loadExposure, gradeOf } from "./exposure.js";
 import { ROW_CAP, TOOLS } from "./tools.js";
 
 const PROTOCOL_VERSION = "2024-11-05";
@@ -366,7 +366,7 @@ async function handleRpc(req, env, body) {
       const zones = await loadExposure(env);
       return rpcResult(id, {
         tools: Object.entries(TOOLS).map(([name, t]) => {
-          const ceiling = ROW_CAP[gradeOf(zones, t.reads)] ?? ROW_CAP.private;
+          const ceiling = ROW_CAP[bestGradeOf(zones, t)] ?? ROW_CAP.private;
           return {
             name,
             description: t.description,
@@ -394,7 +394,12 @@ async function handleRpc(req, env, body) {
       const tool = TOOLS[params?.name];
       if (!tool) return rpcError(id, -32602, `unknown tool: ${params?.name}`);
       const args = params.arguments ?? {};
-      const exposure = gradeOf(await loadExposure(env), tool.reads);
+      // Graded on what THIS call reads, not on everything the tool could. A
+      // tool spanning two publicity grades otherwise answers every question at
+      // the tighter one, which is correct and needlessly so (ADR-0019 §2).
+      // `readsFor` may only ever narrow: the test asserts it returns a subset of
+      // `reads`, so a bug there cannot grade a call more public than declared.
+      const exposure = gradeOf(await loadExposure(env), tool.readsFor?.(args) ?? tool.reads);
       const ctx = {
         exposure,
         limit: Number.isInteger(args.limit) && args.limit > 0 ? args.limit : undefined,

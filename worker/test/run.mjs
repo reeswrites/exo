@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { env, corpus } from "./harness.mjs";
 import { TOOLS, CLASSES, DOMAINS, KINDS, cap, probe, pageSize, ROW_CAP, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
-import { GRADES, DEFAULT_GRADE, gradeOf, loadExposure, TTL_MS } from "../src/exposure.js";
+import { GRADES, DEFAULT_GRADE, gradeOf, bestGradeOf, loadExposure, TTL_MS } from "../src/exposure.js";
 import worker from "../src/index.js";
 
 let pass = 0, fail = 0;
@@ -110,6 +110,57 @@ for (const [name, t] of Object.entries(TOOLS)) {
 }
 ok(unstable.length === 0,
    `every limited query has a unique tiebreaker${unstable.length ? ":\n         " + unstable.join("\n         ") : ""}`);
+
+console.log("\n── per-call grading, and the invariant that makes it safe ──");
+// A tool spanning two publicity grades answered every question at the tighter
+// one. `backlog` reads a Goodreads shelf AND a private Raindrop collection, so a
+// 436-book to-read list came twenty at a time because a folder of gift ideas
+// shared the door.
+const grades = {
+  t0_book: "profile", t0_film: "profile", t0_music: "profile",
+  t0_raindrop: "private", t1_visits: "private", t0_beer: "private", t0_tv: "private",
+};
+ok(gradeOf(grades, TOOLS.backlog.readsFor({ kind: "read" })) === "profile",
+   "backlog kind=read grades on the shelf it actually reads");
+ok(gradeOf(grades, TOOLS.backlog.readsFor({ kind: "make" })) === "private",
+   "backlog kind=make stays private, from the same tool");
+ok(gradeOf(grades, TOOLS.backlog.readsFor({})) === "private",
+   "and with no kind it spans both piles, so it is the tighter one");
+ok(gradeOf(grades, TOOLS.ratings.readsFor({ medium: "restaurants" })) === "private",
+   "restaurant visits are never a profile");
+
+// THE invariant. `readsFor` may only ever narrow — a bug there that returned a
+// zone outside `reads` would grade a call more public than the tool declared,
+// and `reads` is what the SQL lint checks. Widening would escape both.
+const widened = [];
+const SHAPES = [
+  {}, { kind: "read" }, { kind: "resume" }, { kind: "make" }, { kind: "buy" },
+  { kind: "nonsense" }, { medium: "films" }, { medium: "books" }, { medium: "beer" },
+  { medium: "tv" }, { medium: "music" }, { medium: "restaurants" }, { medium: "nonsense" },
+  { kind: undefined, medium: undefined },
+];
+for (const [name, t] of Object.entries(TOOLS)) {
+  if (!t.readsFor) continue;
+  for (const args of SHAPES) {
+    const got = t.readsFor(args);
+    if (!Array.isArray(got) || !got.length) { widened.push(`${name} ${JSON.stringify(args)} -> empty`); continue; }
+    for (const z of got) if (!t.reads.includes(z)) widened.push(`${name} ${JSON.stringify(args)} -> ${z}`);
+  }
+}
+ok(widened.length === 0, `readsFor only ever narrows (${widened.join("; ") || "no widening"})`);
+
+// An unrecognised argument must fall back to the union, not to whatever the map
+// happened to return for undefined — the shape a typo takes.
+for (const [name, t] of Object.entries(TOOLS)) {
+  if (!t.readsFor) continue;
+  ok(t.readsFor({ kind: "zzz", medium: "zzz" }).length === t.reads.length,
+     `${name} falls back to every zone it can read on an unknown argument`);
+}
+
+ok(bestGradeOf(grades, TOOLS.backlog) === "profile",
+   "tools/list advertises the best case a tool can reach");
+ok(bestGradeOf(grades, TOOLS.notes_on) === gradeOf(grades, TOOLS.notes_on.reads),
+   "a tool without per-call reads advertises exactly its grade");
 
 console.log("\n── the row cap follows the axis, the byte cap does not ──");
 ok(ROW_CAP.private === MAX_ROWS, "private is the floor, and the floor is ADR-0007's twenty");

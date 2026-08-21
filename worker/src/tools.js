@@ -658,6 +658,13 @@ export const TOOLS = {
   consumption: {
     class: "revealed", domain: "*", kind: "event",
     reads: ["t0_beer", "t0_book", "t0_film", "t0_music", "t0_tv"],
+    // Named medium, single zone. Unnamed, it aggregates across all of them and
+    // is as private as the least public — which is the correct answer for a row
+    // that mixes them.
+    readsFor: ({ medium }) => ({
+      music: ["t0_music"], books: ["t0_book"], films: ["t0_film"],
+      beer: ["t0_beer"], tv: ["t0_tv"],
+    })[medium] ?? ["t0_beer", "t0_book", "t0_film", "t0_music", "t0_tv"],
     description:
       "Shape and recency of what the owner consumes, per medium: how much, and how current the record is. Returns aggregates, not a list of titles.",
     schema: {
@@ -950,6 +957,13 @@ export const TOOLS = {
   ratings: {
     class: "revealed", domain: "*", kind: "judgement",
     reads: ["t0_beer", "t0_book", "t0_film", "t1_visits"],
+    // Restaurant visits are the owner's own record and never public; films,
+    // books and beer are profiles on services that may be. One medium per call,
+    // so one grade per call.
+    readsFor: ({ medium }) => ({
+      films: ["t0_film"], books: ["t0_book"],
+      beer: ["t0_beer"], restaurants: ["t1_visits"],
+    })[medium] ?? ["t0_beer", "t0_book", "t0_film", "t1_visits"],
     description:
       "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film.",
     schema: {
@@ -1161,6 +1175,15 @@ export const TOOLS = {
   backlog: {
     class: "intent", domain: "*", kind: "pointer",
     reads: ["t0_book", "t0_raindrop"],
+    // The kinds are not one table, and they are not one publicity either: the
+    // shelves come off a Goodreads profile and the collections out of a private
+    // Raindrop account. Graded as one tool, the gift list decided for the
+    // reading list, and a 436-book shelf answered twenty at a time because a
+    // folder of present ideas shared the door (ADR-0019 §2).
+    readsFor: ({ kind }) =>
+      kind === "read" || kind === "resume" ? ["t0_book"]
+      : kind === "make" || kind === "buy" ? ["t0_raindrop"]
+      : ["t0_book", "t0_raindrop"],   // no kind: the summary counts both piles
     description:
       "What the owner has queued but not done — things they decided they wanted and have not gotten to. Shelving a book or filing a link into a bucket is a deliberate act, which is what separates this from `saves` (attention) and from `collection` (already owned). Kinds: 'read' (436 shelved to-read), 'resume' (41 books started and abandoned mid-way — the strongest candidates, since they already began), 'make' (things they want to build or cook), 'buy' (gift and shopping ideas). Call with no kind to see the sizes. Default order is newest-first; pass order='oldest' to dig up what has been sitting, which is usually the point of asking.",
     schema: {
