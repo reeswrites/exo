@@ -101,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     sin = sub.add_parser("init", help="scaffold a new instance")
     sin.add_argument("dest")
     sub.add_parser("scan-projects")
+    sub.add_parser("fetch-projects")
     ssy = sub.add_parser("sync-raw")
     spb = sub.add_parser("publish"); spb.add_argument("--dry-run", action="store_true"); spb.add_argument("--cf", action="store_true")
     spb.add_argument("--only", default=None,
@@ -239,6 +240,9 @@ def main(argv: list[str] | None = None) -> int:
             from .scripts_impl import publish_cf
             rc = publish_cf.run()
         return rc
+    elif args.cmd == "fetch-projects":
+        from .scripts_impl import fetch_projects
+        return fetch_projects.run()
     elif args.cmd == "ledger":
         from .scripts_impl import ledger
         if args.laction == "export":
