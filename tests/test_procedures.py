@@ -263,6 +263,25 @@ def test_the_tool_map_covers_exactly_the_tools_the_surface_defines():
         f"  only in the map:    {sorted(set(toolzones.TOOL_ZONES) - defined)}")
 
 
+def test_the_domain_mirror_matches_the_facet_the_worker_declares():
+    """TOOL_DOMAINS is a Python copy of a JS fact, kept for one reason: publish
+    resolves the tool list (ADR-0020) and cannot run node to do it. A copy with
+    no check is a copy that drifts, and drifting here means `[tools] domains`
+    silently keeps or drops the wrong tool."""
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "worker/src/tools.js").read_text()
+    body = src.split("export const TOOLS = {", 1)[1]
+    declared = dict(re.findall(
+        r'^  ([a-z_]+): \{\n\s*class: "[a-z]+", domain: "([a-z*]+)"', body, re.M))
+    assert declared, "could not read the domain facets out of worker/src/tools.js"
+    assert declared == toolzones.TOOL_DOMAINS, (
+        "exo/toolzones.py TOOL_DOMAINS and worker/src/tools.js disagree:\n"
+        + "\n".join(f"  {t}: worker={declared.get(t)!r} map={toolzones.TOOL_DOMAINS.get(t)!r}"
+                    for t in sorted(set(declared) | set(toolzones.TOOL_DOMAINS))
+                    if declared.get(t) != toolzones.TOOL_DOMAINS.get(t)))
+
+
 def test_procedures_are_never_embedded():
     """t2 atomizes and embeds by naming its source zones. A procedure reaching
     t2_atom would put imperative text under `whats_relevant`, which promises the

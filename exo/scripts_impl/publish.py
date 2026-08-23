@@ -28,7 +28,7 @@ import hashlib
 import json
 import shutil
 
-from .. import catalog, config, toolzones
+from .. import catalog, config, surface, toolzones
 
 # Zones filtered by note provenance rather than copied wholesale.
 _NOTE_DERIVED = {"t1_notes", "t2_atom", "t2_atom_vec", "t2_note_vec"}
@@ -616,10 +616,22 @@ def run(dry_run: bool = False) -> int:
 
         history = _update_surface_log(summary)
 
+        # Which tools this instance offers (ADR-0020). Resolved against what
+        # actually reached the projection rather than against the manifest: a
+        # zone can be marked serve and still be absent because nothing has
+        # written it yet, and a tool over an absent table fails the same way
+        # whichever reason it is missing for.
+        #
+        # Ahead of the brief because the brief describes it. A caller told that
+        # `recipes` exists, when this instance switched it off in favour of a
+        # peer, goes looking for a tool it will never be offered.
+        offered = surface.resolve({z for z, _n in summary})
+        offered["peers"] = surface.peers()
+
         # The brief reads the projection we just wrote — never the store — so it
         # cannot carry held material even by mistake.
         from . import brief
-        text = brief.build(dict(summary), history=history, src=out)
+        text = brief.build(dict(summary), history=history, src=out, offered=offered)
         (out / "brief.md").write_text(text, encoding="utf-8")
         print(f"  brief             {len(text.encode()):>8,} bytes")
 
@@ -634,6 +646,27 @@ def run(dry_run: bool = False) -> int:
             }, f, indent=2)
         by_grade = {g: sum(1 for v in exposure.values() if v == g) for g in EXPOSURE_GRADES}
         print("  exposure: " + " · ".join(f"{n} {g}" for g, n in by_grade.items()))
+
+        with open(out / "surface.json", "w", encoding="utf-8") as f:
+            json.dump({
+                "_doc": "The tools this instance offers (ADR-0020). Resolved here so "
+                        "the surface reads a list instead of re-deciding one. Absence "
+                        "of this file means every tool the engine defines — the tool "
+                        "list is an ergonomic claim, and what may LEAVE is decided by "
+                        "physical omission from the projection, not by this.",
+                "tools": offered["tools"],
+                "withheld": offered["withheld"],
+                "peers": offered["peers"],
+            }, f, indent=2)
+        if offered["withheld"]:
+            by_reason: dict[str, list[str]] = {}
+            for tool, why in sorted(offered["withheld"].items()):
+                by_reason.setdefault(why, []).append(tool)
+            print(f"  surface:  {len(offered['tools'])} tools · "
+                  + " · ".join(f"{why}: {', '.join(ts)}" for why, ts in sorted(by_reason.items())))
+        else:
+            print(f"  surface:  {len(offered['tools'])} tools, none withheld")
+
         _write_receipt(out, manifest, held_folders, summary)
 
         # Carried across rather than rebuilt: `cf/` is derived from the parquets

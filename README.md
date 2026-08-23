@@ -82,6 +82,28 @@ filtered at read time, so no bug downstream and no injected instruction can
 reach it. The policy is fail-closed: an undeclared zone fails the build rather
 than defaulting either way.
 
+**The surface is also modular.** An instance offers a subset of the engine's
+tools, resolved when you publish (ADR-0020). A tool whose zones you hold retires
+itself rather than being advertised and then failing on a table that is not
+there; `[tools]` in `exo.toml` switches off the rest by domain or by name. That
+second lever is for when something else you connect answers the question better
+— because Exo is not meant to be the only MCP server you run:
+
+```toml
+[tools]
+domains = ["mind", "workshop"]   # specialise this instance
+disable = ["recipes"]            # a peer answers this one better
+
+[peers]
+sources = { notion = "Notion" }  # these notes are also live over there
+```
+
+A **peer** is a server you also connect that holds the same material live. Exo
+keeps serving it — the filed, indexed, publication-graded copy is the half it is
+good at — and says on the row which peer holds the current one, so an assistant
+reading both can tell one note from two instead of quoting the same paragraph
+twice. What to do about it is the agent's call, not ours (ADR-0013).
+
 ## The engine and your instance
 
 This repository is the **engine**. It holds no data and never will.
@@ -178,6 +200,7 @@ ones:
 | [0017](docs/adr/0017-a-note-source-is-an-adapter.md) | a note source is an adapter, and the note file is the contract |
 | [0018](docs/adr/0018-the-notes-tree-is-the-original-and-the-bucket-is-a-mirror.md) | the notes tree is the original; the bucket is a mirror |
 | [0019](docs/adr/0019-publicity-is-an-axis-not-an-adjective.md) | publicity is an axis, not an adjective |
+| [0020](docs/adr/0020-the-surface-is-modular-and-a-peer-is-not-a-competitor.md) | the surface is modular, and a peer is not a competitor |
 
 ## Contributing
 

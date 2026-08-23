@@ -103,7 +103,8 @@ def _clip(text: str, n: int) -> str:
 
 def build(served_counts: dict[str, int] | None = None,
           history: list[dict] | None = None,
-          src: "_pathlib.Path | None" = None) -> str:
+          src: "_pathlib.Path | None" = None,
+          offered: dict | None = None) -> str:
     # `src` because publish now builds into a staging directory and swaps it in:
     # reading config.SERVE during a staged build would compose the brief from the
     # PREVIOUS projection, stamping today's date on yesterday's counts. Defaults
@@ -454,6 +455,29 @@ def build(served_counts: dict[str, int] | None = None,
     T("Not everything in the record is here. Private material is absent from this "
       "surface by construction, not filtered on request — do not ask for it, and "
       "do not infer its contents from its absence.")
+
+    # Deliberately in the guarded tail rather than the body. A caller that has
+    # been handed a shorter tool list than the engine defines needs to know the
+    # difference between "this record cannot answer that" and "something else
+    # you are holding answers it better" — and that is exactly the distinction
+    # that goes missing when a section gets clipped.
+    if offered:
+        switched_off = sorted(t for t, why in (offered.get("withheld") or {}).items()
+                              if why != "zones")
+        peer_map = offered.get("peers") or {}
+        if switched_off:
+            T("")
+            T(f"Some tools this engine defines are switched off here: "
+              f"{', '.join('`' + t + '`' for t in switched_off)}. That is a choice, not "
+              f"a gap in the record — do not report the underlying material as missing.")
+        if peer_map:
+            T("")
+            T("Rows tagged with one of these sources are also live in a system you may "
+              "already be connected to: "
+              + ", ".join(f"`{src_}` → {srv}" for src_, srv in sorted(peer_map.items()))
+              + ". Where you hold both, this surface is the filed and indexed copy and "
+              "the peer is the current one. Reconcile them rather than reporting the "
+              "same material twice.")
     T("")
     T("## Freshness")
     try:

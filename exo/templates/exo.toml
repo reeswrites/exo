@@ -73,3 +73,38 @@ about_me_folders = ["Journal"]
 root      = "~/code"
 deny      = ["node_modules"]   # not a privacy list — dirs holding no authored work
 max_depth = 2
+
+[tools]
+# Which of the engine's tools this instance offers (ADR-0020). Both lines are
+# optional, and an instance that sets neither offers everything.
+#
+# This is NOT a privacy control. What may leave is decided by
+# serve-manifest.json and enforced by physical omission from the projection — a
+# held zone is not on the box, so a tool reaching for it finds nothing whether or
+# not it was advertised. These two lines decide what is worth CALLING.
+#
+# A tool whose zones are held is dropped automatically; neither line is needed
+# for that. Reach for these when the zone is served and you still want the tool
+# gone — almost always because something else you connect answers it better.
+#
+# domains: keep only these (ADR-0015's facet). Tools marked "*" are
+#          parameterised over the surface rather than part of it and always
+#          survive. Omit or leave empty for every domain.
+# disable: switch off by name. A name no tool answers to is an error, not a
+#          no-op — silently offering the tool you decided against is the one
+#          outcome a deny-list must never produce.
+# domains = ["mind", "workshop"]
+# disable = ["recipes"]
+
+[peers]
+# Sources that a system you also connect serves LIVE (ADR-0020).
+#
+# Keyed on the note `source` — the string the adapter stamps on every row it
+# lands, so `notion` here means notes ingested by `exo ingest-notes notion`.
+# Rows carrying a peered source come back with their `uuid`, the id the note has
+# in that system, so an assistant holding both can tell one note from two.
+#
+# Declaring a peer does not withhold anything. This surface is the filed,
+# indexed, publication-graded copy; the peer is the current one. Which to use is
+# the agent's call, and it needs the fact stated to make it.
+# sources = { notion = "Notion" }

@@ -137,6 +137,17 @@ def notes() -> list[Row]:
                         "voice": _s(fm.get("voice")),
                         "facet": _s(fm.get("facet")),
                         "folder": _s(fm.get("folder")),
+                        # The id this note has in the system it came OUT of, set
+                        # by whichever adapter landed it (ADR-0017 reserves the
+                        # key). Carried because `source` alone says a peer holds
+                        # this note and cannot say WHICH row it is: an assistant
+                        # holding both this surface and that workspace needs a
+                        # join key to tell one note from two (ADR-0020).
+                        #
+                        # Empty for notes that were never ingested from anywhere
+                        # — a vault file is its own original, and `origin_ref`
+                        # already identifies it.
+                        "uuid": _s(fm.get("uuid")),
                         "body": body,
                     },
                 ))

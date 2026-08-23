@@ -13,6 +13,7 @@ assistant's vendor ever holding them.
 - `src/tools.js` — the 28 tools, and the caps
 - `src/search.js` — vector search over `vectors.f32` from R2
 - `src/exposure.js` — how public each zone is (ADR-0019), and what that makes a tool
+- `src/surface.js` — which tools this instance offers (ADR-0020)
 
 `exposure.json` rides along beside the brief: how public each served zone is
 (ADR-0019), resolved by `exo publish` so nothing out here re-decides it. Every
@@ -41,6 +42,19 @@ Every answer also carries `exposure` itself, which says whether the rows may be
 quoted onward or are the owner's own material handed back to them. A missing or
 unreadable `exposure.json` grades everything private, so a worker deployed ahead
 of its bundle serves tight rather than open.
+
+`surface.json` rides along the same way, and answers a different question: not
+how public a tool's answer is, but whether this instance offers the tool at all.
+An instance drops one for either of two reasons — a dependency it holds, or a
+peer server that answers better (ADR-0020) — and `exo publish` resolves both
+into a list of names so nothing out here re-decides it.
+
+It fails in the OPPOSITE direction to `exposure.json`, deliberately. A missing
+tool list means every tool the engine defines, because this file cannot widen
+what leaves: a held zone is absent from the projection, so a tool reaching for
+it finds nothing whether or not it was advertised. Failing closed here would
+instead hide every newly-shipped tool until each instance named it — the
+"publishing is not offering" failure ADR-0013 called a standing duty.
 
 Hand-rolled JSON-RPC, no MCP SDK: the surface used here is five methods, and a
 dependency-free Worker is one less thing that can change under a corpus this
@@ -78,7 +92,7 @@ do this for you. By hand:
 cd "$EXO_HOME" && uv run exo publish --cf                        # builds the bundle
 WRANGLER="npx wrangler" ./scripts/guard-publication.sh exo       # refuse a shrunken corpus
 cd zones/_serve/cf && WRANGLER="npx wrangler" ./import.sh exo    # reconciles + loads D1
-for f in vectors.f32 vectors.json brief.md exposure.json; do
+for f in vectors.f32 vectors.json brief.md exposure.json surface.json; do
   npx wrangler r2 object put "exo-vectors/$f" --file "$f" --remote
 done
 ```

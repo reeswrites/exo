@@ -15,6 +15,7 @@
  * thing that can change under a corpus this personal.
  */
 import { bestGradeOf, loadExposure, gradeOf } from "./exposure.js";
+import { loadSurface, offers } from "./surface.js";
 import { ROW_CAP, TOOLS } from "./tools.js";
 
 const PROTOCOL_VERSION = "2024-11-05";
@@ -364,8 +365,13 @@ async function handleRpc(req, env, body) {
       // bundle rather than of this code. A static schema would have to state one
       // number for every grade, and the number it stated would be wrong.
       const zones = await loadExposure(env);
+      // What this INSTANCE offers, which is not what this engine defines
+      // (ADR-0020). A tool whose zones are held would otherwise be advertised
+      // and then fail on the table it cannot find, reporting a configuration
+      // choice to the caller as a malfunction.
+      const surface = await loadSurface(env);
       return rpcResult(id, {
-        tools: Object.entries(TOOLS).map(([name, t]) => {
+        tools: Object.entries(TOOLS).filter(([name]) => offers(surface, name)).map(([name, t]) => {
           const ceiling = ROW_CAP[bestGradeOf(zones, t)] ?? ROW_CAP.private;
           return {
             name,
@@ -393,6 +399,17 @@ async function handleRpc(req, env, body) {
     case "tools/call": {
       const tool = TOOLS[params?.name];
       if (!tool) return rpcError(id, -32602, `unknown tool: ${params?.name}`);
+      // Defined by the engine, not offered here. Said plainly, and distinctly
+      // from `unknown tool`: a caller working from a stale list should learn
+      // that the tool is real and this record does not answer with it, rather
+      // than that it hallucinated the name.
+      const surface = await loadSurface(env);
+      if (!offers(surface, params.name)) {
+        return rpcError(id, -32602,
+          `this instance does not offer ${params.name}: either a zone it needs is ` +
+          `held, or it is switched off in favour of a peer that answers better. ` +
+          `Call tools/list for what this surface actually has.`);
+      }
       const args = params.arguments ?? {};
       // Graded on what THIS call reads, not on everything the tool could. A
       // tool spanning two publicity grades otherwise answers every question at
@@ -402,6 +419,11 @@ async function handleRpc(req, env, body) {
       const exposure = gradeOf(await loadExposure(env), tool.readsFor?.(args) ?? tool.reads);
       const ctx = {
         exposure,
+        // Carried so a tool can tell a caller that the row it is handing back
+        // also exists live somewhere the caller may already be connected to
+        // (ADR-0020). Stating the fact is ours; deciding what to do about it is
+        // the agent's (ADR-0013 §2).
+        surface,
         limit: Number.isInteger(args.limit) && args.limit > 0 ? args.limit : undefined,
       };
       // Named, not ignored. A model that guessed at `offset` deserves to hear

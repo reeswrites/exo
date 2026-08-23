@@ -17,6 +17,7 @@
  * ~99% of notes whole and still makes a full-corpus pull ~250 logged calls.
  */
 import { search } from "./search.js";
+import { peerFor } from "./surface.js";
 
 /**
  * The row cap follows the publicity axis; the byte cap does not (ADR-0019 §5).
@@ -272,12 +273,27 @@ export const TOOLS = {
     },
     async run(env, { topic, full }, ctx) {
       if (full) {
-        return readOne(env, {
+        const one = await readOne(env, {
           topic, kind: "note", table: "t1_notes", key: "origin_ref", missing: "note",
-          select: "title, folder, created, body",
+          // `source` and `uuid` are the join key back to wherever this note came
+          // out of (ADR-0020). A caller holding that system's own MCP server can
+          // match this row to the live page instead of treating the two as two
+          // notes — which is the whole difference between a second source and a
+          // second copy.
+          select: "title, folder, created, source, uuid, body",
           onClip: (_r, kept, total) =>
             `body truncated to ${kept} of ${total} chars — this is one of the owner's longer notes; ask about a specific part of it rather than requesting it again`,
         });
+        const peer = peerFor(ctx?.surface, one.rows?.[0]?.source);
+        if (!peer) return one;
+        // Stated once, on the row it applies to, and it is a fact rather than an
+        // instruction: this note is also live over there. Whether that means
+        // re-read it, cite it, or ignore the duplication is the agent's call —
+        // it knows what is already in its context and we do not (ADR-0013 §2).
+        const where = one.rows[0].uuid ? `\`${one.rows[0].uuid}\`` : "an untracked page";
+        const said = `also live in ${peer.server} as ${where} — this copy is the filed `
+          + `and indexed one, that copy is the current one`;
+        return { ...one, peer, note: [one.note, said].filter(Boolean).join("; ") };
       }
       const hits = await search(env, topic, { k: probe(ctx), kind: "note" });
       return cap(hits.map((h) => ({ title: h.label, score: h.score })));

@@ -26,6 +26,7 @@ Bundle layout under zones/_serve/cf/:
     vectors.f32       row-major float32, atom vectors then note vectors
     vectors.json      index sidecar — row i of the blob is rows[i]
     exposure.json     publicity per served zone (ADR-0019), resolved by `publish`
+    surface.json      the tools this instance offers (ADR-0020), likewise resolved
     MANIFEST.json     counts, dim, byte sizes
 """
 from __future__ import annotations
@@ -527,6 +528,20 @@ def run() -> int:
             # Not fatal: the worker fails closed on a missing file (every zone
             # private), so an old projection serves tight rather than open.
             print("  R2  exposure.json: absent — the surface will treat every zone as private")
+        # The tool list, likewise already resolved (ADR-0020). Note the opposite
+        # failure direction to exposure.json above, and it is not a slip: this
+        # file cannot widen what leaves — the projection decides that by
+        # omission — so an absent one means "offer everything the engine has"
+        # rather than "offer nothing".
+        src_surface = src / "surface.json"
+        if src_surface.exists():
+            (out / "surface.json").write_text(
+                src_surface.read_text(encoding="utf-8"), encoding="utf-8")
+            doc = json.loads(src_surface.read_text(encoding="utf-8"))
+            print(f"  R2  surface.json    {len(doc['tools']):>8,} tools offered"
+                  + (f", {len(doc['withheld'])} withheld" if doc.get("withheld") else ""))
+        else:
+            print("  R2  surface.json: absent — the surface will offer every tool it defines")
         _emit_reconcile(out, counts)
         vinfo = _emit_vectors(con, out)
         print(f"  R2  vectors.f32     {vinfo['count']:>8,} x {vinfo['dim']}d "
