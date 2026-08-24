@@ -83,6 +83,11 @@ secret exists is safe — it serves nothing rather than serving openly. Set the
 `[vars]` in `wrangler.toml` too: without `BLOG_URL_TEMPLATE` a post hit carries
 no link, which is most of the point of that zone.
 
+That is the whole surface: one secret, one header, no store. If you also want
+hosted assistants that cannot send a custom header — claude.ai, ChatGPT — see
+[the second door](#the-second-door-oauth) below. It is optional and additive;
+skipping it changes nothing about the above.
+
 ## Publish data
 
 Both legs of the nightly (`scripts/daily-sync.sh`, `.github/workflows/nightly.yml`)
@@ -140,6 +145,20 @@ an incomplete fixture cannot quietly skip the most intricate SQL on the surface.
 
 `run.mjs` reads the bundle from `$EXO_HOME/zones/_serve/cf`, so publish once
 before running it.
+
+The second door has its own end-to-end run, against a server rather than a stub,
+because almost none of it is our code — the point is that PKCE, single-use codes,
+refresh and audience binding behave as the spec says against *this*
+configuration:
+
+```sh
+npx wrangler dev --local-protocol https --var AUTH_TOKEN:devtoken --var OAUTH_ALLOW_DCR:true
+node test/oauth-flow.mjs https://127.0.0.1:8788 devtoken
+```
+
+Both flags are load-bearing. The provider refuses a non-HTTPS issuer, and the
+flow needs a client to exist, which in a test means dynamic registration — off
+in production for the reason below.
 
 The corpus is embedded by Python bge-small; queries by Workers AI's copy of it.
 Choosing Cloudflare rests on those being one vector space, and `run.mjs` cannot
@@ -212,6 +231,89 @@ without the assistant's vendor holding any of it.
   says so: the brief carries its own age. Re-run the publish steps.
 - **You changed the tool descriptions and Poke still uses the old ones.**
   Re-sync the tool list from Poke's integrations page; discovery is cached.
+
+## The second door (OAuth)
+
+Bearer-in-a-header reaches every client that lets you set one — Poke, Claude
+Code, curl. It reaches none of the hosted assistants, whose connector dialogs
+offer OAuth and nothing else. ADR-0021 has the argument; this is the setup.
+
+```sh
+npx wrangler kv namespace create OAUTH_KV     # put the id in wrangler.toml
+npx wrangler d1 execute exo --remote --file migrations/0002-which-door.sql
+npx wrangler deploy
+```
+
+Then uncomment `[[kv_namespaces]]` and `compatibility_flags` in `wrangler.toml`.
+The binding's presence *is* the switch: without it the Worker has no
+`/authorize`, no discovery documents and no `/mcp`, and is byte-for-byte the
+surface described above.
+
+What you get:
+
+| path | who uses it |
+|---|---|
+| `/` | the header door — Poke, Claude Code. Unchanged, forever. |
+| `/mcp` | the same tools behind a grant — claude.ai, ChatGPT |
+| `/authorize` | the consent screen, which asks for your `AUTH_TOKEN` |
+| `/oauth/token` | issue and refresh |
+| `/.well-known/oauth-protected-resource/mcp` | RFC 9728 |
+| `/.well-known/oauth-authorization-server` | RFC 8414 |
+
+Two paths rather than one because RFC 9728 pins the `resource` identifier to the
+URL the user typed, and the URL Poke has already typed is the root. Giving the
+grant door its own path is what lets the old one stay exactly as it was.
+
+**In claude.ai:** *Customize → Connectors → Add custom connector*, and enter the
+`/mcp` URL — `https://<your-worker>.workers.dev/mcp`, the path included. Leave
+the OAuth client fields empty. Claude identifies itself with a Client ID
+Metadata Document, so there is no client id to mint and no open registration
+endpoint to expose. You will get a login screen; the password is your
+`AUTH_TOKEN`.
+
+There is one person behind this record, so there are no accounts here. The
+consent screen gates on the same secret the header door uses, and the access
+token it issues is simply a different string with a lifetime.
+
+### Rotating the token
+
+```sh
+openssl rand -hex 32 | npx wrangler secret put AUTH_TOKEN
+```
+
+**With the second door enabled, rotation is no longer complete on its own.** A
+grant outlives the secret that authorised it, so a rotation that leaves the
+namespace populated retires the password and not the access. Empty it too:
+
+```sh
+npx wrangler kv key list --binding OAUTH_KV \
+  | jq -r '.[].name' \
+  | while read -r k; do npx wrangler kv key delete --binding OAUTH_KV "$k"; done
+```
+
+Every connected client then reconnects: Poke and Claude Code with the new token,
+anything on `/mcp` by logging in again.
+
+### If it does not work
+
+- **"Couldn't reach the MCP server" and your Worker sees nothing.** Discovery
+  failed before the first call. Check
+  `curl https://<your-worker>.workers.dev/.well-known/oauth-protected-resource/mcp`
+  returns JSON whose `resource` matches the URL you typed **exactly**, path
+  included.
+- **It connects, then every call 401s.** The token is bound to the resource it
+  was issued for. A grant minted against `/mcp` will not open the root, and a
+  header token will not open `/mcp` — they are different credentials and the
+  test asserts they stay that way.
+- **Claude tries dynamic registration and gets a 404.** It fell back from CIMD,
+  which means the metadata is not advertising it. That needs
+  `compatibility_flags = ["global_fetch_strictly_public"]`; without the flag the
+  provider reports `client_id_metadata_document_supported: false` and Claude
+  never tries it.
+- **The consent screen refuses a token you are sure is right.** Ten attempts per
+  IP per minute, then a 429. Wait a minute. Refusals land in `wh_callers` as
+  `denied:authorize`, which is the one outcome there that means guessing rather
+  than misconfiguration.
 
 ### What Poke can and cannot do with it
 
@@ -396,3 +498,16 @@ Bearer token in a header, never the URL. `authorization: Bearer <token>` is the
 normal shape; `x-api-key`, `api-key` and `x-auth-token` are also accepted with
 the same single secret, because clients disagree about where an "API key" goes
 and the failure mode is an opaque 401 either way. Compared in constant time.
+
+That is the header door, at the root, and it is not a legacy path — it is the
+configuration of this surface with no store, no expiry and no redirect in it,
+and an instance that wants only that should be able to have only that.
+
+An instance with `OAUTH_KV` bound also accepts a grant at `/mcp`
+([the second door](#the-second-door-oauth), ADR-0021). The two credentials are
+not interchangeable in either direction: a grant issued for `/mcp` does not open
+the root, and the header secret does not open `/mcp`. Authentication is not what
+bounds this surface in the first place — the caps, the fixed tool list, the
+exposure grades and the log are, and every one of them is indifferent to which
+door a caller came through. The log is the exception, and only because it now
+records which one did.

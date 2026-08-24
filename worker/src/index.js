@@ -37,7 +37,7 @@ const rpcResult = (id, result) => json({ jsonrpc: "2.0", id, result });
 const rpcError = (id, code, message) => json({ jsonrpc: "2.0", id, error: { code, message } });
 
 /** Constant-time compare, so the token cannot be recovered by timing the endpoint. */
-function tokenOk(presented, expected) {
+export function tokenOk(presented, expected) {
   if (typeof presented !== "string" || typeof expected !== "string") return false;
   if (presented.length !== expected.length) return false;
   let diff = 0;
@@ -104,7 +104,7 @@ function throttled(ip) {
 async function recordCaller(env, req, outcome) {
   try {
     const f = callerFacts(req);
-    if (outcome !== "ok" && throttled(f.ip)) return;
+    if (!outcome.startsWith("ok") && throttled(f.ip)) return;
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS wh_callers (
          day TEXT, ip TEXT, asn INTEGER, org TEXT, country TEXT, colo TEXT,
@@ -144,18 +144,18 @@ async function recordCaller(env, req, outcome) {
  * reconcile it away. The ip/asn columns require migrations/0001 to have run
  * against the live database BEFORE this version deploys — see the README.
  */
-async function audit(env, req, tool, args, rows) {
+async function audit(env, req, tool, args, rows, door) {
   try {
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS wh_audit (
-         ts TEXT, tool TEXT, args TEXT, rows INTEGER, ip TEXT, asn INTEGER
+         ts TEXT, tool TEXT, args TEXT, rows INTEGER, ip TEXT, asn INTEGER, door TEXT
        )`
     ).run();
     const f = callerFacts(req);
     await env.DB.prepare(
-      `INSERT INTO wh_audit (ts, tool, args, rows, ip, asn) VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO wh_audit (ts, tool, args, rows, ip, asn, door) VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
-      .bind(new Date().toISOString(), tool, JSON.stringify(args ?? {}).slice(0, 500), rows, f.ip, f.asn)
+      .bind(new Date().toISOString(), tool, JSON.stringify(args ?? {}).slice(0, 500), rows, f.ip, f.asn, door ?? "header")
       .run();
   } catch (_) {
     /* logging must never take the surface down */
@@ -270,7 +270,7 @@ function renderProcedure(row) {
   return out.join("\n");
 }
 
-async function handleRpc(req, env, body) {
+async function handleRpc(req, env, body, door) {
   const { id, method, params } = body;
 
   switch (method) {
@@ -452,12 +452,12 @@ async function handleRpc(req, env, body) {
         // it" from "this is a half-formed private note, do not repeat it to
         // whoever asked" — CONTEXT has stated that rule since the blog zone
         // existed and the surface could never carry it.
-        await audit(env, req, params.name, args, result.rows?.length ?? 0);
+        await audit(env, req, params.name, args, result.rows?.length ?? 0, door);
         return rpcResult(id, {
           content: [{ type: "text", text: JSON.stringify({ ...result, exposure }, null, 2) }],
         });
       } catch (err) {
-        await audit(env, req, params.name, params.arguments, -1);
+        await audit(env, req, params.name, params.arguments, -1, door);
         return rpcError(id, -32603, `tool failed: ${err.message}`);
       }
     }
@@ -467,7 +467,41 @@ async function handleRpc(req, env, body) {
   }
 }
 
-export default {
+/**
+ * Everything after a caller has been let in, whichever door they came through.
+ * The door is carried only so the log can say which one opened (ADR-0021 §4);
+ * nothing about the answer depends on it, and nothing should ever come to.
+ */
+async function serveRpc(req, env, ctx, door) {
+  // Off the critical path — the caller waits for their answer, not for the
+  // bookkeeping. Awaited when there is no ctx (the test harness), where
+  // determinism matters more than latency.
+  const observed = recordCaller(env, req, door === "oauth" ? "ok:oauth" : "ok");
+  if (ctx?.waitUntil) ctx.waitUntil(observed);
+  else await observed;
+
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return rpcError(null, -32700, "parse error");
+  }
+
+  if (Array.isArray(body)) {
+    // Batches would let one authenticated request pull N caps' worth of data,
+    // turning the per-call cap into no cap at all.
+    return rpcError(null, -32600, "batch requests are not accepted");
+  }
+  return handleRpc(req, env, body, door);
+}
+
+/**
+ * The header door (ADR-0007), at the root, unchanged. Poke and Claude Code
+ * arrive this way. It has no store, no expiry and no redirect, and it stays the
+ * configuration of this surface an owner can hold in their head completely —
+ * which is why ADR-0021 refuses to make it a legacy path.
+ */
+export const headerDoor = {
   async fetch(req, env, ctx) {
     if (req.method === "GET") {
       // A GET that asks for an event stream is a client opening the
@@ -508,25 +542,52 @@ export default {
       return new Response("unauthorized", { status: 401 });
     }
 
-    // Off the critical path — the caller waits for their answer, not for the
-    // bookkeeping. Awaited when there is no ctx (the test harness), where
-    // determinism matters more than latency.
-    const observed = recordCaller(env, req, "ok");
-    if (ctx?.waitUntil) ctx.waitUntil(observed);
-    else await observed;
+    return serveRpc(req, env, ctx, "header");
+  },
+};
 
-    let body;
+/**
+ * The grant door (ADR-0021), at /mcp. Reached ONLY through the provider, which
+ * validated the access token before routing here and would not have called us
+ * otherwise. There is deliberately no second credential check: at this point the
+ * grant is the credential, and re-checking AUTH_TOKEN here would mean no OAuth
+ * client could ever get in.
+ */
+export const grantDoor = {
+  async fetch(req, env, ctx) {
+    if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
+    return serveRpc(req, env, ctx, "oauth");
+  },
+};
+
+/** Paths that exist only because the second door does. Everything else is the
+ *  header door's, and stays answerable even when the second door is broken. */
+const OAUTH_ONLY = /^\/(mcp|authorize|oauth\/|\.well-known\/oauth-)/;
+
+export default {
+  async fetch(req, env, ctx) {
+    // Fails OPEN into the surface that existed before the second door did
+    // (ADR-0021 §5). An instance with no grant store is the ADR-0007 surface
+    // exactly — not one advertising a door it cannot open.
+    if (!env.OAUTH_KV) return headerDoor.fetch(req, env, ctx);
+
     try {
-      body = await req.json();
-    } catch {
-      return rpcError(null, -32700, "parse error");
+      // Imported here rather than at the top because oauth.js imports the two
+      // doors back out of this file. A dynamic import defers the edge past
+      // module evaluation, so the cycle never has to resolve mid-initialisation.
+      const { oauthProvider } = await import("./oauth.js");
+      return await oauthProvider(req, env).fetch(req, env, ctx);
+    } catch (err) {
+      // A misconfigured second door must not close the first one. Found the
+      // honest way: an invalid issuer URL threw inside the constructor, and
+      // because the constructor runs on the request path that exception reached
+      // `GET /` — the header door, which has nothing to do with OAuth, answering
+      // 500. Fail-open (ADR-0021 §5) is not only about an ABSENT grant store; a
+      // BROKEN one has to land in the same place.
+      if (OAUTH_ONLY.test(new URL(req.url).pathname)) {
+        return new Response(`oauth unavailable: ${err.message}\n`, { status: 503 });
+      }
+      return headerDoor.fetch(req, env, ctx);
     }
-
-    if (Array.isArray(body)) {
-      // Batches would let one authenticated request pull N caps' worth of data,
-      // turning the per-call cap into no cap at all.
-      return rpcError(null, -32600, "batch requests are not accepted");
-    }
-    return handleRpc(req, env, body);
   },
 };
