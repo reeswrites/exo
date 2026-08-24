@@ -144,11 +144,34 @@ def _emit_table(con, parquet, table, out_dir) -> tuple[str, int]:
     return "\n".join(ddl), len(rows)
 
 
-def _emit_vectors(con, out) -> dict:
-    """One flat float32 blob plus a sidecar whose row i is blob row i."""
+# Every vector kind the blob is made of. `vectors.f32` is ONE artifact — the
+# Worker loads it whole and indexes into it — so it cannot be built a piece at a
+# time, and a run that holds only some of these cannot produce a valid one.
+VEC_KINDS = ("t2_atom_vec", "t2_note_vec", "t2_post_vec")
+
+
+def _emit_vectors(con, out, *, partial: bool) -> dict:
+    """One flat float32 blob plus a sidecar whose row i is blob row i.
+
+    `partial` changes what a MISSING kind means, and the difference matters
+    enough to be the reason this argument exists.
+
+    On a full run, missing means "not built yet" — a zone can be added to the
+    manifest and reach D1 before its vectors exist — and skipping costs recall
+    on one kind while a crash costs the whole nightly.
+
+    On a scoped run it may instead mean "this lane did not rebuild it", and
+    skipping then does something far worse than cost recall: it writes a blob
+    with that kind absent, which the instance uploads over a complete one. A
+    notes lane would delete post search from the surface and report success.
+    A scoped run therefore emits vectors only when it holds every kind, and
+    says so in the manifest either way so the upload can be conditional rather
+    than hopeful.
+    """
     blob = array("f")
     index: list[dict] = []
     dim = None
+    missing: list[str] = []
 
     for kind, parquet, join in (
         ("atom", config.SERVE / "t2_atom_vec.parquet", config.SERVE / "t2_atom.parquet"),
@@ -161,6 +184,7 @@ def _emit_vectors(con, out) -> dict:
         # whole nightly.
         if not parquet.exists() or not join.exists():
             print(f"  R2  {kind}_vec: no parquet yet \u2014 skipping")
+            missing.append(f"t2_{kind}_vec")
             continue
         # carry enough metadata to render a hit without a second round trip
         label = "text" if kind == "atom" else "title"
@@ -201,6 +225,14 @@ def _emit_vectors(con, out) -> dict:
                 "label": (label_val or "")[:180],
             })
 
+    if partial and missing:
+        # No file, deliberately. An incomplete blob on disk is something a
+        # workflow uploads; an absent one is something it has to notice.
+        print(f"  R2  vectors: NOT WRITTEN — this scoped run holds no "
+              f"{', '.join(missing)}, and the blob is all-or-nothing. "
+              "Uploading it would delete those vectors from the surface.")
+        return {"complete": False, "missing": missing, "count": 0, "dim": dim, "bytes": 0}
+
     if sys.byteorder != "little":
         blob.byteswap()  # the Worker reads little-endian Float32Array
     (out / "vectors.f32").write_bytes(blob.tobytes())
@@ -208,7 +240,7 @@ def _emit_vectors(con, out) -> dict:
         json.dumps({"dim": dim, "count": len(index), "normalized": True, "rows": index}),
         encoding="utf-8",
     )
-    return {"count": len(index), "dim": dim, "bytes": len(blob) * 4}
+    return {"complete": True, "count": len(index), "dim": dim, "bytes": len(blob) * 4}
 
 
 
@@ -217,7 +249,8 @@ IMPORT_SH = r"""#!/bin/sh
 #
 # Usage: [WRANGLER="npx wrangler"] ./import.sh <d1-database-name>
 #
-# Reconciles first: any table in D1 that is not in served-tables.txt is dropped.
+# A full bundle reconciles first: any table in D1 not in served-tables.txt is
+# dropped. A partial one drops nothing — see bundle-scope.txt.
 # That is what makes tightening the manifest actually tighten (ADR-0005) — a zone
 # flipped to `hold` stops being emitted, and without this its table would sit in
 # D1 with every row intact while the manifest claimed it held.
@@ -235,13 +268,36 @@ command -v ${WRANGLER%% *} >/dev/null 2>&1 || {
   exit 127
 }
 
+# Which kind of bundle this is. Refuse on anything unrecognised: the answer
+# decides whether this run may DELETE tables, and a default either way is wrong.
+# Defaulting to full would let a lane's bundle wipe every zone it did not carry;
+# defaulting to partial would quietly stop the manifest from being able to
+# revoke a zone, which is the failure the reconcile was built for.
+SCOPE="$(cat "$HERE/bundle-scope.txt" 2>/dev/null || true)"
+case "$SCOPE" in
+  full|partial) ;;
+  *) echo "import.sh: bundle-scope.txt says '${SCOPE:-<missing>}' — refusing." >&2
+     echo "  A bundle must state whether it is 'full' or 'partial'; that is what" >&2
+     echo "  decides whether tables absent from it get dropped." >&2
+     exit 1 ;;
+esac
+
+LIVE="$(mktemp)"
+ACTUAL=""; MISMATCH=""
+trap 'rm -f "$LIVE" "$ACTUAL" "$MISMATCH"' EXIT
+
+if [ "$SCOPE" = "partial" ]; then
+  # A scoped run recomputed some zones and knows nothing about the rest. Its
+  # table list is not a claim that the others should not exist, so there is
+  # nothing here to reconcile against and nothing may be dropped. Row-level
+  # tightening still applies within the tables it does carry: every data file
+  # opens with DELETE FROM.
+  echo "== partial bundle: loading $(grep -c . "$HERE/bundle-tables.txt") table(s), dropping nothing =="
+else
 echo "== reconciling $DB against served-tables.txt =="
 # Materialise the table list FIRST. Piping the query straight into the loop hides
 # its exit status behind the pipeline, so a failing reconcile would fall through
 # to loading data into a database that was never reconciled.
-LIVE="$(mktemp)"
-ACTUAL=""; MISMATCH=""
-trap 'rm -f "$LIVE" "$ACTUAL" "$MISMATCH"' EXIT
 # Capture stdout AND stderr: wrangler reports some failures on stdout, so
 # redirecting only stdout into $LIVE swallows the error message and leaves an
 # exit code with no explanation.
@@ -262,6 +318,7 @@ sed -n 's/.*"name" *: *"\([^"]*\)".*/\1/p' "$LIVE" | while IFS= read -r t; do
     $WRANGLER d1 execute "$DB" --remote --command "DROP TABLE IF EXISTS \"$t\""
   fi
 done
+fi
 
 echo "== schema =="
 $WRANGLER d1 execute "$DB" --remote --file "$HERE/schema.sql"
@@ -442,7 +499,7 @@ echo "== done: $DB now matches this bundle =="
 _PROTECTED_PREFIXES = ("sqlite_", "_cf_", "d1_", "wh_")
 
 
-def _emit_reconcile(out, counts: dict[str, int]) -> None:
+def _emit_reconcile(out, counts: dict[str, int], scope: str) -> None:
     """Make the bundle authoritative over D1, not merely additive.
 
     Row-level tightening already revokes: every data file opens with DELETE FROM,
@@ -451,13 +508,33 @@ def _emit_reconcile(out, counts: dict[str, int]) -> None:
     mentioned, and D1 kept the table and every row in it, quietly, while the
     manifest said held.
 
-    So the bundle ships the served list and an importer that reconciles against
-    it: anything in D1 that is not on the list is dropped, including tables left
-    by an older manifest or created by hand. Fail-closed applied to deletion.
+    So a FULL bundle ships the served list and an importer that reconciles
+    against it: anything in D1 that is not on the list is dropped, including
+    tables left by an older manifest or created by hand. Fail-closed applied to
+    deletion.
+
+    **Only a full bundle may drop a table.** A scoped run knows what it
+    recomputed and nothing about the rest, so its table list is not a statement
+    that the others should not exist — and reconciling against it would delete
+    the entire record on every lane run. `served-tables.txt` is therefore the
+    full bundle's artifact alone, and its absence is what stops the drop.
+
+    Absence is not left to carry that meaning by itself, though. Three files
+    ship, and the importer refuses when the first one is missing or unrecognised:
+
+      bundle-scope.txt    `full` or `partial`. Neither mode is the absent case.
+      bundle-tables.txt   what THIS bundle carries. Always written; what the
+                          shrink guard reads, so a scoped run guards its own
+                          tables and nothing it knows nothing about.
+      served-tables.txt   the reconcile authority. Full bundles only.
     """
     served_tables = sorted(counts)
-    (out / "served-tables.txt").write_text("\n".join(served_tables) + "\n",
+    (out / "bundle-scope.txt").write_text(scope + "\n", encoding="utf-8")
+    (out / "bundle-tables.txt").write_text("\n".join(served_tables) + "\n",
                                            encoding="utf-8")
+    if scope == "full":
+        (out / "served-tables.txt").write_text("\n".join(served_tables) + "\n",
+                                               encoding="utf-8")
 
     # What the import reads back after loading. Shipped as data rather than
     # derived in the shell, because the shell cannot know what the bundle meant
@@ -486,9 +563,27 @@ def _emit_reconcile(out, counts: dict[str, int]) -> None:
 
 def run() -> int:
     src = config.SERVE
-    if not (src / "t1_notes.parquet").exists():
-        print("publish-cf: no serve projection — run `wh publish` first")
+    # Any parquet, not t1_notes specifically. A scoped run publishes whatever
+    # zones it rebuilt, and a lane that only touches scrobbles has no notes to
+    # show for it — that is the lane working, not a missing projection.
+    if not any(src.glob("*.parquet")):
+        print("publish-cf: no serve projection — run `exo publish` first")
         return 1
+
+    # What `exo publish` decided this run was allowed to emit. A projection with
+    # no marker predates `--only` and is a full one; anything else is a refusal,
+    # because guessing the scope is guessing whether it is safe to drop tables.
+    scope_file = src / "_scope.json"
+    if scope_file.exists():
+        meta = json.loads(scope_file.read_text(encoding="utf-8"))
+        scope = meta.get("scope", "")
+        rebuilt = set(meta.get("rebuilt") or [])
+        if scope not in ("full", "partial"):
+            print(f"publish-cf: REFUSING — _scope.json says scope={scope!r}, "
+                  "which is neither 'full' nor 'partial'")
+            return 1
+    else:
+        scope, rebuilt = "full", set()
 
     out = src / "cf"
     if out.exists():
@@ -502,17 +597,32 @@ def run() -> int:
         for p in sorted(src.glob("*.parquet")):
             if p.stem.endswith("_vec"):
                 continue  # vectors do not go to D1
+            # A scoped run emits ONLY what it recomputed. The projection also
+            # holds zones carried across from the last full run so the brief
+            # stays whole (see publish.run), and importing those would push a
+            # copy from last night over whatever a lane loaded an hour ago.
+            if scope == "partial" and p.stem not in rebuilt:
+                continue
             ddl, n = _emit_table(con, p, p.stem, out / "data")
             schema.append(ddl)
             counts[p.stem] = n
             print(f"  D1  {p.stem:<18}{n:>8,} rows")
 
+        if not counts:
+            print("publish-cf: REFUSING — the scope names no table this "
+                  "projection holds; the bundle would be empty")
+            return 1
+
         (out / "schema.sql").write_text("\n".join(schema) + "\n", encoding="utf-8")
 
         # The brief rides along as an MCP resource — the one artifact a client
         # loads without being asked.
+        # Full bundles only. The brief describes the WHOLE record, and a scoped
+        # run builds it partly from carried counts — shipping that would let a
+        # lane republish a brief whose numbers are last night's for every zone
+        # it did not touch.
         src_brief = src / "brief.md"
-        if src_brief.exists():
+        if scope == "full" and src_brief.exists():
             (out / "brief.md").write_text(src_brief.read_text(encoding="utf-8"), encoding="utf-8")
             print(f"  R2  brief.md        {len(src_brief.read_bytes()):>8,} bytes")
         # The publicity axis, already resolved by `publish` (ADR-0019). Copied
@@ -542,17 +652,21 @@ def run() -> int:
                   + (f", {len(doc['withheld'])} withheld" if doc.get("withheld") else ""))
         else:
             print("  R2  surface.json: absent — the surface will offer every tool it defines")
-        _emit_reconcile(out, counts)
-        vinfo = _emit_vectors(con, out)
-        print(f"  R2  vectors.f32     {vinfo['count']:>8,} x {vinfo['dim']}d "
-              f"= {vinfo['bytes'] / 1e6:.2f} MB")
+        _emit_reconcile(out, counts, scope)
+        vinfo = _emit_vectors(con, out, partial=(scope == "partial"))
+        if vinfo.get("complete"):
+            print(f"  R2  vectors.f32     {vinfo['count']:>8,} x {vinfo['dim']}d "
+                  f"= {vinfo['bytes'] / 1e6:.2f} MB")
 
         (out / "MANIFEST.json").write_text(json.dumps({
             "d1_tables": counts,
             "d1_rows_total": sum(counts.values()),
             "vectors": vinfo,
             "cosine": "vectors are unit-norm; similarity = dot product",
-            "reconciles": "import.sh drops any D1 table not in served-tables.txt",
+            "scope": scope,
+            "reconciles": ("import.sh drops any D1 table not in served-tables.txt"
+                           if scope == "full" else
+                           "partial bundle: import.sh loads only bundle-tables.txt and drops nothing"),
         }, indent=2), encoding="utf-8")
         print(f"  bundle -> {out}")
         return 0

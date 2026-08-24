@@ -3,17 +3,27 @@
 Each returns list[Row] tagged tier=t0, author=external, grounds=True.
 
 The CSVs are hand-made exports and go stale the moment you stop clicking Export;
-the `*-cache.json` files next to them are written by the blog repo's RSS and API
-fetchers and are months fresher (2026-08-18: film 2026-03-25 -> 2026-08-08, beer
-2026-05-31 -> 2026-07-25, music 38,554 -> 39,703 scrobbles). Reading only the CSV
-left the store four months behind data already sitting on the same disk.
+the `*-cache.json` files next to them are the RSS/API pulls and are months
+fresher (2026-08-18: film 2026-03-25 -> 2026-08-08, beer 2026-05-31 ->
+2026-07-25, music 38,554 -> 39,703 scrobbles). Reading only the CSV left the
+store four months behind data already sitting on the same disk.
 
 So both are read and merged on a natural key: the cache supplies recency, the CSV
 supplies whatever history predates the cache's window. Neither is authoritative
 alone, and dropping either loses rows.
 
-The caches live under `raw/`, which is Exo-owned — nothing here reaches
-into another repo's output.
+The caches are written by `exo fetch-lastfm`, `fetch-letterboxd`, `fetch-untappd`
+and `fetch-goodreads`. Until ADR-0015 the first three were written by a fetcher
+in another repository, on one machine, and this module only ever read them — so
+the freshest copy of a consumption history was gated on that machine in a way
+nothing in the pipeline named. The shape did not change when they moved: a cache
+either fetcher wrote is one the other can resume from.
+
+And they cannot be rebuilt. Letterboxd serves ~50 diary entries and Untappd ~25,
+with no paging behind either, so everything older than that window exists in the
+cache file and in the CSV and nowhere else. That is why the fetchers refuse to
+write a cache that got smaller, and why these files belong wherever the record
+is durable rather than wherever a run happens to reconstruct them.
 """
 from __future__ import annotations
 

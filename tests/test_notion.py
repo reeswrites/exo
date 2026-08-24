@@ -354,3 +354,64 @@ def test_a_404_blames_the_connection_not_the_path(monkeypatch):
     monkeypatch.setattr(api, "_urlopen", _Stub([err]))
     with pytest.raises(api.NotionError, match="not connected"):
         api.read({})
+
+
+# ─────────────── the boundary minute (ADR-0015 §7) ───────────────
+#
+# `last_edited_time` has minute granularity. An edit made in the same minute as
+# a read, AFTER that read, does not move the timestamp — so every later run
+# compares equal and skips the page forever. The window is entered once a night
+# by a nightly and ninety-six times a day by a fifteen-minute check, so polling
+# faster makes this worse rather than better.
+
+
+def test_an_edit_inside_the_read_minute_is_treated_as_still_dirty():
+    assert api._same_minute("2026-08-21T14:05:00.000Z", "2026-08-21T14:05")
+
+
+def test_an_edit_from_an_earlier_minute_is_settled():
+    assert not api._same_minute("2026-08-21T14:04:59.000Z", "2026-08-21T14:05")
+
+
+def test_no_timestamp_is_not_a_boundary_case():
+    assert not api._same_minute("", "2026-08-21T14:05")
+
+
+def test_a_page_read_in_its_own_edit_minute_records_no_watermark(monkeypatch):
+    # No watermark means the reuse test — which requires a truthy `edited` —
+    # fails next run, so the page is re-read exactly once. That is the fix: one
+    # extra page fetch instead of a permanently lost edit.
+    monkeypatch.setattr(api, "_same_minute", lambda _e, *a: True)
+    stub = _Stub([
+        {"results": [_page("aaa", "One", "2026-08-21T14:05:00.000Z")], "has_more": False},
+        {"results": [], "has_more": False},
+    ])
+    monkeypatch.setattr(api, "_urlopen", stub)
+    got = api.read({})
+    assert got[0].extra["edited"] == ""
+
+
+def test_a_settled_page_keeps_its_watermark(monkeypatch):
+    monkeypatch.setattr(api, "_same_minute", lambda _e, *a: False)
+    stub = _Stub([
+        {"results": [_page("aaa", "One", "2026-08-21T14:05:00.000Z")], "has_more": False},
+        {"results": [], "has_more": False},
+    ])
+    monkeypatch.setattr(api, "_urlopen", stub)
+    got = api.read({})
+    assert got[0].extra["edited"] == "2026-08-21T14:05:00.000Z"
+
+
+def test_the_boundary_page_is_re_read_on_the_next_run(monkeypatch):
+    """End to end: land inside the edit minute, then prove the next run opens
+    it again rather than comparing equal and skipping it forever."""
+    monkeypatch.setattr(api, "_same_minute", lambda _e, *a: False)
+    stub = _Stub([
+        {"results": [_page("aaa", "One", "2026-08-21T14:05:00.000Z")], "has_more": False},
+        {"results": [blk("paragraph", [txt("the edit that landed late")])], "has_more": False},
+    ])
+    monkeypatch.setattr(api, "_urlopen", stub)
+    # `seen` carries the empty watermark the boundary read would have written.
+    got = api.read({"aaa": {"edited": "", "_body": "what was captured mid-minute"}})
+    assert got[0].body == "the edit that landed late", (
+        "an empty watermark must force a re-read, not be treated as unchanged")

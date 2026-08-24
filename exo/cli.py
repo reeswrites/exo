@@ -87,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
     snn = sub.add_parser("nn"); snn.add_argument("atom_id"); snn.add_argument("--k", type=int, default=6)
     ssr = sub.add_parser("search"); ssr.add_argument("query"); ssr.add_argument("--k", type=int, default=10)
     sub.add_parser("fetch-goodreads")
+    sub.add_parser("fetch-lastfm")
+    sub.add_parser("fetch-letterboxd")
+    sub.add_parser("fetch-untappd")
     sub.add_parser("summarize-threads")
     sub.add_parser("fetch-collections")
     sub.add_parser("fetch-trakt")
@@ -98,8 +101,12 @@ def main(argv: list[str] | None = None) -> int:
     sin = sub.add_parser("init", help="scaffold a new instance")
     sin.add_argument("dest")
     sub.add_parser("scan-projects")
+    sub.add_parser("fetch-projects")
     ssy = sub.add_parser("sync-raw")
     spb = sub.add_parser("publish"); spb.add_argument("--dry-run", action="store_true"); spb.add_argument("--cf", action="store_true")
+    spb.add_argument("--only", default=None,
+                     help="comma-separated zones to rebuild; the rest are carried "
+                          "forward and kept OUT of the bundle (ADR-0015)")
     ssy.add_argument("--posts", action="store_true"); ssy.add_argument("--vault", action="store_true")
     sci = sub.add_parser("chatimport"); sci.add_argument("--dry-run", action="store_true")
     sub.add_parser("chatindex")
@@ -137,9 +144,17 @@ def main(argv: list[str] | None = None) -> int:
     isub.add_parser("constraints")
     sc = sub.add_parser("chatsearch"); sc.add_argument("query"); sc.add_argument("--k", type=int, default=10)
     sc.add_argument("--channel", choices=("his", "world", "both"), default="both")
+    sld = sub.add_parser("ledger", help="the one state a rebuild cannot regenerate")
+    ldsub = sld.add_subparsers(dest="laction", required=True)
+    lde = ldsub.add_parser("export"); lde.add_argument("dest")
+    ldm = ldsub.add_parser("merge"); ldm.add_argument("src")
+    ldsub.add_parser("status")
     sub.add_parser("rebuild")
     sub.add_parser("verify")
-    sub.add_parser("backup")
+    sbk = sub.add_parser("backup")
+    sbk.add_argument("--out", default=None,
+                     help="write a portable snapshot here (no catalog, with a "
+                          "row-count manifest) instead of backups/<stamp>/")
     args = p.parse_args(argv)
 
     if args.cmd == "ingest":
@@ -205,6 +220,15 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "fetch-goodreads":
         from .scripts_impl import fetch_goodreads
         return fetch_goodreads.run()
+    elif args.cmd == "fetch-lastfm":
+        from .scripts_impl import fetch_lastfm
+        return fetch_lastfm.run()
+    elif args.cmd == "fetch-letterboxd":
+        from .scripts_impl import fetch_letterboxd
+        return fetch_letterboxd.run()
+    elif args.cmd == "fetch-untappd":
+        from .scripts_impl import fetch_untappd
+        return fetch_untappd.run()
     elif args.cmd == "summarize-threads":
         from .scripts_impl import summarize_threads
         return summarize_threads.run()
@@ -213,11 +237,22 @@ def main(argv: list[str] | None = None) -> int:
         return scan_projects.run()
     elif args.cmd == "publish":
         from .scripts_impl import publish
-        rc = publish.run(dry_run=args.dry_run)
+        only = [z.strip() for z in args.only.split(",") if z.strip()] if args.only else None
+        rc = publish.run(dry_run=args.dry_run, only=only)
         if rc == 0 and args.cf and not args.dry_run:
             from .scripts_impl import publish_cf
             rc = publish_cf.run()
         return rc
+    elif args.cmd == "fetch-projects":
+        from .scripts_impl import fetch_projects
+        return fetch_projects.run()
+    elif args.cmd == "ledger":
+        from .scripts_impl import ledger
+        if args.laction == "export":
+            return ledger.export(args.dest)
+        if args.laction == "merge":
+            return ledger.merge(args.src)
+        return ledger.status()
     elif args.cmd == "sync-raw":
         from .scripts_impl import sync_raw
         # bare `sync-raw` does both; a flag narrows to just that one
@@ -290,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
         return init.run(args.dest)
     elif args.cmd == "backup":
         from .scripts_impl import backup
+        if args.out:
+            return backup.portable(args.out)
         backup.run()
     elif args.cmd in plugins.commands():
         fn, _ = plugins.commands()[args.cmd]

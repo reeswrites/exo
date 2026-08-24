@@ -1,0 +1,35 @@
+# The checker (ADR-0015 §3). Copy to wrangler.toml in your instance and fill in
+# the KV id; it is gitignored in this repo because the ids are yours.
+#
+# This Worker has no routes and no `fetch` handler — it is reachable only by its
+# cron trigger. Do not add one: its whole reason for existing apart from the read
+# surface is that the tokens below sit behind no request handler.
+name = "exo-checker"
+main = "src/index.js"
+compatibility_date = "2026-08-21"
+
+# Every 15 minutes. The check is a handful of single-page API calls; what it
+# gates is a GitHub Actions run, which is the thing worth not starting.
+[triggers]
+crons = ["*/15 * * * *"]
+
+# One cursor per source: the last watermark seen.
+[[kv_namespaces]]
+binding = "CURSORS"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+[vars]
+# owner/repo to fire repository_dispatch at.
+GITHUB_REPO = "you/your-instance"
+
+# Secrets — `npx wrangler secret put <NAME> --config <this file>`:
+#
+#   GITHUB_TOKEN     fine-grained PAT, ONE repository, Contents: read-only is
+#                    not enough — `repository_dispatch` needs Contents: write.
+#                    Nothing else. It cannot read your other repos.
+#   NOTION_TOKEN     the internal integration secret. Read-only by virtue of
+#                    which pages you connected it to.
+#   LASTFM_API_KEY   a public API key.
+#   RAINDROP_TOKEN   a test token. READ scope; this never writes.
+#
+# Omit any of them and that source is skipped rather than failing the run.

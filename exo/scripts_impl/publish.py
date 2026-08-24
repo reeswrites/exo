@@ -270,7 +270,7 @@ def _content_guard(con, held_refs: set[str], served_folders: list[str],
     return drop_notes, drop_atoms
 
 
-def run(dry_run: bool = False) -> int:
+def run(dry_run: bool = False, only: list[str] | None = None) -> int:
     manifest = _load_manifest()
     zones = manifest["zones"]
     folders = manifest["note_folders"]
@@ -278,6 +278,25 @@ def run(dry_run: bool = False) -> int:
     served_zones = [z for z, d in zones.items() if d == "serve"]
     held_folders = [f for f, d in folders.items() if d == "hold"]
     served_folders = [f for f, d in folders.items() if d == "serve"]
+
+    # `--only` narrows WHICH zones this run rebuilds. It never widens: a zone
+    # the manifest holds cannot be published by naming it here, and a name that
+    # is not a served zone is an error rather than a no-op — a typo that
+    # silently published nothing would look exactly like a run that worked.
+    if only is not None:
+        unknown = [z for z in only if z not in zones]
+        held_named = [z for z in only if zones.get(z) == "hold"]
+        if unknown or held_named:
+            print("publish: REFUSING — --only names zones it cannot publish:")
+            for z in unknown:
+                print(f"  - {z}: not in serve-manifest.json")
+            for z in held_named:
+                print(f"  - {z}: the manifest holds it; --only does not override policy")
+            return 1
+        served_zones = [z for z in served_zones if z in set(only)]
+        if not served_zones:
+            print("publish: --only matched no served zone")
+            return 1
 
     con = catalog.connect("full", read_only=True)
     try:
@@ -295,46 +314,64 @@ def run(dry_run: bool = False) -> int:
             print("  (fail-closed: classify each as 'serve' or 'hold', then re-run)")
             return 1
 
-        held = _held_refs(con, held_folders)
+        # The note machinery — both axes, the content guard and the spanning-id
+        # assertion — reads t1_notes, and it exists to protect note-derived
+        # zones. A run that publishes none of them neither needs it nor can do
+        # it: under a zone-scoped rebuild the record may hold no t1_notes at all.
+        #
+        # The condition is exactly "is a note-derived zone in scope", never
+        # "is t1_notes available". Skipping the guard because the notes happen
+        # to be absent, while emitting t2_atom from somewhere, is the leak this
+        # whole section exists to prevent.
+        notes_in_scope = bool(set(served_zones) & _NOTE_DERIVED)
+        if not notes_in_scope:
+            print("  no note-derived zone in scope — skipping both axes and the content guard")
+            held: set[str] = set()
+            by_zone_only: set[str] = set()
+            dup_notes: set[str] = set()
+            dup_atoms: set[str] = set()
+        else:
+            held = _held_refs(con, held_folders)
 
-        # Axis two: gradient position. A note publishes only if BOTH axes agree.
-        # Folder is an organisational accident — notes move between folders and
-        # their content migrates across them. Path zone is the semantic claim the
-        # vault's CONTEXT.md makes promises about ("refined/unshared never
-        # leaves"), so it gets its own independent veto rather than relying on a
-        # folder decision that happens to coincide.
-        zone_held = {
-            r for (r,) in con.execute("SELECT origin_ref FROM t1_notes").fetchall()
-            if path_zones.get(_zone_of(r, path_zones) or "", "hold") == "hold"
-        }
-        by_zone_only = zone_held - held
-        held |= zone_held
+            # Axis two: gradient position. A note publishes only if BOTH axes
+            # agree. Folder is an organisational accident — notes move between
+            # folders and their content migrates across them. Path zone is the
+            # semantic claim the vault's CONTEXT.md makes promises about
+            # ("refined/unshared never leaves"), so it gets its own independent
+            # veto rather than relying on a folder decision that coincides.
+            zone_held = {
+                r for (r,) in con.execute("SELECT origin_ref FROM t1_notes").fetchall()
+                if path_zones.get(_zone_of(r, path_zones) or "", "hold") == "hold"
+            }
+            by_zone_only = zone_held - held
+            held |= zone_held
 
-        dup_notes, dup_atoms = _content_guard(con, held, served_folders)
-        held |= dup_notes
+            dup_notes, dup_atoms = _content_guard(con, held, served_folders)
+            held |= dup_notes
 
-        # t2_note_vec can only be keyed by the non-unique note id, and this must
-        # be checked against the FINAL held set. Checking only held_folders left
-        # the path axis and this guard unprotected: a held note sharing an id
-        # with a served one still satisfied the served-side subquery, so its
-        # embedding published. The assertion is the last thing before writing,
-        # so every source of holding is already merged into `held`.
-        spanning = con.execute(
-            """
-            SELECT count(*) FROM (
-              SELECT id FROM t1_notes GROUP BY id
-              HAVING count(DISTINCT CASE WHEN list_contains(?::VARCHAR[], origin_ref)
-                                          THEN 1 ELSE 0 END) > 1
-            )
-            """,
-            [sorted(held) or [""]],
-        ).fetchone()[0]
-        if spanning:
-            print(
-                f"publish: REFUSING — {spanning} note id(s) span both held and served "
-                "notes. t2_note_vec is keyed by that id, so publishing would leak."
-            )
-            return 1
+            # t2_note_vec can only be keyed by the non-unique note id, and
+            # this must be checked against the FINAL held set. Checking only
+            # held_folders left the path axis and this guard unprotected: a held
+            # note sharing an id with a served one still satisfied the
+            # served-side subquery, so its embedding published. The assertion is
+            # the last thing before writing, so every source of holding is
+            # already merged into `held`.
+            spanning = con.execute(
+                """
+                SELECT count(*) FROM (
+                  SELECT id FROM t1_notes GROUP BY id
+                  HAVING count(DISTINCT CASE WHEN list_contains(?::VARCHAR[], origin_ref)
+                                              THEN 1 ELSE 0 END) > 1
+                )
+                """,
+                [sorted(held) or [""]],
+            ).fetchone()[0]
+            if spanning:
+                print(
+                    f"publish: REFUSING — {spanning} note id(s) span both held and served "
+                    "notes. t2_note_vec is keyed by that id, so publishing would leak."
+                )
+                return 1
 
         # A zone can be declared serve before it has ever been built — a new
         # loader lands, the manifest names it, and the t2 pass that fills it has
@@ -614,6 +651,41 @@ def run(dry_run: bool = False) -> int:
             marker = "  (filtered)" if zone in _NOTE_DERIVED else ""
             print(f"  {zone:<18} {n:>8,}{marker}")
 
+        # Carry the zones this run did not rebuild across from the live
+        # projection, so `--only` narrows what was RECOMPUTED rather than what
+        # exists. Without it the swap below replaces a whole projection with a
+        # partial one, and the brief — which reads the projection — would
+        # describe a record that had lost every zone the lane did not touch.
+        #
+        # These carried files are for the PROJECTION's completeness only. They
+        # are deliberately kept out of the bundle (see `_scope.json` below and
+        # publish_cf): re-importing a carried t1_notes would overwrite whatever
+        # a notes lane loaded into D1 twenty minutes ago with a copy from last
+        # night. A scoped run must load exactly what it recomputed and nothing
+        # else.
+        rebuilt = list(served_zones)
+        if only is not None and final.exists():
+            carried = 0
+            for prior in sorted(final.glob("*.parquet")):
+                if prior.stem in set(rebuilt):
+                    continue
+                shutil.copy2(prior, out / prior.name)
+                n = con.execute(
+                    f"SELECT count(*) FROM read_parquet('{out / prior.name}')"
+                ).fetchone()[0]
+                summary.append((prior.stem, n))
+                carried += 1
+            if carried:
+                print(f"  carried forward {carried} zone(s) this run did not rebuild")
+
+        # What the bundle step is allowed to emit. Written even for a full run,
+        # so neither mode is the absent case — a missing marker is a refusal
+        # downstream rather than a guess about which one was meant.
+        (out / "_scope.json").write_text(json.dumps({
+            "scope": "full" if only is None else "partial",
+            "rebuilt": sorted(rebuilt),
+        }, indent=1), encoding="utf-8")
+
         history = _update_surface_log(summary)
 
         # Which tools this instance offers (ADR-0020). Resolved against what
@@ -634,6 +706,9 @@ def run(dry_run: bool = False) -> int:
         text = brief.build(dict(summary), history=history, src=out, offered=offered)
         (out / "brief.md").write_text(text, encoding="utf-8")
         print(f"  brief             {len(text.encode()):>8,} bytes")
+        if only is not None:
+            print("  (the bundle will not ship it — a scoped run's brief counts "
+                  "carried zones, and the brief describes the whole record)")
 
         exposure = _resolve_exposure(manifest, [z for z, _n in summary])
         with open(out / "exposure.json", "w", encoding="utf-8") as f:

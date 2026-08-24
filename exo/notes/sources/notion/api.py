@@ -38,6 +38,7 @@ everything and is the answer when it matters.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import time
@@ -292,6 +293,19 @@ def _index(objects: list[dict]) -> dict[str, dict]:
     return index
 
 
+def _same_minute(edited: str, now: str | None = None) -> bool:
+    """Is `last_edited_time` inside the minute this read is happening in?
+
+    Compared as strings deliberately. Both are ISO-8601 UTC from the same API
+    contract, so `YYYY-MM-DDTHH:MM` is a total order and a prefix comparison
+    cannot fail on a format this has not met — which a parse could.
+    """
+    if not edited:
+        return False
+    stamp = now or dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M")
+    return edited[:16] == stamp[:16]
+
+
 def read(seen: dict[str, dict] | None = None) -> list[SourceNote]:
     """Every connected page, as notes. `seen` is what is already landed."""
     seen = seen or {}
@@ -341,7 +355,21 @@ def read(seen: dict[str, dict] | None = None) -> list[SourceNote]:
             body=full,
             created=(page.get("created_time") or "")[:10],
             folder=folder,
-            extra={"edited": edited},
+            # An edit made in the SAME MINUTE as this read, after this read, is
+            # invisible: `last_edited_time` has minute granularity, so the
+            # timestamp does not move and every later run compares equal and
+            # skips the page forever.
+            #
+            # Recording no watermark for those pages forces one re-read next
+            # run, because the reuse test above requires a truthy `edited`. It
+            # costs one page fetch for a page edited in the minute we happened
+            # to read it, and it is the difference between a lost edit and a
+            # slightly slower run.
+            #
+            # This matters more the OFTENER you poll, which is the opposite of
+            # the intuition: at fifteen-minute checks the window is entered
+            # ninety-six times a day instead of once a night (ADR-0015 §7).
+            extra={"edited": "" if _same_minute(edited) else edited},
         ))
 
     print(f"  notion: {len(pages)} connected page(s), {len(pages) - reused} read, "
