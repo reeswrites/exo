@@ -126,6 +126,56 @@ export function cap(rows, ctx, own) {
   };
 }
 
+/**
+ * Which axis a list came back on — the caller's choice, out of what the tool holds.
+ *
+ * Every ORDER BY on this surface is over a measured fact and none of them rank
+ * by preference (ADR-0013 §1). That invariant says nothing about WHICH measured
+ * fact, and a tool that hardcodes one of the two it holds answers half its
+ * questions: `ratings` sorted by rating and could not say what was watched
+ * lately, `reviews` sorted by recency with no way to reach the best-argued ones,
+ * `places` sorted by rating and did not return the visit date at all. In every
+ * case the other axis was already sitting in the row.
+ *
+ * One vocabulary across the surface, so a caller learns it once:
+ *
+ *   recent   newest first — the default wherever the record carries a date
+ *   oldest   the same axis reversed, for what has been sitting
+ *   rated    the owner's own rating, highest first
+ *   played   how often they actually reached for it
+ *
+ * A tool advertises only the axes its rows can answer, and the FIRST key of the
+ * map is its default. The chosen name rides back on the answer, because a
+ * truncated list means something different on each axis: twenty films by rating
+ * are the best twenty of 720, twenty by recency are the last twenty, and
+ * `has_more` cannot tell those apart. An assistant should not have to infer it
+ * from the shape of the rows.
+ *
+ * The SQL never comes from the caller. `asked` only ever picks a key out of a
+ * map written here, and an unrecognised one falls back to the default and says
+ * so rather than failing the call — a misspelled sort is not worth an error, but
+ * it is worth not lying about.
+ */
+export function ordering(asked, axes) {
+  const names = Object.keys(axes);
+  const want = typeof asked === "string" ? asked.trim().toLowerCase() : "";
+  const chosen = names.includes(want) ? want : names[0];
+  return {
+    order: chosen,
+    sql: axes[chosen],
+    ...(want && want !== chosen
+      ? { note: `no order called '${want}' — sorted by ${chosen}; this tool offers ${names.join(", ")}` }
+      : {}),
+  };
+}
+
+/** Stamp the axis onto an answer, folding any complaint into the note already there. */
+export const ordered = (out, by) => ({
+  ...out,
+  order: by.order,
+  ...(by.note ? { note: [out.note, by.note].filter(Boolean).join(" · ") } : {}),
+});
+
 
 /**
  * Fill a list field against what the row will ACTUALLY serialise to.
@@ -322,18 +372,26 @@ export const TOOLS = {
     class: "authored", domain: "culture", kind: "text",
     reads: ["t1_verdicts"],
     description:
-      "The owner's written opinions on books, films, tv and music — in their own words, with reasoning. The highest-signal material here for judging how they think.",
+      "The owner's written opinions on books, films, tv and music — in their own words, with reasoning. The highest-signal material here for judging how they think. Ordered by the rating they gave, highest first: this is the one authored zone carrying no date at all, so recency is not a question these rows can answer.",
     schema: {
       type: "object",
       properties: { kind: { type: "string", description: "books | films | tv | music" } },
     },
     async run(env, { kind }, ctx) {
+      // `ORDER BY created DESC` here was a no-op that read like a promise.
+      // media-verdicts.json carries no date and the loader never invents one, so
+      // every row's `created` is NULL, the sort fell straight through to `id` —
+      // a content hash — and ten opinions came back in hash order under a
+      // heading that said newest first. The rating is the fact these rows do
+      // hold, and it arrives as TEXT off a JSON file, so it is cast rather than
+      // compared as a string ('9.5' sorts above '10').
+      const sort = "CAST(nullif(rating,'') AS REAL) DESC, subject";
       const rows = kind
         ? await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts WHERE kind = ?
-            ORDER BY created DESC, id LIMIT ?`, kind, probe(ctx))
+            ORDER BY ${sort}, id LIMIT ?`, kind, probe(ctx))
         : await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts
-            ORDER BY created DESC, id LIMIT ?`, probe(ctx));
-      return cap(rows, ctx);
+            ORDER BY ${sort}, id LIMIT ?`, probe(ctx));
+      return { ...cap(rows, ctx), order: "rated" };
     },
   },
 
@@ -448,7 +506,7 @@ export const TOOLS = {
     class: "authored", domain: "table", kind: "text",
     reads: ["t1_recipe"],
     description:
-      "What the owner actually cooks \u2014 recipes they wrote up and published, with their source links. Small and real: these are ones they made and posted, not a recipe database. Pass full:true for the ingredients and steps of the best match.",
+      "What the owner actually cooks \u2014 recipes they wrote up and published, with their source links. Small and real: these are ones they made and posted, not a recipe database. Newest publication first \u2014 the undated seed templates sort last, behind everything actually written. Pass full:true for the ingredients and steps of the best match.",
     schema: {
       type: "object",
       properties: {
@@ -459,6 +517,14 @@ export const TOOLS = {
     async run(env, { topic, full }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const match = "(? IS NULL OR lower(title) LIKE ? OR lower(cuisine) LIKE ? OR lower(tags) LIKE ?)";
+      // Alphabetical was the one ORDER BY on this surface that ranked by nothing
+      // measured, and the zone holds two shapes of row: recipes written up and
+      // posted, which carry a publication date, and the synthetic seed templates
+      // of ADR-0003, which carry neither a date nor a title. Sorting by title put
+      // every untitled template first \u2014 so `full:true` with no topic answered
+      // "give me a recipe" with an empty shell. Published first, newest first,
+      // seeds after: a date is a fact, and the alphabet is not.
+      const RECIPE_ORDER = "created IS NULL, created DESC, title";
       const binds = [like, like, like, like];
 
       if (full) {
@@ -466,7 +532,7 @@ export const TOOLS = {
           env,
           `SELECT title, cuisine, time_min, effort, yield_servings, source_url,
                   ingredients, steps
-           FROM t1_recipe WHERE ${match} ORDER BY title LIMIT 1`,
+           FROM t1_recipe WHERE ${match} ORDER BY ${RECIPE_ORDER} LIMIT 1`,
           ...binds
         );
         if (!rows.length) return { rows: [], note: "no recipe matched" };
@@ -479,11 +545,12 @@ export const TOOLS = {
 
       const rows = await q(
         env,
-        `SELECT title, cuisine, time_min, effort, yield_servings, source_url
-         FROM t1_recipe WHERE ${match} ORDER BY title, id LIMIT ?`,
+        `SELECT title, cuisine, time_min, effort, yield_servings, source_url,
+                substr(created,1,10) AS published
+         FROM t1_recipe WHERE ${match} ORDER BY ${RECIPE_ORDER}, id LIMIT ?`,
         ...binds, probe(ctx)
       );
-      return cap(rows, ctx);
+      return ordered(cap(rows, ctx), { order: "recent" });
     },
   },
   drafts: {
@@ -981,15 +1048,16 @@ export const TOOLS = {
       beer: ["t0_beer"], restaurants: ["t1_visits"],
     })[medium] ?? ["t0_beer", "t0_book", "t0_film", "t1_visits"],
     description:
-      "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film.",
+      "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
     schema: {
       type: "object",
       properties: {
         medium: { type: "string", description: "films | books | beer | restaurants" },
         min_rating: { type: "number", description: "Only at or above this, on that medium's own scale." },
+        order: { type: "string", description: "rated (default, highest first) | recent" },
       },
     },
-    async run(env, { medium, min_rating }, ctx) {
+    async run(env, { medium, min_rating, order }, ctx) {
       // scale is carried per row because the mediums disagree: Letterboxd and
       // Goodreads are 0-5, the restaurant log is 0-10. Returning a bare 9.5
       // invites an assistant to read it as "off the charts" on a five-point
@@ -1002,9 +1070,20 @@ export const TOOLS = {
       };
       const picked = medium ? { [medium]: SRC[medium] } : SRC;
       const out = [];
+      // One axis for the whole answer, but its SQL is per medium: each keeps its
+      // rating in a different column. The two facts swap places rather than one
+      // replacing the other, so whichever leads, ties break on the other one
+      // before they fall through to `id`.
+      let axis = "rated", complaint = null;
       for (const [name, d] of Object.entries(picked)) {
         if (!d) continue;
         const floor = min_rating ?? 0;
+        const by = ordering(order, {
+          rated:  `CAST(${d.col} AS REAL) DESC, created DESC`,
+          recent: `created DESC, CAST(${d.col} AS REAL) DESC`,
+        });
+        axis = by.order;
+        complaint = by.note ?? null;
         // origin_ref on t0_film is the Letterboxd permalink — it was published
         // all along and no tool returned it, so an assistant could name a film
         // but never point at it.
@@ -1016,13 +1095,13 @@ export const TOOLS = {
            FROM ${d.table}
            WHERE ${d.col} IS NOT NULL AND CAST(${d.col} AS REAL) > 0
              AND CAST(${d.col} AS REAL) >= ? ${d.where ?? ""}
-           ORDER BY CAST(${d.col} AS REAL) DESC, created DESC, id
+           ORDER BY ${by.sql}, id
            LIMIT ?`,
           floor, medium ? probe(ctx) : probe(ctx, 5)
         );
         for (const r of rows) out.push({ medium: name, scale: d.scale, ...r });
       }
-      return cap(out, ctx);
+      return ordered(cap(out, ctx), { order: axis, ...(complaint ? { note: complaint } : {}) });
     },
   },
 
@@ -1030,29 +1109,38 @@ export const TOOLS = {
     class: "authored", domain: "culture", kind: "text",
     reads: ["t1_film_review"],
     description:
-      "The owner's written film reviews from Letterboxd \u2014 115 of them, in their own words, each with a link. Far more of their actual criticism than `verdicts` (10). Search by topic or filter to a minimum rating; quote them rather than paraphrasing.",
+      "The owner's written film reviews from Letterboxd \u2014 115 of them, in their own words, each with a link. Far more of their actual criticism than `verdicts` (10). Search by topic or filter to a minimum rating; quote them rather than paraphrasing. Newest watch first by default; pass order='rated' for the films they thought most of.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against film title or review text." },
         min_rating: { type: "number", description: "Only films rated at least this, 0-5." },
+        order: { type: "string", description: "recent (default, newest watch first) | rated" },
       },
     },
-    async run(env, { topic, min_rating }, ctx) {
+    async run(env, { topic, min_rating, order }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
+      // Same cast the min_rating filter already used: the column is TEXT off a
+      // Letterboxd export, so an uncast DESC would rank '5' above '4.5' by luck
+      // and '10' below both if the scale ever moved.
+      const stars = "CAST(nullif(rating,'') AS REAL)";
+      const by = ordering(order, {
+        recent: `created DESC, ${stars} DESC`,
+        rated:  `${stars} DESC, created DESC`,
+      });
       const rows = await q(
         env,
         `SELECT title, year, rating, review, url, substr(created,1,10) AS watched
          FROM t1_film_review
          WHERE (? IS NULL OR lower(title) LIKE ? OR lower(review) LIKE ?)
            AND (? IS NULL OR CAST(nullif(rating,'') AS REAL) >= ?)
-         ORDER BY created DESC, id
+         ORDER BY ${by.sql}, id
          LIMIT ?`,
         like, like, like,
         min_rating ?? null, min_rating ?? 0,
         probe(ctx)
       );
-      return cap(rows, ctx);
+      return ordered(cap(rows, ctx), by);
     },
   },
 
@@ -1060,16 +1148,25 @@ export const TOOLS = {
     class: "possession", domain: "culture", kind: "entity",
     reads: ["t0_music", "t1_collection"],
     description:
-      "What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes.",
+      "What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes. Most recently acquired first; order='oldest' reaches what has been on the shelf longest, and order='played' ranks vinyl by scrobbles \u2014 owning a record and wearing it out are different claims.",
     schema: {
       type: "object",
       properties: {
         kind: { type: "string", description: "vinyl | dvd | board_game | fragrance" },
         topic: { type: "string", description: "Match against title, creator or genre." },
+        order: { type: "string", description: "recent (default, newest acquisition) | oldest | played (vinyl scrobbles)" },
       },
     },
-    async run(env, { kind, topic }, ctx) {
+    async run(env, { kind, topic, order }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
+      // Undated rows go last on BOTH date axes. `acquired` is empty for a good
+      // part of the shelf, and an ASC sort that took '' at face value would open
+      // "what has been sitting longest" with everything nobody dated.
+      const by = ordering(order, {
+        recent: "COALESCE(c.acquired,'') DESC, c.title",
+        oldest: "nullif(c.acquired,'') IS NULL, nullif(c.acquired,'') ASC, c.title",
+        played: "p.plays IS NULL, p.plays DESC, c.title",
+      });
       const rows = await q(
         env,
         // plays is computed, not stored. The sheet records what is owned and the
@@ -1088,7 +1185,7 @@ export const TOOLS = {
          WHERE (? IS NULL OR c.kind = ?)
            AND (? IS NULL OR lower(c.title) LIKE ? OR lower(COALESCE(c.creator,'')) LIKE ?
                           OR lower(COALESCE(c.genre,'')) LIKE ?)
-         ORDER BY COALESCE(c.acquired,'') DESC, c.title, c.id
+         ORDER BY ${by.sql}, c.id
          LIMIT ?`,
         kind ?? null, kind ?? null,
         like, like, like, like,
@@ -1096,9 +1193,9 @@ export const TOOLS = {
       );
       // Drop the columns a given kind does not use rather than emitting a wall
       // of nulls — a board game has no genre and a DVD has no thoughts.
-      return cap(rows.map((r) => Object.fromEntries(
+      return ordered(cap(rows.map((r) => Object.fromEntries(
         Object.entries(r).filter(([, v]) => v !== null && v !== "")
-      )));
+      ))), by);
     },
   },
 
@@ -1213,7 +1310,13 @@ export const TOOLS = {
     },
     async run(env, { kind, topic, since, order }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
-      const dir = order === "oldest" ? "ASC" : "DESC";
+      // Two piles, two date columns, one vocabulary: the shelves date from
+      // Goodreads' date_added and the collections from raindrop's created, and
+      // a caller should not have to know which pile it is asking.
+      const dated = (col) => ordering(order, {
+        recent: `substr(${col},1,10) DESC`,
+        oldest: `substr(${col},1,10) ASC`,
+      });
 
       // The kinds are not one table. Books carry their queue state in a shelf
       // column; the making and buying queues are raindrop collections created
@@ -1255,6 +1358,7 @@ export const TOOLS = {
 
       if (SHELVES[kind]) {
         const shelves = SHELVES[kind];
+        const by = dated("date_added");
         const rows = await q(
           env,
           // date_added arrives in two shapes from Goodreads exports
@@ -1267,7 +1371,7 @@ export const TOOLS = {
            WHERE lower(shelf) IN (${shelves.map(() => "?").join(",")})
              AND (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(book_author,'')) LIKE ?)
              AND (? IS NULL OR substr(date_added,1,10) >= ?)
-           ORDER BY substr(date_added,1,10) ${dir}, title, id
+           ORDER BY ${by.sql}, title, id
            LIMIT ?`,
           ...shelves,
           like, like, like,
@@ -1279,7 +1383,7 @@ export const TOOLS = {
            FROM t0_book WHERE lower(shelf) IN (${shelves.map(() => "?").join(",")})`,
           ...shelves);
         return {
-          ...cap(rows, ctx),
+          ...ordered(cap(rows, ctx), by),
           scope: `${tot?.n ?? 0} on this shelf, oldest queued ${tot?.oldest ?? "?"}`,
           // my_rating is 0 across every unread row, so it is omitted rather
           // than emitted as a zero an assistant would read as a verdict.
@@ -1290,6 +1394,7 @@ export const TOOLS = {
 
       if (COLLECTIONS[kind]) {
         const cols = COLLECTIONS[kind];
+        const by = dated("created");
         const rows = await q(
           env,
           `SELECT title, url, platform, collection, nullif(note,'') AS note,
@@ -1298,7 +1403,7 @@ export const TOOLS = {
            WHERE collection IN (${cols.map(() => "?").join(",")})
              AND (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?)
              AND (? IS NULL OR substr(created,1,10) >= ?)
-           ORDER BY substr(created,1,10) ${dir}, title, id
+           ORDER BY ${by.sql}, title, id
            LIMIT ?`,
           ...cols,
           like, like, like,
@@ -1309,7 +1414,7 @@ export const TOOLS = {
           `SELECT count(*) AS n FROM t0_raindrop WHERE collection IN (${cols.map(() => "?").join(",")})`,
           ...cols);
         return {
-          ...cap(rows, ctx),
+          ...ordered(cap(rows, ctx), by),
           scope: `${tot?.n ?? 0} in ${cols.join(" + ")}`,
           // 'want-to-make' holds 9 items against 285 untagged Pinterest saves
           // and a wall of TikToks. Reporting 9 as the making backlog without
@@ -1480,22 +1585,40 @@ export const TOOLS = {
     class: "authored", domain: "table", kind: "entity",
     reads: ["t1_visits"],
     description:
-      "Restaurants the owner has been to, with their own notes and ratings. Filter by city or cuisine.",
+      "Restaurants the owner has been to, with their own notes and ratings. Filter by city or cuisine. Best-rated first on their own 0-10 scale, which runs high \u2014 read taste_summary(kind:'dining') before calling an 8 praise. Pass order='recent' for where they have been eating lately; every row now carries the date of the visit.",
     schema: {
       type: "object",
-      properties: { city: { type: "string" }, cuisine: { type: "string" } },
+      properties: {
+        city: { type: "string" },
+        cuisine: { type: "string" },
+        order: { type: "string", description: "rated (default, highest first) | recent" },
+      },
     },
-    async run(env, { city, cuisine }, ctx) {
+    async run(env, { city, cuisine, order }, ctx) {
+      // The rating is TEXT \u2014 it comes off a CSV column and lands in D1 as one \u2014
+      // so `ORDER BY rating DESC` was a lexical sort: '9.5' above '9' above
+      // '8.5' above '10'. Every perfect score sat near the bottom of a list
+      // sold as best-first, and `ratings(medium:'restaurants')`, which does cast,
+      // disagreed with this tool about the same meal.
+      const score = "CAST(nullif(rating,'') AS REAL)";
+      const by = ordering(order, {
+        rated:  `${score} DESC, created DESC`,
+        recent: `created DESC, ${score} DESC`,
+      });
       const rows = await q(
         env,
-        `SELECT restaurant, city, neighborhood, cuisine_1, rating, notes
+        // The visit date was in the row and never returned, so an assistant
+        // could not tell a place they loved last month from one they loved in
+        // 2019 \u2014 which is most of what "where should we eat" turns on.
+        `SELECT restaurant, city, neighborhood, cuisine_1, rating,
+                substr(created,1,10) AS visited, notes
          FROM t1_visits
          WHERE (? IS NULL OR lower(city) = lower(?))
            AND (? IS NULL OR lower(cuisine_1) = lower(?))
-         ORDER BY rating DESC, id LIMIT ?`,
+         ORDER BY ${by.sql}, id LIMIT ?`,
         city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, probe(ctx)
       );
-      return cap(rows, ctx);
+      return ordered(cap(rows, ctx), by);
     },
   },
   /**
@@ -1551,9 +1674,15 @@ export const TOOLS = {
         };
       }
 
-      const sort = order === "recent" ? "p.last_commit DESC"
-        : order === "biggest" ? "p.commit_count DESC"
-        : "coalesce(c.n, 0) DESC, p.last_commit DESC";
+      // Named `worked` because that is what the schema advertises. It was the
+      // fall-through of a chain that accepted anything and silently meant
+      // commits-in-90d, so order='newest' \u2014 a reasonable guess, and not a name
+      // this tool has \u2014 came back ranked by heat with nothing saying so.
+      const by = ordering(order, {
+        worked:  "coalesce(c.n, 0) DESC, p.last_commit DESC",
+        recent:  "p.last_commit DESC",
+        biggest: "p.commit_count DESC",
+      });
 
       const rows = await q(
         env,
@@ -1566,12 +1695,12 @@ export const TOOLS = {
                             OR lower(p.languages) LIKE ?)
            AND (? IS NULL OR p.status = ?)
            AND (? IS NULL OR lower(p.grouping) = lower(?))
-         ORDER BY ${sort}, p.id LIMIT ?`,
+         ORDER BY ${by.sql}, p.id LIMIT ?`,
         since,
         like, like, like, like, status ?? null, status ?? null,
         group ?? null, group ?? null, probe(ctx)
       );
-      return cap(rows, ctx);
+      return ordered(cap(rows, ctx), by);
     },
   },
 
