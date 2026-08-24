@@ -1,6 +1,6 @@
 # ADR-0021 — OAuth is a second door, not a second boundary
 
-Status: proposed · 2026-08-24
+Status: accepted · 2026-08-24
 
 ## Context
 
