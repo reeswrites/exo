@@ -64,6 +64,13 @@ it should remain the path an owner can reason about completely. OAuth becoming
 mandatory would mean the simplest correct configuration of this surface no
 longer exists.
 
+*Settled in implementation:* two doors on **two paths**, not one. The header
+door keeps the root; the grant door is `/mcp`. RFC 9728 pins the `resource`
+identifier to the URL the user typed, and the URL Poke typed years ago is the
+root — so a single path would have forced the two to share an identifier and
+made "unchanged" a claim rather than a fact. Separate paths make it a fact: the
+root's behaviour is not merely preserved, it is untouched.
+
 ### 2. It is single-user, and that is the simplification that makes it safe
 
 There are no accounts, no user table, no scopes negotiated per caller. The
@@ -114,6 +121,13 @@ signs in different places:
 - **The credential fails closed, unchanged.** No valid header and no valid
   grant is a `401`, logged as denied, exactly as now. A malformed, expired or
   revoked token is not a partial success.
+- **A BROKEN door lands where an absent one does.** Written after the first test
+  run did the opposite: an invalid issuer URL threw inside the provider's
+  constructor, the constructor runs on the request path, and the exception
+  reached `GET /` — the header door, which has nothing to do with OAuth,
+  answering `500`. "Absent" was the only failure the clause above had imagined.
+  Construction is now caught: OAuth-only paths get a `503` naming the fault, and
+  everything else falls through to the door that still works.
 
 An enabled instance returns `WWW-Authenticate` on the `401` and serves
 `/.well-known/oauth-protected-resource` and
@@ -121,16 +135,32 @@ An enabled instance returns `WWW-Authenticate` on the `401` and serves
 conforming client discovers where to go and there is no point implementing the
 protocol while withholding the part that makes it findable.
 
-### 6. Pre-registered clients are the documented path; DCR is opt-in
+### 6. Clients identify themselves with a metadata document; DCR is opt-in
 
-Claude's dialog has fields for a client ID and secret, so the documented setup
-is: the owner mints a pair, pastes them in, done. Dynamic client registration is
-supported but **off unless enabled**, because an open `/register` on a personal
-record is an unauthenticated write endpoint that exists to be found by scanners.
+This section originally said pre-registered credentials were the documented path
+and DCR the reluctant fallback. Reading Claude's own documentation while
+building found a third mechanism that is better than both, and the vendor
+recommends it over DCR for the same reason this ADR was suspicious of DCR:
+registration mints a fresh client on every connection and leaves them all in
+the store.
 
-The asymmetry is deliberate. DCR is a convenience for ecosystems with many
-clients the server has never met. This server expects to meet two or three, once
-each, at a keyboard.
+**Client ID Metadata Documents.** The client's `client_id` *is* an HTTPS URL
+serving its own metadata. Nothing is registered, nothing is stored, and nothing
+is pasted — the owner types the `/mcp` URL and logs in. There is no client
+secret to leak because there is no client secret.
+
+The cost is one compatibility flag, `global_fetch_strictly_public`, without
+which the provider will not advertise CIMD at all. It is required because
+resolving a `client_id` means fetching a URL the client chose, and that fetch
+must not be able to reach anything private. Cheap here: this Worker reaches its
+data through bindings and never calls `fetch()`.
+
+Pre-registered credentials still work — Claude's dialog has the fields, and an
+instance that prefers a stable client can use them. Dynamic registration stays
+**off unless an instance turns it on**, because an open `/register` is an
+unauthenticated write endpoint that exists to be found by scanners. The
+exception is the test suite, which needs to register a client to have one at
+all.
 
 ## Alternatives rejected
 
@@ -172,6 +202,10 @@ each, at a keyboard.
   be code we ship and do not read. Weigh that honestly against writing ~150
   lines of OAuth by hand — a protocol where the subtle mistakes are known, named,
   and already handled in the library.
+- **A replayed authorization code revokes the entire grant**, tokens included —
+  OAuth 2.1's answer to a stolen code, inherited rather than chosen. Worth
+  knowing before it is diagnosed as a bug: it presents as every credential
+  failing at once, some steps after the actual replay.
 - **`docs/` grows a setup path with a fork in it.** The Poke instructions stay a
   three-field form. The OAuth instructions are a KV namespace, a client pair, and
   a consent screen — and a reader must be told which one they need before they

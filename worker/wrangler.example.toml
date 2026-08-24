@@ -38,3 +38,37 @@ BLOG_URL_TEMPLATE = "https://example.com/posts/{slug}/"
 
 # AUTH_TOKEN is a secret, never a var:
 #   openssl rand -hex 32 | npx wrangler secret put AUTH_TOKEN
+
+# ---------------------------------------------------------------------------
+# The second door (ADR-0021). Everything below is OPTIONAL. Leave it out and
+# this is the bearer-header surface it has always been: one secret, one header,
+# no store. Uncomment it to also accept OAuth at /mcp, which is the only way
+# claude.ai, ChatGPT and other hosted assistants can reach an MCP server.
+#
+#   npx wrangler kv namespace create OAUTH_KV
+#   npx wrangler d1 execute exo --remote --file migrations/0002-which-door.sql
+#
+# The BINDING'S PRESENCE is the feature flag — there is no enable switch. No
+# namespace means no /authorize, no discovery documents and no /mcp.
+#
+# Rotating AUTH_TOKEN must also empty this namespace. A grant outlives the
+# secret that authorised it, so a rotation that leaves grants in place retires
+# the password and not the access.
+# ---------------------------------------------------------------------------
+# [[kv_namespaces]]
+# binding = "OAUTH_KV"
+# id = "PUT-THE-ID-WRANGLER-PRINTED-HERE"
+
+# Required for Client ID Metadata Documents, which is how Claude identifies
+# itself without you pasting a client id anywhere. The provider will not
+# advertise CIMD without this flag, because resolving a client id means fetching
+# a URL the client chose and that fetch must not reach anything private. Safe
+# here: this Worker reaches its data through bindings and never calls fetch().
+# compatibility_flags = ["global_fetch_strictly_public"]
+
+# Dynamic client registration is OFF unless this says "true". An open /register
+# is an unauthenticated write endpoint; CIMD covers the clients that matter
+# without one. Turn it on for a client that supports neither CIMD nor a
+# pre-registered pair — and for test/oauth-flow.mjs, which needs to register.
+# [vars]
+# OAUTH_ALLOW_DCR = "false"
