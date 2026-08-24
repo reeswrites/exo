@@ -89,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("fetch-goodreads")
     sub.add_parser("fetch-lastfm")
     sub.add_parser("fetch-letterboxd")
+    slba = sub.add_parser("fetch-letterboxd-avg")
+    slba.add_argument("--limit", type=int, default=None)
     sub.add_parser("fetch-untappd")
     sub.add_parser("summarize-threads")
     sub.add_parser("fetch-collections")
@@ -226,6 +228,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "fetch-letterboxd":
         from .scripts_impl import fetch_letterboxd
         return fetch_letterboxd.run()
+    elif args.cmd == "fetch-letterboxd-avg":
+        from .scripts_impl import fetch_letterboxd_avg
+        return fetch_letterboxd_avg.run(args.limit)
     elif args.cmd == "fetch-untappd":
         from .scripts_impl import fetch_untappd
         return fetch_untappd.run()

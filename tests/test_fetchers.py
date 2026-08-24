@@ -16,7 +16,8 @@ import json
 
 import pytest
 
-from exo.scripts_impl import _fetch, fetch_lastfm, fetch_letterboxd, fetch_untappd
+from exo.scripts_impl import (_fetch, fetch_lastfm, fetch_letterboxd,
+                             fetch_letterboxd_avg, fetch_untappd)
 
 
 @pytest.fixture(autouse=True)
@@ -321,3 +322,100 @@ def test_a_missing_credential_says_which_one(exports, monkeypatch, capsys):
     monkeypatch.setenv("LASTFM_USER", "u")
     assert fetch_lastfm.run() == 1
     assert "LASTFM_API_KEY" in capsys.readouterr().out
+
+
+# ─────────────────────────── letterboxd averages ────────────────────────────
+#
+# A different property from the feed fetchers above. Film pages are permanent,
+# so nothing here is about losing a window — it is about not re-fetching six
+# hundred pages, and about the join key matching the one the loader merges on.
+
+FILM_PAGE = b"""<html><head>
+<script type="application/ld+json">
+/* <![CDATA[ */
+{"@type":"Movie","name":"Stalker",
+ "aggregateRating":{"@type":"AggregateRating","ratingValue":4.28,"bestRating":5}}
+/* ]]> */
+</script></head><body></body></html>"""
+
+UNRATED_PAGE = b"""<html><head>
+<script type="application/ld+json">
+/* <![CDATA[ */
+{"@type":"Movie","name":"Some Short Nobody Rated"}
+/* ]]> */
+</script></head><body></body></html>"""
+
+
+def test_the_average_is_read_through_letterboxds_cdata_wrapper(monkeypatch):
+    monkeypatch.setattr(_fetch, "get", lambda _url: FILM_PAGE)
+    assert fetch_letterboxd_avg._average("https://boxd.it/x") == 4.28
+
+
+def test_a_page_with_no_aggregate_rating_is_none_not_zero(monkeypatch):
+    monkeypatch.setattr(_fetch, "get", lambda _url: UNRATED_PAGE)
+    assert fetch_letterboxd_avg._average("https://boxd.it/x") is None
+
+
+def test_the_cache_key_is_the_one_the_loader_merges_on():
+    # csv_sources._film_key lowercases the title and strips both halves. A key
+    # that drifts from it turns the join into a silent miss rather than an error.
+    assert fetch_letterboxd_avg._key("  Stalker ", " 1979 ") == "stalker|1979"
+    assert fetch_letterboxd_avg._key("Stalker", None) == "stalker|"
+
+
+def test_already_cached_films_are_not_fetched_again(exports, monkeypatch, tmp_path):
+    _write(exports / "letterboxd-cache.json", "watched",
+           [{"name": "Stalker", "year": "1979", "letterboxd_uri": "https://boxd.it/a"},
+            {"name": "Solaris", "year": "1972", "letterboxd_uri": "https://boxd.it/b"}])
+    _write(exports / "letterboxd-avg-cache.json", "films",
+           [{"_key": "stalker|1979", "title": "Stalker", "year": "1979",
+             "avg_rating": 4.28, "uri": "https://boxd.it/a"}])
+    monkeypatch.setattr(fetch_letterboxd_avg.config, "EXPORTS", exports)
+    monkeypatch.setattr(fetch_letterboxd_avg.config, "latest", lambda _pat: None)
+    monkeypatch.setattr(fetch_letterboxd_avg, "DELAY", 0)
+
+    asked = []
+    monkeypatch.setattr(_fetch, "get", lambda url: asked.append(url) or FILM_PAGE)
+    assert fetch_letterboxd_avg.run() == 0
+
+    assert asked == ["https://boxd.it/b"], "the cached film must not be refetched"
+    got = json.loads((exports / "letterboxd-avg-cache.json").read_text())["films"]
+    assert len(got) == 2
+
+
+def test_an_unrated_film_is_cached_so_reruns_stop_chasing_it(exports, monkeypatch):
+    _write(exports / "letterboxd-cache.json", "watched",
+           [{"name": "Some Short", "year": "2001", "letterboxd_uri": "https://boxd.it/c"}])
+    monkeypatch.setattr(fetch_letterboxd_avg.config, "EXPORTS", exports)
+    monkeypatch.setattr(fetch_letterboxd_avg.config, "latest", lambda _pat: None)
+    monkeypatch.setattr(fetch_letterboxd_avg, "DELAY", 0)
+    monkeypatch.setattr(_fetch, "get", lambda _url: UNRATED_PAGE)
+    assert fetch_letterboxd_avg.run() == 0
+
+    got = json.loads((exports / "letterboxd-avg-cache.json").read_text())["films"]
+    assert got[0]["avg_rating"] is None, "an unrated film is a fact, not a gap"
+
+    # And a second run leaves it alone rather than fetching it forever.
+    asked = []
+    monkeypatch.setattr(_fetch, "get", lambda url: asked.append(url) or UNRATED_PAGE)
+    assert fetch_letterboxd_avg.run() == 0
+    assert asked == []
+
+
+def test_one_films_failure_does_not_end_the_run(exports, monkeypatch):
+    _write(exports / "letterboxd-cache.json", "watched",
+           [{"name": "Bad", "year": "1", "letterboxd_uri": "https://boxd.it/bad"},
+            {"name": "Good", "year": "2", "letterboxd_uri": "https://boxd.it/good"}])
+    monkeypatch.setattr(fetch_letterboxd_avg.config, "EXPORTS", exports)
+    monkeypatch.setattr(fetch_letterboxd_avg.config, "latest", lambda _pat: None)
+    monkeypatch.setattr(fetch_letterboxd_avg, "DELAY", 0)
+
+    def flaky(url):
+        if url.endswith("bad"):
+            raise OSError("connection reset")
+        return FILM_PAGE
+    monkeypatch.setattr(_fetch, "get", flaky)
+    assert fetch_letterboxd_avg.run() == 0
+
+    got = json.loads((exports / "letterboxd-avg-cache.json").read_text())["films"]
+    assert [e["title"] for e in got] == ["Good"]

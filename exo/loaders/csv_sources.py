@@ -111,15 +111,27 @@ def letterboxd() -> list[Row]:
     path = config.latest("letterboxd_ratings*.csv")
     if not path:
         return []
+    # The community average, from `exo fetch-letterboxd-avg`. Absent is not an
+    # error — the column comes through empty and only the null-model check goes
+    # missing with it. Keyed title+year, the same identity _film_key uses below.
+    _avgs = {e.get("_key"): e.get("avg_rating")
+             for e in _cache("letterboxd-avg-cache.json").get("films", [])}
+
+    def _avg(title: str, year) -> str:
+        hit = _avgs.get(f"{(title or '').strip().lower()}|{str(year or '').strip()}")
+        return "" if hit is None else str(hit)
+
     rows: list[Row] = []
     with open(path, newline="", encoding="utf-8") as fh:
         for rec in csv.DictReader(fh):
+            title, year = rec.get("Name", ""), rec.get("Year", "")
             rows.append(Row(
                 tier="t0", zone="film", source="letterboxd", author="external",
                 created=(rec.get("Date") or None), origin_ref=rec.get("Letterboxd URI", ""),
                 payload={
-                    "title": rec.get("Name", ""), "year": rec.get("Year", ""),
+                    "title": title, "year": year,
                     "rating": rec.get("Rating", ""),
+                    "avg_rating": _avg(title, year),
                 },
             ))
 
@@ -127,7 +139,8 @@ def letterboxd() -> list[Row]:
         Row(tier="t0", zone="film", source="letterboxd", author="external",
             created=(w.get("date") or None), origin_ref=w.get("letterboxd_uri", ""),
             payload={"title": w.get("name", ""), "year": str(w.get("year") or ""),
-                     "rating": str(w.get("rating") or "")})
+                     "rating": str(w.get("rating") or ""),
+                     "avg_rating": _avg(w.get("name", ""), w.get("year"))})
         for w in _cache("letterboxd-cache.json").get("watched", [])
     ]
     # Keyed on title+year, NOT on the uri. Letterboxd hands out a different
