@@ -1,11 +1,24 @@
 import { readFileSync } from "node:fs";
-import { env, corpus } from "./harness.mjs";
+import { env, corpus, DRIFT } from "./harness.mjs";
 import { TOOLS, CLASSES, DOMAINS, KINDS, cap, probe, pageSize, ROW_CAP, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
 import { GRADES, DEFAULT_GRADE, gradeOf, bestGradeOf, loadExposure, TTL_MS } from "../src/exposure.js";
 import worker from "../src/index.js";
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { c ? (pass++, console.log("  ok   " + m)) : (fail++, console.log("  FAIL " + m)); };
+
+// This file is a flat script of top-level awaits, so anything that throws ends
+// the run where it stands. That is tolerable — a harness is allowed to give up
+// — but it used to give up in silence, printing a stack with no score and no
+// hint of how far it had got. A run that died at case 40 of 300 looked exactly
+// like a run that failed at case 300.
+for (const signal of ["uncaughtException", "unhandledRejection"]) {
+  process.on(signal, (err) => {
+    console.log(`\n${pass} passed, ${fail} failed — then ABORTED, so everything after this point never ran:\n`);
+    console.error(err);
+    process.exit(1);
+  });
+}
 const post = (body, token = "test-token") =>
   worker.fetch(new Request("https://x/", {
     method: "POST",
@@ -285,8 +298,14 @@ ok(!probed.rows.some((r) => r.i === MAX_ROWS), "the probe row is counted, never 
 // A tool with its own smaller page must detect ITS overflow, not the global one.
 // `ratings` shows five per medium; without this it would report has_more=false
 // on a medium with fifty rated films.
-const small = cap(Array.from({ length: probe(5) }, (_, i) => ({ i })), { want: 5 });
-ok(small.returned_count === 5 && small.has_more === true, "want=5 overflows at 5, not at 20");
+// Written against a `{ want: n }` option that no longer exists — the private
+// ceiling is the third argument to cap() and the second to probe() now (see
+// `ratings`, the only caller: `medium ? probe(ctx) : probe(ctx, 5)`). The old
+// call was not failing, it was silently testing the GLOBAL cap: `{ want: 5 }`
+// has no `limit` key, so pageSize fell through to 20 and the assertion asked
+// for 5. Nobody saw it, because the run had already died 250 cases earlier.
+const small = cap(Array.from({ length: probe(null, 5) }, (_, i) => ({ i })), null, 5);
+ok(small.returned_count === 5 && small.has_more === true, "a private ceiling of 5 overflows at 5, not at 20");
 ok(cap([{ i: 1 }], { want: 5 }).has_more === false, "want=5 under-full -> has_more=false");
 ok(cap(Array.from({ length: 100 }, (_, i) => ({ i })), { want: 999 }).returned_count === MAX_ROWS,
    "want narrows the page and can never widen it past MAX_ROWS");
@@ -561,9 +580,17 @@ const b4 = await (await env.VECTORS.get("brief.md")).text();
 ok(/tv shows/.test(b4), "brief mentions television at all");
 
 console.log("\n── events: date range ──");
-const wknd = await TOOLS.events.run(env, { from: "2026-08-22", to: "2026-08-23" });
-ok(wknd.rows.length > 0, `weekend window -> ${wknd.rows.length}`);
-ok(wknd.rows.every((r) => r.start.slice(0,10) >= "2026-08-22" && r.start.slice(0,10) <= "2026-08-23"),
+// The window comes from the bundle instead of the calendar. This was a fixed
+// weekend in August 2026, and it stopped returning rows the moment that weekend
+// became the past — for the one reason that is not a bug: the tool honours a
+// past window literally, which is what the next case asserts. A test that goes
+// red on a date teaches you to ignore a red test.
+const upcoming = await TOOLS.events.run(env, {});
+ok(upcoming.rows.length > 0, `the bundle carries upcoming events at all (${upcoming.rows.length})`);
+const day = upcoming.rows[0]?.start.slice(0, 10);
+const wknd = day ? await TOOLS.events.run(env, { from: day, to: day }) : { rows: [] };
+ok(wknd.rows.length > 0, `a single day the bundle actually holds (${day}) -> ${wknd.rows.length}`);
+ok(wknd.rows.every((r) => r.start.slice(0, 10) === day),
    "every row falls inside the requested window");
 const past = await TOOLS.events.run(env, { from: "2020-01-01", to: "2020-12-31" });
 ok(past.rows.length === 0, "a window entirely in the past returns nothing, not the future");
@@ -1035,6 +1062,23 @@ console.log("\n── documentation ──");
   const SHOULD_ADVERTISE = ["agenda", "recipes", "medium", "backlog", "around_the_time", "drafts"];
   const unadvertised = SHOULD_ADVERTISE.filter((n) => !brief.includes(n));
   ok(unadvertised.length === 0, `the brief names the tools it should${unadvertised.length ? " — missing: " + unadvertised : ""}`);
+}
+
+if (DRIFT.size) {
+  // Columns the surface SELECTs that the bundle does not carry. Two causes, and
+  // the banner deliberately does not guess between them, because the first run
+  // of this check assumed the innocent one and was wrong:
+  //
+  //   the bundle is old — rebuild and republish, and it goes away
+  //   the projection never writes it — republishing changes nothing, and the
+  //     tool is broken for anyone whose D1 was built from this engine
+  //
+  // Either way the assertions touching these columns just tested a NULL, which
+  // is why this is loud rather than a comment nobody reads.
+  console.log(`\n── columns the code selects and this bundle does not carry ──`);
+  console.log(`  shimmed empty: ${[...DRIFT].sort().join(", ")}`);
+  console.log(`  if the bundle is merely old:  uv run exo rebuild && uv run exo publish --cf`);
+  console.log(`  if that changes nothing, the projection does not write it — that is a bug, not a fixture.`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
