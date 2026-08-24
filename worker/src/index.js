@@ -18,7 +18,14 @@ import { bestGradeOf, loadExposure, gradeOf } from "./exposure.js";
 import { loadSurface, offers } from "./surface.js";
 import { ROW_CAP, TOOLS } from "./tools.js";
 
-const PROTOCOL_VERSION = "2024-11-05";
+// Newest first. A client that names one of these gets exactly that back;
+// anything else — older, newer, absent — gets the newest, which is what the
+// spec's "reply with a version you do support" comes to. A single hardcoded
+// version was fine while every caller was Poke, but answering 2024-11-05 tells
+// a streamable-HTTP client it has reached an HTTP+SSE server and sends it
+// looking for a stream endpoint that was never here.
+const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
+const PROTOCOL_VERSION = PROTOCOL_VERSIONS[0];
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -269,7 +276,9 @@ async function handleRpc(req, env, body) {
   switch (method) {
     case "initialize":
       return rpcResult(id, {
-        protocolVersion: PROTOCOL_VERSION,
+        protocolVersion: PROTOCOL_VERSIONS.includes(params?.protocolVersion)
+          ? params.protocolVersion
+          : PROTOCOL_VERSION,
         capabilities: { tools: {}, resources: { listChanged: true } },
         serverInfo: { name: "exo", version: "1.0.0" },
         instructions:
@@ -461,6 +470,15 @@ async function handleRpc(req, env, body) {
 export default {
   async fetch(req, env, ctx) {
     if (req.method === "GET") {
+      // A GET that asks for an event stream is a client opening the
+      // server-to-client half of streamable HTTP. This surface has no such half
+      // — every answer rides the POST that asked for it — and the spec's word
+      // for that is 405. Answering 200 with a text banner instead reads as a
+      // malformed stream and strands the client; Claude's web connector is the
+      // one that noticed.
+      if ((req.headers.get("accept") ?? "").includes("text/event-stream")) {
+        return new Response("method not allowed", { status: 405 });
+      }
       // Deliberately says nothing about what is inside.
       return new Response("exo read surface\n", { status: 200 });
     }
