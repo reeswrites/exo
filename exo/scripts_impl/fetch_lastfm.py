@@ -127,6 +127,13 @@ def run() -> int:
         print(f"fetch-lastfm: {exc}")
         return 1
 
+    # ISO, not the cache's own "%d %b %Y" — `report` orders these as strings, and
+    # day-first with a month NAME sorts by neither. It read "01 Apr 2023 .. 31 Oct
+    # 2025" on a file whose newest scrobble was yesterday: 31 is the highest day
+    # and Oct the highest month name that has one. The other two fetchers already
+    # hand it ISO, which is why only this one lied.
     _fetch.report("lastfm", len(new), len(merged), path,
-                  [r.get("scrobbled_at", "")[:11] for r in merged])
+                  [datetime.fromtimestamp(r["uts"], tz).strftime("%Y-%m-%d")
+                   if tz else datetime.fromtimestamp(r["uts"]).strftime("%Y-%m-%d")
+                   for r in merged if r.get("uts")])
     return 0
