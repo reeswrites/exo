@@ -59,6 +59,10 @@ const ARGS = [
   {}, { topic: "x" }, { full: true }, { kind: "read" }, { kind: "film" },
   { medium: "film" }, { order: "oldest" }, { repo: "x" }, { city: "x" },
   { group: "x" }, { since: "2020-01-01" }, { min_turns: 2 }, { free: true },
+  // taste's branches: the artist filter, the closed window, the optional join
+  // onto the affinity zone, and each of its three axes.
+  { artist: "x" }, { since: "2020-01-01", until: "2021-01-01" },
+  { with_mentions: true }, { order: "recent" }, { order: "played" },
 ];
 for (const [name, t] of Object.entries(TOOLS)) {
   for (const args of ARGS) {

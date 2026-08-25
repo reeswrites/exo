@@ -154,8 +154,13 @@ def _has_column(con, view: str, col: str) -> bool:
         return False
 
 
-def _exposure_problems(manifest: dict, served_zones: list[str]) -> list[str]:
+def _exposure_problems(manifest: dict, all_served: list[str]) -> list[str]:
     """Fail-loud on a grade that was typed, fail-quiet on one that was not.
+
+    `all_served` is every zone the MANIFEST serves, never one run's `--only`
+    scope. What a grade may not describe is a zone that is held; a zone this
+    particular lane did not rebuild is still served, still in the projection,
+    and still has rows on the surface to be public about.
 
     The two are different and both are deliberate (ADR-0019 §1). A zone with **no
     entry** is `private` silently — that is the safe reading of silence, and a
@@ -179,7 +184,7 @@ def _exposure_problems(manifest: dict, served_zones: list[str]) -> list[str]:
     # A grade on a held zone is not harmless — it is the shape of somebody
     # believing they published something. The zone has no rows on the surface to
     # be public ABOUT, so say so rather than storing a claim about nothing.
-    held = sorted(set(graded) - set(served_zones))
+    held = sorted(set(graded) - set(all_served))
     if held:
         problems.append(
             "zone_exposure grades zones that are not served: " + ", ".join(held)
@@ -276,6 +281,13 @@ def run(dry_run: bool = False, only: list[str] | None = None) -> int:
     folders = manifest["note_folders"]
     path_zones = manifest["path_zones"]
     served_zones = [z for z, d in zones.items() if d == "serve"]
+    # Kept whole across the `--only` narrowing below, because publicity is a
+    # property of the MANIFEST and not of one lane's scope. `--only` narrows what
+    # a run RECOMPUTES; the zones it skips are carried forward from the live
+    # projection and are still served. Checking grades against the narrowed list
+    # made every scoped run refuse: the nightly notes lane publishes four zones
+    # and would have been told the other twenty-five were graded but not served.
+    all_served = list(served_zones)
     held_folders = [f for f, d in folders.items() if d == "hold"]
     served_folders = [f for f, d in folders.items() if d == "serve"]
 
@@ -301,7 +313,7 @@ def run(dry_run: bool = False, only: list[str] | None = None) -> int:
     con = catalog.connect("full", read_only=True)
     try:
         problems = _check_coverage(con, manifest)
-        problems += _exposure_problems(manifest, served_zones)
+        problems += _exposure_problems(manifest, all_served)
         if _has_column(con, "t1_procedure", "serve"):
             problems += _procedure_problems(
                 [dict(zip(("slug", "needs", "serve"), r)) for r in

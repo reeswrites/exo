@@ -397,17 +397,95 @@ export const TOOLS = {
 
   taste: {
     class: "revealed", domain: "culture", kind: "event",
-    reads: ["t2_affinity"],
+    reads: ["t0_music", "t2_affinity"],
+    // The scrobble stream is what this tool is ABOUT; `mentions` is colour on it
+    // (ADR-0023 §2). t2_affinity joins t0_music to t1_notes, so a tool that
+    // always returned that one integer was always as private as the notes — a
+    // twenty-row answer off a profile-grade record that allows a hundred. The
+    // grade now follows the subject, and the colour costs its own call.
+    readsFor: ({ with_mentions }) =>
+      with_mentions ? ["t0_music", "t2_affinity"] : ["t0_music"],
     description:
-      "What the owner actually listens to, by play count — the revealed preference, as distinct from what they say.",
-    schema: { type: "object", properties: {} },
-    async run(env, _args, ctx) {
+      "What the owner actually listens to, straight off the scrobble stream \u2014 revealed preference, as distinct from what they say. The tail is long and quiet: this counts every artist the record has ever heard, most of them played a handful of times, and a truncated answer is the TOP of that list rather than the whole of it. Do not read a short answer as a narrow taste \u2014 `scope` says how many artists it was drawn from, and the ones you did not get are the quiet ones. Pass `artist` to ask whether one act is in there at all, `since`/`until` for a period instead of a lifetime, and order='recent' for what they have been reaching for lately, which is a different list from the all-time count.",
+    schema: {
+      type: "object",
+      properties: {
+        artist: { type: "string", description: "One act by name, matched anywhere in the string. The way to ask 'do they listen to this at all' rather than 'is this in their top twenty'." },
+        since: { type: "string", description: "ISO date; only plays on or after it." },
+        until: { type: "string", description: "ISO date; only plays on or before it." },
+        order: { type: "string", description: "played (default, most plays first) | recent (last reached for) | oldest (fell out of rotation longest ago)" },
+        with_mentions: { type: "boolean", description: "Also say how many of the owner's notes name each artist. Reads their notes, so the call is graded private and returns fewer rows." },
+      },
+    },
+    async run(env, { artist, since, until, order, with_mentions }, ctx) {
+      const like = artist ? `%${artist.toLowerCase()}%` : null;
+      // Three facts per artist, so all three axes come off one scan. `plays`
+      // alone could not say what fell OUT of rotation, and that is most of what
+      // "lately" means against a decade of scrobbles.
+      const by = ordering(order, {
+        played: "plays DESC, last_played DESC",
+        recent: "last_played DESC, plays DESC",
+        oldest: "last_played ASC, plays DESC",
+      });
+      const where = `WHERE (? IS NULL OR lower(artist) LIKE ?)
+           AND (? IS NULL OR substr(created,1,10) >= ?)
+           AND (? IS NULL OR substr(created,1,10) <= ?)`;
+      const binds = [like, like, since ?? null, since ?? null, until ?? null, until ?? null];
+
       const rows = await q(
         env,
-        `SELECT artist, plays, mentions FROM t2_affinity ORDER BY plays DESC, id LIMIT ?`,
-        probe(ctx)
+        `SELECT artist, count(*) AS plays,
+                substr(min(created),1,10) AS first_played,
+                substr(max(created),1,10) AS last_played
+         FROM t0_music
+         ${where}
+         GROUP BY artist
+         ORDER BY ${by.sql}, artist
+         LIMIT ?`,
+        ...binds, probe(ctx)
       );
-      return cap(rows, ctx);
+
+      // What the rows were drawn FROM, counted rather than implied (ADR-0023
+      // §1). "Twenty artists" is a fact about the cap; "twenty of 2,314" is the
+      // fact a reader needs before saying anything about the shape of a taste.
+      const [scope] = await q(
+        env,
+        `SELECT count(*) AS plays, count(DISTINCT artist) AS artists,
+                substr(min(created),1,10) AS first, substr(max(created),1,10) AS last
+         FROM t0_music ${where}`,
+        ...binds
+      );
+
+      if (!scope?.plays) {
+        return {
+          rows: [], returned_count: 0, has_more: false, scope: "0 plays matched",
+          note: artist
+            ? `nothing scrobbled by anything matching '${artist}' \u2014 this record is one service's stream, so absence means it was never scrobbled, not that they have never heard it`
+            : "nothing scrobbled in that window \u2014 check last_logged from consumption, the exports lag",
+        };
+      }
+
+      const out = rows.map((r) => ({ ...r }));
+      const extra = [];
+      if (with_mentions) {
+        // A LEFT JOIN would be one query, but the affinity zone has a plays
+        // floor, so a missing row there is ambiguous in a way a coalesced zero
+        // would hide. Attach what exists and say what a gap means.
+        const seen = await q(env, `SELECT artist, mentions FROM t2_affinity WHERE mentions > 0`);
+        const m = new Map(seen.map((r) => [r.artist, r.mentions]));
+        for (const r of out) if (m.has(r.artist)) r.mentions = m.get(r.artist);
+        extra.push("mentions comes from the affinity zone, which holds only artists over a hundred lifetime plays \u2014 a row with no count is a quiet artist, not an unmentioned one");
+      }
+
+      const capped = cap(out, ctx);
+      const note = [capped.note, ...extra].filter(Boolean).join(" \u00b7 ");
+      const span = scope.first === scope.last ? scope.first : `${scope.first} \u2192 ${scope.last}`;
+      const plural = (n, one) => `${n} ${n === 1 ? one : one + "s"}`;
+      return ordered({
+        ...capped,
+        scope: `${plural(scope.plays, "play")} by ${plural(scope.artists, "artist")}, ${span}`,
+        ...(note ? { note } : {}),
+      }, by);
     },
   },
 
@@ -1031,9 +1109,44 @@ export const TOOLS = {
       for (let i = 0; branches.some((b) => i < b.length); i++) {
         for (const b of branches) if (i < b.length) all.push(b[i]);
       }
-      return all.length
-        ? cap(all, ctx)
-        : { rows: [], note: `nothing recorded between ${from} and ${to} — check the last_logged dates from consumption, the exports lag` };
+      if (!all.length) {
+        return { rows: [], returned_count: 0, has_more: false,
+                 note: `nothing recorded between ${from} and ${to} — check the last_logged dates from consumption, the exports lag` };
+      }
+      // What the window actually held, beside what fit in it (ADR-0023 §1).
+      // The per-branch limits above are small by necessity, and music is the
+      // worst of them: five artists off a month that can hold three hundred.
+      // A reader handed five rows and no denominator concluded the month WAS
+      // five artists, which is the one thing this tool must not let them do.
+      // One statement, six subqueries, and the window bound six times over —
+      // rather than `?1`/`?2` bound once, which SQLite understands and every
+      // other statement in this file does not use. Consistency is worth two
+      // lines here: the binds are generated, so they cannot fall out of step
+      // with the placeholders by hand.
+      const IN_WINDOW = "substr(created,1,10) BETWEEN ? AND ?";
+      const [held] = await q(
+        env,
+        `SELECT (SELECT count(DISTINCT artist) FROM t0_music WHERE ${IN_WINDOW}) AS artists,
+                (SELECT count(*) FROM t0_music WHERE ${IN_WINDOW}) AS plays,
+                (SELECT count(*) FROM t1_notes WHERE ${IN_WINDOW}) AS notes,
+                (SELECT count(*) FROM t0_film  WHERE ${IN_WINDOW}) AS films,
+                (SELECT count(*) FROM t0_book  WHERE ${IN_WINDOW} AND shelf = 'read') AS books,
+                (SELECT count(*) FROM t0_tv    WHERE ${IN_WINDOW}) AS tv`,
+        ...Array.from({ length: 6 }, () => [from, to]).flat()
+      );
+      const counted = [
+        held?.notes ? `${held.notes} notes` : null,
+        held?.artists ? `${held.artists} artists over ${held.plays} plays` : null,
+        held?.films ? `${held.films} films` : null,
+        held?.books ? `${held.books} books` : null,
+        held?.tv ? `${held.tv} shows` : null,
+      ].filter(Boolean).join(" · ");
+      const capped = cap(all, ctx);
+      return {
+        ...capped,
+        scope: `${from} → ${to} held ${counted || "nothing"}; these rows are the head of each, not the whole`,
+        ...(capped.note ? {} : { note: "each medium is limited separately so a heavy month cannot starve the others — read the rows as a sample of the window and `scope` as its size" }),
+      };
     },
   },
 
@@ -1148,12 +1261,12 @@ export const TOOLS = {
     class: "possession", domain: "culture", kind: "entity",
     reads: ["t0_music", "t1_collection"],
     description:
-      "What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes. Most recently acquired first; order='oldest' reaches what has been on the shelf longest, and order='played' ranks vinyl by scrobbles \u2014 owning a record and wearing it out are different claims.",
+      "What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes. Most recently acquired first; order='oldest' reaches what has been on the shelf longest, and order='played' ranks vinyl by scrobbles \u2014 owning a record and wearing it out are different claims. Every answer carries the `genres` vocabulary, which is a few coarse buckets the owner typed into their own inventory rather than a taxonomy: read a genre this shelf has no bucket for as unrecorded, never as absent.",
     schema: {
       type: "object",
       properties: {
         kind: { type: "string", description: "vinyl | dvd | board_game | fragrance" },
-        topic: { type: "string", description: "Match against title, creator or genre." },
+        topic: { type: "string", description: "Match against title, creator or genre. Genre is a closed handful of hand-kept buckets, returned as `genres` on every answer — a word outside them cannot match, so a miss is a gap in the vocabulary and not in the shelf." },
         order: { type: "string", description: "recent (default, newest acquisition) | oldest | played (vinyl scrobbles)" },
       },
     },
@@ -1193,9 +1306,57 @@ export const TOOLS = {
       );
       // Drop the columns a given kind does not use rather than emitting a wall
       // of nulls — a board game has no genre and a DVD has no thoughts.
-      return ordered(cap(rows.map((r) => Object.fromEntries(
+      const out = rows.map((r) => Object.fromEntries(
         Object.entries(r).filter(([, v]) => v !== null && v !== "")
-      ))), by);
+      ));
+
+      // A topic that matched nothing is the dangerous answer here, because
+      // `topic` is matched against `genre` and `genre` is a hand-kept sheet
+      // column with a closed handful of values in it — not a taxonomy anyone
+      // agreed to. An empty answer to topic:'ambient' means the sheet has no
+      // bucket by that name; it does not mean the shelf holds none, and a
+      // reader with no way to tell the two apart will say the wrong one
+      // (ADR-0023 §3). So a miss returns the vocabulary rather than nothing.
+      if (!out.length && topic) {
+        const vocab = await q(
+          env,
+          `SELECT genre AS name, count(*) AS n FROM t1_collection
+           WHERE genre IS NOT NULL AND genre != ''
+             AND (? IS NULL OR kind = ?)
+           GROUP BY 1 ORDER BY n DESC LIMIT 20`,
+          kind ?? null, kind ?? null
+        );
+        return {
+          rows: [], returned_count: 0, has_more: false,
+          ...(vocab.length ? { genres: vocab.map((r) => `${r.name} (${r.n})`) } : {}),
+          note: vocab.length
+            ? `nothing matched '${topic}'. Genre here is a free-text column on the owner's own inventory, and the genres listed above are the whole of it — a word that is not one of those buckets cannot match, whatever is actually on the shelf. Ask by title or creator instead, or use taste for what they play.`
+            : `nothing matched '${topic}', and nothing on this shelf carries a genre at all — so a miss says nothing either way. Ask by title or creator instead, or use taste for what they play.`,
+        };
+      }
+
+      // The vocabulary rides along on every genre-bearing answer too, so a
+      // caller learns the buckets exist before it reasons about a gap in them
+      // rather than after.
+      const shelf = await q(
+        env,
+        `SELECT genre AS name, count(*) AS n FROM t1_collection
+         WHERE genre IS NOT NULL AND genre != '' AND (? IS NULL OR kind = ?)
+         GROUP BY 1 ORDER BY n DESC LIMIT 20`,
+        kind ?? null, kind ?? null
+      );
+      const capped = cap(out, ctx);
+      const note = [
+        capped.note,
+        shelf.length
+          ? `genre is ${shelf.length} hand-assigned buckets on the owner's own inventory — coarse by construction, and never a claim that nothing outside them is on the shelf`
+          : null,
+      ].filter(Boolean).join(" · ");
+      return ordered({
+        ...capped,
+        ...(shelf.length ? { genres: shelf.map((r) => `${r.name} (${r.n})`) } : {}),
+        ...(note ? { note } : {}),
+      }, by);
     },
   },
 

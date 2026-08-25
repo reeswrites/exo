@@ -95,7 +95,10 @@ TOOL_ZONES: dict[str, Reads] = {
     # ── culture ───────────────────────────────────────────────────────────────
     "verdicts": Reads(required=("t1_verdicts",)),
     "reviews": Reads(required=("t1_film_review",)),
-    "taste": Reads(required=("t2_affinity",)),
+    # The scrobble stream is the answer; the affinity zone adds one column to it
+    # and, being a notes join, would otherwise decide the whole tool's grade
+    # (ADR-0023 §2). Held, `taste` still says what he listens to.
+    "taste": Reads(required=("t0_music",), enriches=("t2_affinity",)),
     # What he owns is the answer; play counts are colour on it.
     "collection": Reads(required=("t1_collection",), enriches=("t0_music",)),
     # ── table ─────────────────────────────────────────────────────────────────
