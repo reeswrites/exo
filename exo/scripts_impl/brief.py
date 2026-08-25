@@ -431,7 +431,8 @@ def build(served_counts: dict[str, int] | None = None,
     if crit_n:
         outlets = _one(con, f"SELECT count(DISTINCT outlet) FROM {P('t0_criticism')}", default=0)
         A(f"- **what the music press is publishing** — {crit_n:,} pieces from {outlets} "
-          "underground outlets, with headlines, bylines and links. SOMEBODY ELSE'S "
+          f"underground outlet{'' if outlets == 1 else 's'}, with headlines, bylines "
+          "and links. SOMEBODY ELSE'S "
           f"writing, never {config.OWNER_POSSESSIVE}: quote it as the outlet's and answer "
           "with the link. It is the only thing here that says what anyone other than "
           f"{config.OWNER} thinks about any of this.")
