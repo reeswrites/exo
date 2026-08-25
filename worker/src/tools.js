@@ -223,7 +223,7 @@ function fitInto(row, field, items, notePlaceholder) {
  * carries the scenes it actually matched, which is the part a caller can use.
  */
 const POOL_GAP =
-  "this pool is a crawl of selected scene tags, not a survey of everything released \u2014 a record absent from it was not judged and not rejected";
+  "this pool is a crawl of seven Bandcamp label rosters, not a survey of everything released \u2014 a record absent from it was not judged and not rejected. It reaches music that has a publisher and structurally cannot reach music that publishes itself: the rage and digicore end, which is the larger half of the listening record, is not on Bandcamp as label rosters at all. Ask `criticism` for that half";
 
 const WATCH_GAP =
   "watching is not covered: the Letterboxd watchlist was never exported, so absence of films here is a gap in the data, not an empty queue";
