@@ -413,6 +413,28 @@ def build(served_counts: dict[str, int] | None = None,
         A(f"- **events they could go to** — {events_n:,} upcoming in DC, merged from "
           f"eight sources. Judge fit against {config.OWNER_POSSESSIVE} taste rather "
           "than listing them.")
+    # The two discovery zones. Both are pure gain for an assistant and pure
+    # invisibility without this: nothing about a personal-context server suggests
+    # it knows what came out last week, so an assistant asked "anything new I'd
+    # like" will answer from the scrobbles — which is the one question the
+    # scrobbles structurally cannot answer.
+    releases_n = counts.get("t0_release", 0)
+    if releases_n:
+        A(f"- **records that just came out** — {releases_n:,} candidates, crawled by SCENE "
+          f"rather than by similarity to what {config.OWNER} already plays, with anything "
+          "already heard or already owned removed. This is the one thing "
+          "here that can name an artist with no listeners yet: a similarity API cannot "
+          "return a record nobody has scrobbled, and this pool never asked. It does not "
+          "rank by preference — it carries the play counts and leaves the judgement to "
+          "you. Absence from it means the crawl never looked, never that it was rejected.")
+    crit_n = counts.get("t0_criticism", 0)
+    if crit_n:
+        outlets = _one(con, f"SELECT count(DISTINCT outlet) FROM {P('t0_criticism')}", default=0)
+        A(f"- **what the music press is publishing** — {crit_n:,} pieces from {outlets} "
+          "underground outlets, with headlines, bylines and links. SOMEBODY ELSE'S "
+          f"writing, never {config.OWNER_POSSESSIVE}: quote it as the outlet's and answer "
+          "with the link. It is the only thing here that says what anyone other than "
+          f"{config.OWNER} thinks about any of this.")
     taste_n = counts.get("t1_taste", 0)
     if taste_n:
         A(f"- **what they SAY they like** — {taste_n:,} stated preferences across "

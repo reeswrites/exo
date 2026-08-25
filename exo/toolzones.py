@@ -115,6 +115,13 @@ TOOL_ZONES: dict[str, Reads] = {
     "history": Reads(required=("t1_item_event",), enriches=("t1_item",)),
     # ── world ─────────────────────────────────────────────────────────────────
     "events": Reads(required=("t0_event",)),
+    # Somebody else's writing about culture. One zone, no enrichment: an
+    # answer here is the press or it is nothing.
+    "criticism": Reads(required=("t0_criticism",)),
+    # The pool is the answer; the two joins are what make it a good one. Held
+    # `t0_music` costs the exclusion and the play counts, not the tool — which
+    # is exactly what `enriches` means, and the same split `collection` uses.
+    "releases": Reads(required=("t0_release",), enriches=("t0_music", "t1_collection")),
     "taste_profile": Reads(required=("t1_taste",)),
     # ── cross-domain ──────────────────────────────────────────────────────────
     # Every one of these is parameterised over the surface rather than part of
@@ -166,6 +173,8 @@ TOOL_DOMAINS: dict[str, str] = {
     "agenda": "commitments",
     "history": "commitments",
     "events": "world",
+    "criticism": "culture",
+    "releases": "culture",
     "taste_profile": "world",
     "around_the_time": "*",
     "backlog": "*",
