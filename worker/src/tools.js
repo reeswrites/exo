@@ -210,6 +210,21 @@ function fitInto(row, field, items, notePlaceholder) {
  * read/resume/make/buy and no watch will otherwise conclude nothing is
  * queued to watch, which is the opposite of true.
  */
+/**
+ * The release pool is taste-blind by construction, and saying so is not a
+ * disclaimer. It is a crawl of a handful of scene tags chosen by the instance,
+ * so a record outside those scenes was never looked at — its absence is a fact
+ * about the crawl and says nothing about whether the owner would like it. Every
+ * answer carries this for the same reason WATCH_GAP is carried: a coverage gap
+ * the caller cannot see from the rows is one they will read as a judgement.
+ *
+ * How MANY scenes is deliberately not stated. Which ones are crawled is an
+ * instance fact (ADR-0014) and the engine does not get to know it; the answer
+ * carries the scenes it actually matched, which is the part a caller can use.
+ */
+const POOL_GAP =
+  "this pool is a crawl of selected scene tags, not a survey of everything released \u2014 a record absent from it was not judged and not rejected";
+
 const WATCH_GAP =
   "watching is not covered: the Letterboxd watchlist was never exported, so absence of films here is a gap in the data, not an empty queue";
 
@@ -1022,6 +1037,110 @@ export const TOOLS = {
         like, like, like, like, free ? 1 : null, probe(ctx)
       );
       return cap(rows, ctx);
+    },
+  },
+
+  releases: {
+    class: "world", domain: "culture", kind: "entity",
+    reads: ["t0_release", "t0_music", "t1_collection"],
+    description:
+      "Records that came out lately in the scenes the owner listens to, with what they have NOT already heard removed. This is the one tool that can surface an artist with no listeners yet: the pool is crawled by scene tag rather than by similarity to what they already play, so it reaches releases a `getSimilar` recommendation structurally cannot. It does NOT rank by preference and will not tell you what they would like \u2014 it attaches the measured facts (their lifetime plays of that artist, whether they own anything by it, how many scenes surfaced it) and leaves the judgement to you. order='unfamiliar' is the discovery axis; order='familiar' is new work by artists already in heavy rotation.",
+    schema: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "Match against artist, title or label." },
+        scene: { type: "string", description: "One scene tag, e.g. 'digicore' or 'post-hardcore'." },
+        since: { type: "string", description: "ISO date. Only records released on or after it." },
+        include_heard: {
+          type: "boolean",
+          description: "Keep records they have already scrobbled or own. Off by default; the count removed is reported either way.",
+        },
+        order: {
+          type: "string",
+          description: "recent (default) | unfamiliar (fewest plays of that artist first) | familiar (most) | spread (surfaced under the most scenes)",
+        },
+      },
+    },
+    async run(env, { topic, scene, since, include_heard, order }, ctx) {
+      const by = ordering(order, {
+        recent: "release_date DESC, artist, title",
+        unfamiliar: "plays ASC, release_date DESC, artist, title",
+        familiar: "plays DESC, release_date DESC, artist, title",
+        spread: "scene_count DESC, listings DESC, release_date DESC, artist, title",
+      });
+      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const inScene = scene ? `%${scene.toLowerCase()}%` : null;
+      const share = topic || scene ? 1000 : 3;
+
+      // Aggregated once and joined, never correlated per row: t0_music is 40k
+      // scrobbles and the pool is thousands of releases, so a subquery per
+      // candidate is a table scan per candidate.
+      const POOL = `
+        WITH plays AS (
+          SELECT lower(artist) AS a, count(*) AS n FROM t0_music GROUP BY 1
+        ), heard AS (
+          SELECT DISTINCT lower(artist) AS a, lower(COALESCE(album,'')) AS t FROM t0_music
+        ), owns AS (
+          SELECT DISTINCT lower(COALESCE(creator,'')) AS a, lower(COALESCE(title,'')) AS t
+          FROM t1_collection
+        ), pool AS (
+          SELECT r.artist, r.title, r.release_date, r.url, r.label, r.scenes,
+                 r.scene_count, r.listings, r.mb_status,
+                 COALESCE(p.n, 0) AS plays,
+                 (h.t IS NOT NULL) AS scrobbled, (o.t IS NOT NULL) AS owned
+          FROM t0_release r
+          LEFT JOIN plays p ON p.a = lower(r.artist)
+          LEFT JOIN heard h ON h.a = lower(r.artist) AND h.t = lower(r.title)
+          LEFT JOIN owns  o ON o.a = lower(r.artist) AND o.t = lower(r.title)
+          WHERE (? IS NULL OR r.release_date >= ?)
+            AND (? IS NULL OR lower(r.scenes) LIKE ?)
+            AND (? IS NULL OR lower(r.artist) LIKE ? OR lower(r.title) LIKE ?
+                           OR lower(COALESCE(r.label,'')) LIKE ?)
+        )`;
+      const binds = [since ?? null, since ?? null, inScene, inScene, like, like, like, like];
+
+      const rows = await q(
+        env,
+        `${POOL}, kept AS (
+           SELECT * FROM pool WHERE ? = 1 OR (scrobbled = 0 AND owned = 0)
+         ), ranked AS (
+           -- Round-robin on the FIRST scene that surfaced a record, so one busy
+           -- tag cannot take the whole answer. Lifted for a filtered query, where
+           -- capping per scene would hide matches for the sole reason that they
+           -- share a tag.
+           SELECT *, row_number() OVER (
+             PARTITION BY substr(scenes, 1, instr(scenes || ',', ',') - 1)
+             ORDER BY ${by.sql}) AS rn
+           FROM kept
+         )
+         SELECT artist, title, release_date, url, label, scenes, mb_status,
+                plays,
+                CASE WHEN owned = 1 THEN 1 END AS owned,
+                CASE WHEN scene_count > 1 THEN scene_count END AS scenes_hit
+         FROM ranked WHERE rn <= ?
+         ORDER BY ${by.sql}
+         LIMIT ?`,
+        ...binds, include_heard ? 1 : 0, share, probe(ctx)
+      );
+
+      // The exclusion is the point of this tool, so it is stated rather than
+      // performed silently: an answer that dropped forty records he has already
+      // worn out is a different answer from one that had forty fewer candidates.
+      const [{ n: removed }] = await q(
+        env, `${POOL} SELECT count(*) AS n FROM pool WHERE scrobbled = 1 OR owned = 1`, ...binds);
+
+      const notes = [POOL_GAP];
+      if (!include_heard && removed) notes.push(`${removed} already heard or owned, removed`);
+      if (!rows.length) {
+        const [{ n }] = await q(env, `SELECT count(*) AS n FROM t0_release`);
+        return {
+          rows: [], returned_count: 0, has_more: false, order: by.order,
+          note: [n ? `nothing in ${n} candidates matched` : "the release pool is empty — no crawl has landed yet",
+                 ...notes].join(" \u00b7 "),
+        };
+      }
+      const out = ordered(cap(rows, ctx), by);
+      return { ...out, note: [out.note, ...notes].filter(Boolean).join(" \u00b7 ") };
     },
   },
 

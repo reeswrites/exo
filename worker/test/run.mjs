@@ -668,11 +668,68 @@ ok(new Set(evTitles).size === evTitles.length, "no title repeated in one answer"
 ok(ev2.rows.every((r) => r.start.slice(0, 10) >= new Date().toISOString().slice(0, 10)),
    "nothing already past");
 
+// Both zones below are INSTANCE plugin zones (exo-me's `releases` and
+// `criticism` loaders), so a different instance running this suite has no such
+// table and the tool throws inside D1 rather than returning an empty answer.
+// ADR-0020 keeps such a tool off the advertised surface in production; this file
+// calls TOOLS directly and bypasses that, so it asks first.
+const hasZone = async (t) => {
+  try {
+    await env.DB.prepare(`SELECT 1 FROM ${t} LIMIT 1`).bind().all();
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+console.log("\n── releases: a pool the profile cannot reach ──");
+const rel = await hasZone("t0_release")
+  ? await TOOLS.releases.run(env, {}, { exposure: "private" })
+  : { rows: [], note: "no crawl has landed yet" };
+if (!rel.rows.length && /no crawl has landed/.test(rel.note ?? "")) {
+  console.log("   (no release pool — skipping)");
+} else {
+  ok(rel.rows.length > 0, `releases -> ${rel.rows.length} candidates`);
+  // The coverage statement is not optional garnish. A caller that cannot see
+  // the crawl's edges will read an absence as a judgement.
+  ok(/not a survey of everything/.test(rel.note ?? ""),
+     "every answer states that the pool is a crawl, not a survey");
+  ok(rel.rows.every((r) => r.artist && r.title && r.url), "every candidate is nameable and linkable");
+  ok(rel.rows.every((r) => typeof r.plays === "number"),
+     "and carries the measured fact a caller would rank on, rather than a rank");
+
+  // The exclusion is the reason this lives in the record rather than in a
+  // recommender: it is a join, and a join that silently drops rows is a lie.
+  const heard = await TOOLS.releases.run(env, { include_heard: true }, { exposure: "private" });
+  ok(heard.rows.length >= rel.rows.length, "include_heard only ever widens the answer");
+  ok(!/already heard or owned/.test(heard.note ?? ""),
+     "and stops claiming a removal it did not make");
+
+  const scenes = {};
+  for (const r of rel.rows) scenes[(r.scenes ?? "").split(",")[0]] = 1;
+  ok(Object.keys(scenes).length > 1 || rel.rows.length <= 3,
+     `an unfiltered answer spans scenes (${Object.keys(scenes).join(", ")})`);
+
+  const disc = await TOOLS.releases.run(env, { order: "unfamiliar" }, { exposure: "private" });
+  const fam = await TOOLS.releases.run(env, { order: "familiar" }, { exposure: "private" });
+  ok(disc.order === "unfamiliar" && fam.order === "familiar", "both ends of the play-count axis");
+  ok(!disc.rows.length || !fam.rows.length ||
+     disc.rows[0].plays <= fam.rows[0].plays,
+     "and they are actually opposite ends of it");
+
+  const none = await TOOLS.releases.run(
+    env, { topic: "zzzznotanartistzzzz" }, { exposure: "private" });
+  ok(none.rows.length === 0 && /matched|empty/.test(none.note ?? ""),
+     "an empty answer is explained");
+}
+
 console.log("\n── criticism: somebody else's writing ──");
 // Skipped rather than failed when the zone is absent: an instance that has not
 // run `fetch-criticism` is not a broken instance, and this suite is run against
 // whatever record the operator happens to have built.
-const crit = await TOOLS.criticism.run(env, {}, { exposure: "private" });
+const crit = await hasZone("t0_criticism")
+  ? await TOOLS.criticism.run(env, {}, { exposure: "private" })
+  : { rows: [], note: "an empty zone" };
 if (!crit.rows.length && /empty zone/.test(crit.note ?? "")) {
   console.log("   (no press collected — skipping)");
 } else {

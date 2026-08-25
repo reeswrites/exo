@@ -386,6 +386,7 @@ Adding one is a decision about exposure, not a feature increment.
 |---|---|---|---|---|
 | `collection` | culture | possession | entity | What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. |
 | `criticism` | culture | world | text | What the music press is publishing — titles, bylines, dates and the outlet's own blurb, from the underground outlets the owner follows, with the link to the piece. |
+| `releases` | culture | world | entity | Records that came out lately in the scenes the owner listens to, with what they have NOT already heard removed. |
 | `reviews` | culture | authored | text | The owner's written film reviews from Letterboxd — 115 of them, in their own words, each with a link. |
 | `taste` | culture | revealed | event | What the owner actually listens to, straight off the scrobble stream — revealed preference, as distinct from what they say. |
 | `verdicts` | culture | authored | text | The owner's written opinions on books, films, tv and music — in their own words, with reasoning. |

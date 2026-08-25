@@ -27,6 +27,10 @@ for (const [table, cols] of Object.entries({
   t0_chat_topic: ["id", "title", "landed", "turns", "his_turns", "last_seen", "started", "summary", "summary_by", "created"],
   t1_taste: ["id", "kind", "key", "value", "created"],
   t0_taste_derived: ["id", "kind", "text", "created"],
+  t0_release: ["id", "artist", "title", "release_date", "url", "label", "art", "mbid",
+               "mb_status", "scenes", "scene_count", "listings", "medium", "created"],
+  t0_criticism: ["id", "outlet", "outlet_slug", "title", "byline", "published", "url",
+                 "summary", "chars", "tags", "medium", "created"],
 })) {
   const exists = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(table);
   if (!exists.n) db.exec(`CREATE TABLE "${table}" (${cols.map((c) => `"${c}"`).join(", ")})`);
