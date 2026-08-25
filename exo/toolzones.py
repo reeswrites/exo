@@ -101,6 +101,12 @@ TOOL_ZONES: dict[str, Reads] = {
     "taste": Reads(required=("t0_music",), enriches=("t2_affinity",)),
     # What he owns is the answer; play counts are colour on it.
     "collection": Reads(required=("t1_collection",), enriches=("t0_music",)),
+    # Required rather than any_of, and t0_tv cannot stand in for it. The
+    # question is how far through something got, which is watched OVER total —
+    # and only the MAL list carries a total. Trakt alone would answer every row
+    # "unknown", which is not this tool with less in it. What Trakt adds is a
+    # fresher last-watched date, which is colour on the fraction.
+    "watching": Reads(required=("t0_anime",), enriches=("t0_tv",)),
     # ── table ─────────────────────────────────────────────────────────────────
     "places": Reads(required=("t1_visits",)),
     "recipes": Reads(required=("t1_recipe",)),
@@ -134,8 +140,9 @@ TOOL_ZONES: dict[str, Reads] = {
                                  ("t0_tv",), ("t0_beer",))),
     "medium": Reads(any_of=(("t0_film",), ("t0_book",), ("t0_tv",), ("t0_music",),
                             ("t0_beer",), ("t1_visits",), ("t1_verdicts",),
-                            ("t1_film_review",), ("t1_collection",))),
-    "ratings": Reads(any_of=(("t0_film",), ("t0_book",), ("t0_beer",), ("t1_visits",))),
+                            ("t1_film_review",), ("t1_collection",), ("t0_anime",))),
+    "ratings": Reads(any_of=(("t0_film",), ("t0_book",), ("t0_beer",), ("t1_visits",),
+                             ("t0_anime",))),
     # A rollup over a facet of the thing rated. Beer is the only medium whose
     # rows carry one, so holding that zone is the whole tool rather than a
     # narrower answer — which is `required`, not `any_of` with one group.
@@ -172,6 +179,7 @@ TOOL_DOMAINS: dict[str, str] = {
     "reviews": "culture",
     "taste": "culture",
     "collection": "culture",
+    "watching": "culture",
     "places": "table",
     "recipes": "table",
     "projects": "workshop",

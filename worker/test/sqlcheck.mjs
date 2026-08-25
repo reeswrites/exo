@@ -31,6 +31,20 @@ for (const [table, cols] of Object.entries({
                "mb_status", "scenes", "scene_count", "listings", "medium", "created"],
   t0_criticism: ["id", "outlet", "outlet_slug", "title", "byline", "published", "url",
                  "summary", "chars", "tags", "medium", "created"],
+  // An instance that has never dropped a MyAnimeList export into raw/ still has
+  // to have `watching` and `ratings(medium:'anime')` checked: the join in
+  // `watching` is the most intricate SQL added since `events`, and an absent
+  // zone would skip exactly it.
+  t0_anime: ["id", "title", "mal_id", "score", "status", "episodes_watched",
+             "episodes_total", "series_type", "rewatches", "started", "finished",
+             "last_updated", "url", "match_key", "created"],
+  // The other side of that join, for a bundle carrying no television at all —
+  // without it the whole statement is filed as "absent zone" and goes
+  // unchecked. It does NOT paper over a stale bundle: a t0_tv published before
+  // `match_key` existed is a real table, so the shim does not apply and the
+  // missing column is reported, which is the right answer (republish).
+  t0_tv: ["id", "title", "year", "plays", "episodes_watched", "seasons_touched",
+          "imdb", "url", "match_key", "created"],
 })) {
   const exists = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(table);
   if (!exists.n) db.exec(`CREATE TABLE "${table}" (${cols.map((c) => `"${c}"`).join(", ")})`);

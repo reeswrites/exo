@@ -12,6 +12,11 @@ episode counts belong on the show as a measure of how far it got.
 
 `created` is last_watched_at, so recency means the same thing it does for films
 and scrobbles rather than "when the row was written".
+
+Trakt says what was watched and never how much there was to watch, so nothing
+here can answer "did he finish it". `match_key` is what lets `t0_anime` supply
+that missing half for the anime shelf; see `titles.py` for why the key is only
+ever trusted with a date.
 """
 from __future__ import annotations
 
@@ -19,6 +24,7 @@ import json
 
 from .. import config
 from ..provenance import Row, stable_id
+from .titles import match_key
 
 
 def load() -> list[Row]:
@@ -56,6 +62,12 @@ def load() -> list[Row]:
                 "seasons_touched": len(seasons),
                 "imdb": ids.get("imdb") or "",
                 "url": f"https://trakt.tv/shows/{slug}" if slug else "",
+                # The only key t0_anime can be joined on: neither export carries
+                # an id the other knows. Added to the payload rather than
+                # computed on the SQL side so the join is a column comparison,
+                # and safe to add because this row's id is minted from the Trakt
+                # id above rather than from its payload.
+                "match_key": match_key(title),
             },
         ))
     return rows

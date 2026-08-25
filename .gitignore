@@ -17,6 +17,8 @@
 /catalog/
 
 # the fixture's build output, which is regenerable
+# (backups/ lands here when the suite runs with EXO_HOME=fixtures/instance)
+fixtures/instance/backups/
 fixtures/instance/zones/t0/
 fixtures/instance/zones/t1/
 fixtures/instance/zones/t2/

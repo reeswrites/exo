@@ -315,6 +315,21 @@ def build(served_counts: dict[str, int] | None = None,
       "point, so a return says more than a high score does). Beer rows carry the "
       "brewery, style, abv and venue; `facets` rolls them up by style family, "
       "brewery or venue, which twenty rating rows cannot.")
+    # Television is the one medium whose consumption line cannot say how far
+    # anything got: Trakt counts episodes watched and never episodes existing.
+    # The anime list is where the denominator is, so the shelf and the tool that
+    # divides by it are advertised together — a tool nobody is told about is a
+    # tool nobody calls, and the brief is the only thing a client reads without
+    # being asked.
+    anime_n = _one(con, f"SELECT count(*) FROM {P('t0_anime')} WHERE status <> 'plan_to_watch'")
+    if anime_n:
+        anime_rated = _one(con, f"SELECT count(*) FROM {P('t0_anime')} WHERE score > 0")
+        anime_queued = _one(con, f"SELECT count(*) FROM {P('t0_anime')} WHERE status = 'plan_to_watch'")
+        A(f"- **the anime shelf** — {anime_n:,} titles watched or watching and "
+          f"{anime_queued:,} queued, {anime_rated:,} of them scored 1-10 on "
+          "MyAnimeList. The only part of the record carrying episode TOTALS, so "
+          "`watching` can say what was left unfinished and `ratings(medium:'anime')` "
+          "is the only rating television has — Trakt has none.")
     A(f"- **{config.OWNER_POSSESSIVE} own criticism** — {reviews_n:,} written film "
       f"reviews with links, plus {counts.get('t1_verdicts', 0):,} longer verdicts "
       f"across media. These are verbatim \u2014 {config.OWNER_POSSESSIVE} sentences, "

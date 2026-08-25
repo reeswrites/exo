@@ -39,9 +39,9 @@ you and none of which will give it back.
 ## What it actually does
 
 **Loaders** pull your data out of the silos it is trapped in: Last.fm,
-Letterboxd, Goodreads, Untappd, Trakt, Raindrop, your Claude and ChatGPT
-exports, your markdown notes, your published writing, your git repos. Each
-loader writes exactly one zone and nothing else.
+Letterboxd, Goodreads, Untappd, Trakt, MyAnimeList, Raindrop, your Claude and
+ChatGPT exports, your markdown notes, your published writing, your git repos.
+Each loader writes exactly one zone and nothing else.
 
 **Notes get their own front door**, because notes are the one thing that keeps
 changing address. `exo ingest-notes` reads a *note source* — Apple Notes, a
@@ -201,6 +201,7 @@ ones:
 | [0018](docs/adr/0018-the-notes-tree-is-the-original-and-the-bucket-is-a-mirror.md) | the notes tree is the original; the bucket is a mirror |
 | [0019](docs/adr/0019-publicity-is-an-axis-not-an-adjective.md) | publicity is an axis, not an adjective |
 | [0020](docs/adr/0020-the-surface-is-modular-and-a-peer-is-not-a-competitor.md) | the surface is modular, and a peer is not a competitor |
+| [0024](docs/adr/0024-a-denominator-is-a-source.md) | a denominator is a source, not a calculation |
 
 ## Contributing
 

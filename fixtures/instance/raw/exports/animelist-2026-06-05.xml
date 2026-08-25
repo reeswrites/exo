@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+ Created by XML Export feature at MyAnimeList.net
+ Hand-written fixture. Every title here is invented; nobody's list is in this
+ repository (CONTRIBUTING). What it encodes is the SHAPES the loader and
+ `watching` have to survive:
+
+   - an entry that shares a title with the Trakt fixture, so the date join hits
+   - an entry that shares one only after normalisation ("The Difference Engine.")
+   - an entry Trakt has never heard of, so the date falls back to the list
+   - `0000-00-00`, which is MAL's null date and parses as nothing
+   - `series_episodes` of 0, which is an airing series with no known length —
+     the row that can never be called stalled however long it sits
+   - a unix `my_last_updated`, and an older entry carrying none at all
+   - all five statuses, including one On-Hold that is older than the stall
+     window, so a declared status is seen beating a derived one
+-->
+<myanimelist>
+	<myinfo>
+		<user_id>1000001</user_id>
+		<user_name>fixture</user_name>
+		<user_export_type>1</user_export_type>
+		<user_total_anime>10</user_total_anime>
+		<user_total_watching>4</user_total_watching>
+		<user_total_completed>3</user_total_completed>
+		<user_total_onhold>1</user_total_onhold>
+		<user_total_dropped>1</user_total_dropped>
+		<user_total_plantowatch>1</user_total_plantowatch>
+	</myinfo>
+	<anime>
+		<series_animedb_id>9001</series_animedb_id>
+		<series_title><![CDATA[Second Order]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>24</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>16</my_watched_episodes>
+		<my_start_date>2026-05-02</my_start_date>
+		<my_finish_date>0000-00-00</my_finish_date>
+		<my_score>8</my_score>
+		<my_status>Watching</my_status>
+		<my_times_watched>0</my_times_watched>
+		<my_tags><![CDATA[]]></my_tags>
+		<update_on_import>0</update_on_import>
+	</anime>
+	<anime>
+		<series_animedb_id>9002</series_animedb_id>
+		<series_title><![CDATA[The Difference Engine.]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>12</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>6</my_watched_episodes>
+		<my_start_date>2026-06-04</my_start_date>
+		<my_finish_date>0000-00-00</my_finish_date>
+		<my_score>7</my_score>
+		<my_status>Watching</my_status>
+		<my_times_watched>0</my_times_watched>
+		<my_tags><![CDATA[]]></my_tags>
+		<update_on_import>0</update_on_import>
+	</anime>
+	<anime>
+		<series_animedb_id>9003</series_animedb_id>
+		<series_title><![CDATA[Nine Bridges]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>12</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>12</my_watched_episodes>
+		<my_start_date>2026-06-01</my_start_date>
+		<my_finish_date>2026-07-19</my_finish_date>
+		<my_score>9</my_score>
+		<my_status>Completed</my_status>
+		<my_times_watched>1</my_times_watched>
+		<my_tags><![CDATA[]]></my_tags>
+		<update_on_import>0</update_on_import>
+	</anime>
+	<anime>
+		<series_animedb_id>9004</series_animedb_id>
+		<series_title><![CDATA[Field Recordings]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>13</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>4</my_watched_episodes>
+		<my_start_date>2026-01-20</my_start_date>
+		<my_finish_date>0000-00-00</my_finish_date>
+		<my_score>6</my_score>
+		<my_status>Watching</my_status>
+		<my_times_watched>0</my_times_watched>
+		<my_tags><![CDATA[]]></my_tags>
+		<update_on_import>0</update_on_import>
+	</anime>
+	<anime>
+		<series_animedb_id>9005</series_animedb_id>
+		<series_title><![CDATA[Paper Lanterns & Rope]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>12</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>3</my_watched_episodes>
+		<my_start_date>2025-09-14</my_start_date>
+		<my_finish_date>0000-00-00</my_finish_date>
+		<my_score>4</my_score>
+		<my_status>Dropped</my_status>
+		<my_times_watched>0</my_times_watched>
+		<my_tags><![CDATA[]]></my_tags>
+		<update_on_import>0</update_on_import>
+	</anime>
+	<anime>
+		<series_animedb_id>9006</series_animedb_id>
+		<series_title><![CDATA[The Long Quiet]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>26</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>7</my_watched_episodes>
+		<my_start_date>2024-08-11</my_start_date>
+		<my_finish_date>0000-00-00</my_finish_date>
+		<my_score>6</my_score>
+		<my_status>On-Hold</my_status>
+		<my_times_watched>0</my_times_watched>
+		<my_tags><![CDATA[]]></my_tags>
+		<update_on_import>0</update_on_import>
+	</anime>
+	<anime>
+		<series_animedb_id>9007</series_animedb_id>
+		<series_title><![CDATA[Salt and Static]]></series_title>
+		<series_type>ONA</series_type>
+		<series_episodes>12</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>5</my_watched_episodes>
+		<my_start_date>2024-06-02</my_start_date>
+		<my_finish_date>0000-00-00</my_finish_date>
+		<my_score>0</my_score>
+		<my_status>Watching</my_status>
+		<my_times_watched>0</my_times_watched>
+		<my_last_updated>1726358400</my_last_updated>
+		<my_tags><![CDATA[]]></my_tags>
+		<update_on_import>0</update_on_import>
+	</anime>
+	<anime>
+		<series_animedb_id>9008</series_animedb_id>
+		<series_title><![CDATA[Orbital Mechanics]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>0</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>9</my_watched_episodes>
+		<my_start_date>2026-07-01</my_start_date>
+		<my_finish_date>0000-00-00</my_finish_date>
+		<my_score>0</my_score>
+		<my_status>Watching</my_status>
+		<my_times_watched>0</my_times_watched>
+		<my_tags><![CDATA[]]></my_tags>
+		<update_on_import>0</update_on_import>
+	</anime>
+	<anime>
+		<series_animedb_id>9009</series_animedb_id>
+		<series_title><![CDATA[Tidewater Bell]]></series_title>
+		<series_type>Movie</series_type>
+		<series_episodes>1</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>0</my_watched_episodes>
+		<my_start_date>0000-00-00</my_start_date>
+		<my_finish_date>0000-00-00</my_finish_date>
+		<my_score>0</my_score>
+		<my_status>Plan to Watch</my_status>
+		<my_times_watched>0</my_times_watched>
+		<my_tags><![CDATA[]]></my_tags>
+		<update_on_import>0</update_on_import>
+	</anime>
+	<anime>
+		<series_animedb_id>9010</series_animedb_id>
+		<series_title><![CDATA[Winter Carriage]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>26</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>26</my_watched_episodes>
+		<my_start_date>2023-01-09</my_start_date>
+		<my_finish_date>2023-04-18</my_finish_date>
+		<my_score>9</my_score>
+		<my_status>Completed</my_status>
+		<my_times_watched>2</my_times_watched>
+		<my_tags><![CDATA[]]></my_tags>
+		<update_on_import>0</update_on_import>
+	</anime>
+</myanimelist>
