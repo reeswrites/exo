@@ -66,6 +66,25 @@ def test_grading_a_held_zone_is_an_error_not_a_no_op():
     assert "not served" in problems[0] and "cache_maps" in problems[0]
 
 
+def test_a_scoped_run_does_not_report_the_zones_it_skipped_as_unserved():
+    """`--only` narrows what a run RECOMPUTES, never what the manifest serves.
+
+    The zones a lane skips are carried forward from the live projection and are
+    still on the surface with rows to be public about. Validating grades against
+    the narrowed list turned the whole publicity block into a landmine: the
+    nightly notes lane rebuilds four zones, and every other graded zone in the
+    manifest came back as "graded but not served" — so an instance that filled
+    the block in refused to publish on every scoped run and passed on the full
+    one, which is the worst way for this to be wrong.
+    """
+    manifest = {"zone_exposure": {z: "private" for z in SERVED}}
+    scoped = ["t1_notes"]
+    assert _exposure_problems(manifest, SERVED) == []
+    assert _exposure_problems(manifest, scoped), (
+        "the narrowed list is what the bug looked like — kept here so the call "
+        "site passing the manifest's full served list is the thing under test")
+
+
 def test_doc_keys_are_prose_not_zones():
     """`_doc` carries the instructions for the humans reading the manifest, and
     it must not be mistaken for a zone graded `[...]`."""
