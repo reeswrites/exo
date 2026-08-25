@@ -415,6 +415,25 @@ Adding one is a decision about exposure, not a feature increment.
 
 <!-- TOOLS:END -->
 
+**Ordering is part of the contract (ADR-0022).** Every `ORDER BY` is over a
+measured fact, and where a tool's rows carry more than one, the caller picks
+which orders the answer — from one vocabulary, so it is learned once:
+
+| `order` | what it means | offered by |
+|---|---|---|
+| `recent` | newest first — the default wherever the record carries a date | `ratings`, `reviews`, `places`, `collection`, `backlog`, `projects` |
+| `oldest` | the same axis reversed, for what has been sitting | `backlog`, `collection` |
+| `rated` | the owner's own rating, highest first | `ratings` (default), `reviews`, `places` (default) |
+| `played` | how often they actually reached for it | `collection` |
+
+A tool that offers a choice returns `order: "<name>"` beside `returned_count`
+and `has_more`, because a capped list means something different on each axis:
+twenty films off 720 sorted by rating are the *top* twenty, and twenty by
+recency are the *last* twenty. A tool with one axis says nothing, because there
+is nothing a caller could have asked for instead. An unrecognised name falls back to the default and says so rather than
+failing the call. `verdicts` offers no `recent`, because that zone carries no
+date and a sort over an all-NULL column is hash order wearing a promise.
+
 The four project tools carry prose and metadata only. No source code is captured
 at any layer (ADR-0011), so a reader offering to review that code from here is
 offering something the store does not hold.

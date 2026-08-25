@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { env, corpus } from "./harness.mjs";
-import { TOOLS, CLASSES, DOMAINS, KINDS, cap, probe, pageSize, ROW_CAP, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
+import { TOOLS, CLASSES, DOMAINS, KINDS, cap, probe, pageSize, ordering, ROW_CAP, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
 import { GRADES, DEFAULT_GRADE, gradeOf, bestGradeOf, loadExposure, TTL_MS } from "../src/exposure.js";
 import worker from "../src/index.js";
 
@@ -110,6 +110,82 @@ for (const [name, t] of Object.entries(TOOLS)) {
 }
 ok(unstable.length === 0,
    `every limited query has a unique tiebreaker${unstable.length ? ":\n         " + unstable.join("\n         ") : ""}`);
+
+console.log("\n── the caller picks the axis, and the answer names it (ADR-0022) ──");
+// The chooser itself, with no data in the way: first key wins by default, a
+// known name is honoured, and an unknown one falls back rather than failing —
+// but says so, because a silently different sort is a wrong belief.
+const oDefault = ordering(undefined, { rated: "a DESC", recent: "b DESC" });
+ok(oDefault.order === "rated" && oDefault.sql === "a DESC" && !oDefault.note,
+   "the first axis is the default, quietly");
+ok(ordering("recent", { rated: "a", recent: "b" }).sql === "b", "a named axis is honoured");
+const oBad = ordering("sideways", { rated: "a", recent: "b" });
+ok(oBad.order === "rated" && /no order called/.test(oBad.note ?? ""),
+   `an unknown axis falls back and confesses: ${oBad.note}`);
+ok(ordering("RECENT ", { rated: "a", recent: "b" }).order === "recent", "case and stray space do not lose the axis");
+// The SQL is never the caller's: the argument only ever selects a key.
+ok(ordering("a DESC; DROP TABLE t0_film", { rated: "a" }).sql === "a",
+   "a caller cannot put SQL in an order");
+
+// Every list tool that offers a choice must SAY which one it answered on. A
+// capped twenty means the top twenty on one axis and the last twenty on the
+// other, and has_more cannot tell those apart.
+const desc = (rows, f) => rows.every((r, i, a) => i === 0 || f(a[i - 1]) >= f(r));
+const num = (v) => (v === null || v === undefined || v === "" ? -Infinity : parseFloat(v));
+const day = (v) => v ?? "";
+
+const oFilmsRated = await TOOLS.ratings.run(env, { medium: "films" });
+ok(oFilmsRated.order === "rated", "ratings answers on the rated axis by default");
+ok(desc(oFilmsRated.rows, (r) => num(r.rating)), "and the ratings actually descend");
+const oFilmsRecent = await TOOLS.ratings.run(env, { medium: "films", order: "recent" });
+ok(oFilmsRecent.order === "recent" && desc(oFilmsRecent.rows, (r) => day(r.when_)),
+   "ratings order=recent reaches what was watched lately, which the top twenty never showed");
+ok(oFilmsRated.rows[0]?.label !== oFilmsRecent.rows[0]?.label
+   || oFilmsRated.rows.length <= 1,
+   "the two axes are not the same twenty");
+
+const oRevRecent = await TOOLS.reviews.run(env, {});
+ok(oRevRecent.order === "recent" && desc(oRevRecent.rows, (r) => day(r.watched)),
+   "reviews leads with the newest watch");
+const oRevRated = await TOOLS.reviews.run(env, { order: "rated" });
+ok(oRevRated.order === "rated" && desc(oRevRated.rows, (r) => num(r.rating)),
+   "reviews order=rated reaches the films he thought most of");
+
+const oPlaces = await TOOLS.places.run(env, {});
+ok(oPlaces.order === "rated" && desc(oPlaces.rows, (r) => num(r.rating)),
+   "places ranks by a CAST rating — a 10 above a 9.5, which a text sort put last");
+ok(oPlaces.rows.every((r) => r.visited !== undefined),
+   "and every visit carries its date, so a place loved in 2019 is not one loved last month");
+const oPlacesRecent = await TOOLS.places.run(env, { order: "recent" });
+ok(oPlacesRecent.order === "recent" && desc(oPlacesRecent.rows, (r) => day(r.visited)),
+   "places order=recent is where they have actually been eating");
+
+const oVerdicts = await TOOLS.verdicts.run(env, {});
+ok(oVerdicts.order === "rated" && desc(oVerdicts.rows, (r) => num(r.rating)),
+   "verdicts ranks by rating — its `created` is NULL on every row, so newest-first was hash order");
+ok(!("order" in (TOOLS.verdicts.schema.properties ?? {})),
+   "and it offers no axis its rows cannot answer");
+
+const oCol = await TOOLS.collection.run(env, {});
+ok(oCol.order === "recent" && desc(oCol.rows, (r) => day(r.acquired)),
+   "collection leads with the newest acquisition");
+const oColOld = await TOOLS.collection.run(env, { order: "oldest" });
+ok(oColOld.rows.filter((r) => r.acquired).every((r, i, a) => i === 0 || a[i - 1].acquired <= r.acquired),
+   "oldest climbs, and the undated do not lead a list about what has been sitting longest");
+const oColPlayed = await TOOLS.collection.run(env, { kind: "vinyl", order: "played" });
+ok(oColPlayed.order === "played" && desc(oColPlayed.rows, (r) => num(r.plays)),
+   "played ranks the shelf by scrobbles — owning a record and wearing it out are different claims");
+
+const oRecipes = await TOOLS.recipes.run(env, {});
+ok(oRecipes.order === "recent", "recipes no longer sort by the alphabet, which was a fact about nothing");
+const firstUndated = oRecipes.rows.findIndex((r) => !r.published);
+ok(firstUndated === -1 || oRecipes.rows.slice(firstUndated).every((r) => !r.published),
+   "and the undated seed templates sort behind everything actually written");
+const oRecipeOne = await TOOLS.recipes.run(env, { full: true });
+ok(oRecipeOne.rows[0]?.title, "full:true answers with a recipe that has a name");
+
+const oProjects = await TOOLS.projects.run(env, { status: "dormant" });
+ok(oProjects.order === "worked", "projects names the axis it was already using instead of falling through to it");
 
 console.log("\n── per-call grading, and the invariant that makes it safe ──");
 // A tool spanning two publicity grades answered every question at the tighter
