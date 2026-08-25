@@ -56,8 +56,12 @@ played   how often they actually reached for it
 One chooser, `ordering()` in `worker/src/tools.js`, holds the vocabulary. A tool
 passes a map of only the axes its rows can answer; the **first key is its
 default**; the SQL never comes from the caller, which only ever picks a key out
-of a map written in the file. Every answer carries `order: "<name>"`, so a
-capped list is legible as the top of something rather than a sample of it.
+of a map written in the file. Such a tool's answer carries `order: "<name>"`, so
+a capped list is legible as the top of something rather than a sample of it.
+
+A tool with one axis returns no `order` at all. The field means *this was your
+choice and here is what it resolved to*; on a tool where nothing could have been
+asked for instead, stamping it would dress a fixed sort as a decision.
 
 An unrecognised name falls back to the default and says so in the note. A
 misspelled sort is not worth failing a call over, and it is not worth lying
@@ -91,7 +95,10 @@ hash order.
 - Ordering is a caller-visible part of the tool contract, so a new tool over a
   zone with a date and a score is expected to offer both and name its default.
 - `order` joins `returned_count` and `has_more` as envelope facts an assistant
-  can read without parsing prose.
+  can read without parsing prose — on the tools that offer a choice.
+- Ties break on the tool's other fact before they fall through to `id`, so a
+  page of 5-star films is dated rather than hashed. `medium`'s top-three, which
+  the tie scan never saw because it caps at a literal 3, gets the same treatment.
 - Ratings are cast before they are compared, everywhere. A rating that arrives
   as text is a storage detail and must never become a ranking.
 - ADR-0013 §1 stands, with its subject sharpened: every `ORDER BY` is over a

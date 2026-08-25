@@ -703,7 +703,7 @@ export const TOOLS = {
           `SELECT ${r.label} AS label, ${cast} AS rating, ${urlCol}
                   substr(created,1,10) AS when_
            FROM ${d.table} ${filter}
-           ORDER BY ${cast} DESC, created DESC LIMIT 3`
+           ORDER BY ${cast} DESC, created DESC, id LIMIT 3`
         );
         // The scale rides with the numbers, always. A bare 9.5 next to a bare
         // 4.5 invites the reader to rank them, and they are not on the same axis.

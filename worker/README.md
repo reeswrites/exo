@@ -426,10 +426,11 @@ which orders the answer — from one vocabulary, so it is learned once:
 | `rated` | the owner's own rating, highest first | `ratings` (default), `reviews`, `places` (default) |
 | `played` | how often they actually reached for it | `collection` |
 
-Every answer carries `order: "<name>"` beside `returned_count` and `has_more`,
-because a capped list means something different on each axis: twenty films off
-720 sorted by rating are the *top* twenty, and twenty by recency are the *last*
-twenty. An unrecognised name falls back to the default and says so rather than
+A tool that offers a choice returns `order: "<name>"` beside `returned_count`
+and `has_more`, because a capped list means something different on each axis:
+twenty films off 720 sorted by rating are the *top* twenty, and twenty by
+recency are the *last* twenty. A tool with one axis says nothing, because there
+is nothing a caller could have asked for instead. An unrecognised name falls back to the default and says so rather than
 failing the call. `verdicts` offers no `recent`, because that zone carries no
 date and a sort over an all-NULL column is hash order wearing a promise.
 
