@@ -94,12 +94,25 @@ console.log("\n── a total order, so the same question gets the same answer �
 // rewrites the table — and import.sh DROPs and re-INSERTs every table, every
 // publish.
 const UNIQUE = /,\s*(?:[a-z]\.)?(?:id|url|repo|slug)\s*(?:LIMIT|`|$)/i;
+// A GROUP BY makes its own key unique across the result — there is exactly one
+// row per value of it — so ending the order on that key is as total as ending
+// it on `id`, and `id` is not even in scope after a grouping. Accepted only
+// when the same statement actually groups by the term the order ends on, so
+// this widens the lint by one provable case rather than by a name.
+const groupedTiebreak = (clause, sql) => {
+  const g = sql.match(/GROUP BY\s+([A-Za-z_][\w.]*)/i);
+  return !!g && new RegExp(`,\\s*${g[1]}\\s*$`, "i").test(clause);
+};
 const unstable = [];
 for (const [name, t] of Object.entries(TOOLS)) {
   const src = t.run.toString();
   for (const m of src.matchAll(/(ORDER BY[\s\S]{0,400}?)LIMIT \?/g)) {
     const clause = m[1].replace(/--[^\n]*/g, " ").replace(/\s+/g, " ").trim();
-    if (!UNIQUE.test(clause + "LIMIT")) unstable.push(`${name}: ${clause.slice(0, 70)}`);
+    // The statement this ORDER BY belongs to: back to the template literal it
+    // opened in, so a GROUP BY in a different query cannot vouch for this one.
+    const stmt = src.slice(src.lastIndexOf("`", m.index) + 1, m.index + m[0].length);
+    if (UNIQUE.test(clause + "LIMIT") || groupedTiebreak(clause, stmt)) continue;
+    unstable.push(`${name}: ${clause.slice(0, 70)}`);
   }
   // A LIMIT with no ORDER BY at all is the same bug, louder.
   for (const m of src.matchAll(/`[^`]*\bLIMIT \?[^`]*`/g)) {
@@ -516,6 +529,106 @@ ok(noSuchGenre.rows.length === 0, "a topic nothing matches returns no rows");
 ok(Array.isArray(noSuchGenre.genres) && /vocabulary/.test(noSuchGenre.note ?? ""),
    "and answers with the vocabulary instead, so the miss is legible as a gap in it");
 
+console.log("\n── beer: a check-in is more than a name (G1-G4) ──");
+{
+  // Placed here rather than beside `ratings` and `medium` because every
+  // assertion below needs only t0_beer, which the engine fixture carries — so
+  // this block runs against a hand-written fixture as well as against a real
+  // record, and does not depend on a plugin zone being present.
+
+  // ── the entity has metadata ────────────────────────────────────────────────
+  const m = await TOOLS.medium.run(env, { name: "beer" });
+  const b = m.rows[0];
+  ok(b.rated?.n > 0 && b.rated.scale === "0-5", `beer: ${b.consumed} check-ins, ${b.rated.n} rated`);
+  ok(b.rated.top.some((r) => r.style), "the top of the scale says what the beers WERE, not only what they were called");
+
+  // ── the repeat is the signal, and it was arithmetic nobody did ─────────────
+  // 1,947 distinct beers across 1,964 check-ins. Novelty is the point, so a
+  // return means more than any single 5 does — and a reader had to subtract one
+  // published number from another to find it.
+  ok(typeof b.repeat_count === "number", "the medium row states how many beers were returned to");
+  ok(b.repeat_count >= 0 && b.repeat_count <= b.consumed - b.distinct_beers,
+     `repeat_count (${b.repeat_count}) cannot exceed the gap between check-ins and distinct beers`);
+  ok(b.consumed === b.distinct_beers || b.repeat_count > 0,
+     "a record with more check-ins than beers reports a non-zero repeat count");
+  const cm = await TOOLS.consumption.run(env, { medium: "beer" });
+  ok(cm.rows[0].repeat_count === b.repeat_count && cm.rows[0].distinct_beers === b.distinct_beers,
+     "and consumption agrees with medium about it, to the row");
+  ok(/taste_summary\(kind:'beer'\)/.test(m.note ?? "") && /facets\(/.test(m.note ?? ""),
+     "the beer row names its calibration and the rollups, because neither is guessable");
+
+  // ── the scale does not read off its face ───────────────────────────────────
+  const cal = await TOOLS.taste_summary.run(env, { kind: "beer" });
+  ok(cal.rows.length === 1 && cal.rows[0].kind === "beer", "taste_summary answers for beer");
+  const doc = cal.rows[0].text;
+  ok(/median/i.test(doc) && /decile/i.test(doc), "it gives the median and the deciles");
+  ok(/\| 10% \|/.test(doc) && /\| 90% \|/.test(doc), "a full decile table, not a headline number");
+  ok(/breweryMinRating/.test(doc),
+     "and reads taste_profile's 4.0 threshold against the distribution, which is the collision that made it necessary");
+  // Conditional, because a record where everything is rated has nothing to
+  // disclaim and a paragraph saying "0 check-ins carry no rating" is noise.
+  const unrated = b.consumed - b.rated.n;
+  ok(unrated === 0 ? !/not zeroes/.test(doc) : /not zeroes/.test(doc),
+     `unrated check-ins (${unrated}) are excluded from the numbers, and said to be when there are any`);
+  ok(JSON.stringify(cal).length <= MAX_BYTES, "the document fits the cap uncut");
+  // The whole point of the row: the mean is the number every other tool
+  // returns, and the document must not just repeat it.
+  ok(new Set(doc.match(/^\| \d+% \| [\d.]+ \|$/gm) ?? []).size >= 5,
+     "the deciles are distinct values, so the shape of the distribution is visible");
+
+  // Grading follows the call: a beer summary reads the beer log and nothing else.
+  ok(TOOLS.taste_summary.readsFor({ kind: "beer" }).join() === "t0_beer",
+     "the beer summary is graded on the beer zone alone");
+  ok(TOOLS.taste_summary.readsFor({ kind: "dining" }).join() === "t0_taste_derived",
+     "and the stored documents on theirs");
+
+  // ── twenty rows cannot answer a question about 1,906 ───────────────────────
+  const none = await TOOLS.facets.run(env, {});
+  ok(none.rows.length === 0 && /beer/.test(none.note ?? ""),
+     "facets with no medium says which media it covers rather than guessing one");
+  const fam = await TOOLS.facets.run(env, { medium: "beer" });
+  ok(fam.rows.length > 0 && fam.rows.every((r) => r.family !== undefined),
+     `facets defaults to the style family (${fam.rows.length} groups)`);
+  ok(fam.order === "played", "and to how often they reached for it, not to the mean");
+  ok(fam.rows.every((r, i, a) => i === 0 || a[i - 1].n >= r.n), "which is the order it actually returns");
+  ok(fam.scale === "0-5", "the scale rides with the means");
+  ok(fam.rows.every((r) => r.rated <= r.n),
+     "a group states how many of its check-ins carried a rating, so the mean has a stated base");
+  ok(fam.rows.every((r) => r.mean === null || (r.mean > 0 && r.mean <= 5)), "means are on the scale");
+  ok(fam.rows.every((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.last)), "and each group says when it was last drunk");
+  ok(fam.rows.every((r) => r.family !== "" && r.family !== null),
+     "a check-in with no style is not a group called nothing");
+
+  const brew = await TOOLS.facets.run(env, { medium: "beer", by: "brewery" });
+  ok(brew.rows.every((r) => r.brewery !== undefined && r.family === undefined),
+     "the group key is named for what it is, so a row read alone still says what it is about");
+
+  const rated = await TOOLS.facets.run(env, { medium: "beer", by: "family", order: "rated" });
+  ok(rated.order === "rated" && rated.rows.every((r, i, a) => i === 0 || a[i - 1].mean >= r.mean),
+     "the rated axis sorts by mean");
+  ok(/read `n` before reading the order/.test(rated.note ?? ""),
+     "and warns that a group of one sits beside a group of forty");
+
+  const typo = await TOOLS.facets.run(env, { medium: "beer", by: "hops" });
+  ok(typo.rows.every((r) => r.family !== undefined) && /no facet called 'hops'/.test(typo.note ?? ""),
+     "an unknown facet falls back and confesses rather than failing the call");
+
+  // ── the repeats list ───────────────────────────────────────────────────────
+  const repeats = await TOOLS.facets.run(env, { medium: "beer", by: "beer", min_n: 2 });
+  ok(repeats.rows.every((r) => r.n >= 2), "min_n filters to the beers that were returned to");
+  ok(repeats.rows.every((r) => r.beer), "each names the beer");
+  const allBeers = await TOOLS.facets.run(env, { medium: "beer", by: "beer" });
+  ok(repeats.rows.length <= allBeers.rows.length, "and is a subset of the beers, not a different set");
+  // The two must be the same fact counted twice, or `medium` reports 17 repeats
+  // beside a list of 15 and the reader has to decide which one lied. They agree
+  // only because both group on lower(beer_name); grouping the facet on the raw
+  // string is the shape that lets them drift.
+  ok(repeats.has_more || repeats.rows.length === b.repeat_count,
+     `the repeats list is exactly as long as the repeat_count beside it (${repeats.rows.length} = ${b.repeat_count})`);
+  ok(!repeats.has_more || repeats.rows.length === MAX_ROWS,
+     "a truncated rollup says so rather than reading as the whole list");
+}
+
 console.log("\n── new zones + join ──");
 const ev = await TOOLS.events.run(env, {});
 ok(Array.isArray(ev.rows), `events -> ${ev.rows.length} upcoming`);
@@ -567,6 +680,24 @@ ok(films.rows.every((r) => r.scale === "0-5"), "films report the 0-5 scale");
 const rest = await TOOLS.ratings.run(env, { medium: "restaurants" });
 ok(rest.rows.every((r) => r.scale === "0-10"), "restaurants report 0-10, not 0-5");
 ok(rest.rows.every((r) => r.rating > 0), "unrated rows excluded");
+
+// A rating row that carries only a name cannot say what the taste IS. The top
+// of the beer scale read as a list of product names — Triple X-Raying Nelson,
+// TDH All NZ Everything — and a reader guessing New Zealand hops off a product
+// name is guessing, which is what this omission produced every time.
+const beerRt = await TOOLS.ratings.run(env, { medium: "beer" });
+ok(beerRt.rows.length > 0, `beer ratings -> ${beerRt.rows.length}`);
+ok(beerRt.rows.every((r) => r.scale === "0-5"), "beer reports the 0-5 scale");
+ok(beerRt.rows.some((r) => r.style) && beerRt.rows.some((r) => r.brewery),
+   "a beer row says what it was and who made it, not just what it was called");
+ok(beerRt.rows.some((r) => r.venue) && beerRt.rows.some((r) => typeof r.abv === "number"),
+   "and where it was drunk, and how strong it was");
+// Absent, not "". A blank style key reads as "this beer has no style"; the true
+// statement is that this row does not say, because the RSS feed cannot.
+ok(beerRt.rows.every((r) => !("style" in r) || r.style !== ""),
+   "a column the feed cannot fill is absent rather than empty");
+ok(/taste_summary\(kind:'beer'\)/.test(beerRt.note ?? ""),
+   "and the answer points at its own calibration before a 4.0 can be read as warm");
 
 // the join must carry ratings, and must not let one medium starve the other
 const yearWin = await TOOLS.around_the_time.run(env, { from: "2026-01-01", to: "2026-12-31" });
@@ -1354,7 +1485,15 @@ console.log("\n── documentation ──");
 
   const names = Object.keys(TOOLS);
   ok(names.every((n) => readme.includes(`\`${n}\``)), "every tool is documented");
-  const documented = [...readme.matchAll(/^\| `([a-z_]+)`/gm)].map((m) => m[1]);
+  // Between the generated markers only. Scanning the whole README swept in the
+  // ordering vocabulary table below them, whose first column is `recent` /
+  // `oldest` / `rated` / `played` — names that are not tools and never were, so
+  // this check reported four ghosts on a correct README and, being already red,
+  // could not have reported a real one.
+  const block = table();
+  const from = readme.indexOf(block.split("\n")[0]);
+  const to = readme.indexOf(block.slice(block.lastIndexOf("\n") + 1), from);
+  const documented = [...readme.slice(from, to).matchAll(/^\| `([a-z_]+)`/gm)].map((m) => m[1]);
   const ghosts = documented.filter((n) => !names.includes(n));
   ok(ghosts.length === 0, `no tool is documented that does not exist${ghosts.length ? ": " + ghosts : ""}`);
 

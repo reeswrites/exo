@@ -242,6 +242,182 @@ const WATCH_GAP =
 const COUNT_GAP =
   "only the anime shelf carries episode totals \u2014 the rest of the television record is Trakt, which counts what was watched and never how much there was to watch, so no other show here can be called finished or unfinished";
 
+/**
+ * What a beer check-in IS, beyond its name.
+ *
+ * The Untappd export carries all of this and the loader has kept all of it since
+ * the zone was written; the surface returned the name and the score and nothing
+ * else, so the top of the scale read as a list of product names. A reader can
+ * guess New Zealand hops off "TDH All NZ Everything" — and a guess off a product
+ * name is not a finding, which is exactly the shape of answer this omission
+ * produced. The style is the field that makes the question answerable at all.
+ *
+ * `abv` is CAST because the column is TEXT off a CSV, like every other number in
+ * this store; the rest are names and stay text.
+ */
+const BEER_META = [
+  ["brewery", "brewery_name"],
+  ["style", "beer_type"],
+  ["abv", "CAST(nullif(beer_abv,'') AS REAL)"],
+  ["venue", "venue_name"],
+  ["venue_city", "venue_city"],
+  ["serving", "serving_type"],
+];
+
+/** `, expr AS key` for each pair, or nothing — so a tool with no metadata is unchanged. */
+const selectMeta = (meta) =>
+  meta ? meta.map(([k, expr]) => `, ${expr} AS ${k}`).join("") : "";
+
+/**
+ * Drop the empty ones rather than returning "".
+ *
+ * The RSS feed carries a title, a comment, a timestamp and a link — the export
+ * columns are export-only, so every check-in newer than the last CSV export has
+ * a blank style and a blank brewery. An empty string in a `style` key reads as
+ * "this beer has no style"; an absent key reads as "this row does not say",
+ * which is the true one.
+ */
+function withMeta(row, meta) {
+  if (!meta) return row;
+  const out = { ...row };
+  for (const [k] of meta) {
+    if (out[k] === null || out[k] === undefined || out[k] === "") delete out[k];
+  }
+  return out;
+}
+
+/**
+ * The dining problem, on the other scale.
+ *
+ * `taste_summary(kind:'dining')` exists because a median of 8.1 makes an 8 look
+ * like praise. Beer averages 3.78 of 5 and had no equivalent, so a 4.0 read as
+ * mild approval when it may sit near the top of the distribution — and
+ * `taste_profile`'s `outing.breweryMinRating` is literally 4.0, a threshold
+ * nobody could interpret without the distribution behind it.
+ */
+const BEER_CALIBRATION_POINTER =
+  "the 0-5 beer scale is not read off its face \u2014 call taste_summary(kind:'beer') for the median and the deciles before calling any of these numbers high";
+
+const BEER_META_GAP =
+  "brewery, style, abv, venue and serving come from the CSV export only \u2014 a check-in pulled from the RSS feed since the last export carries the name and the score alone, and those keys are absent rather than empty";
+
+/**
+ * The beer scale, calibrated from the beer log.
+ *
+ * `taste_summary(kind:'dining')` is a document taste-engine writes and this
+ * surface mirrors. There is no beer equivalent and nothing upstream is going to
+ * write one — taste-engine has never seen the check-in log — so this is
+ * computed, from the distribution it is a statement about.
+ *
+ * The whole histogram comes back in one query and everything else is arithmetic
+ * here. Untappd rates in quarter steps, so a 0-5 scale has twenty populated
+ * buckets at most: cheap to fetch whole, and exact, where a SQL percentile would
+ * have to be approximated or leaned on a window function D1's SQLite may or may
+ * not have compiled in.
+ *
+ * Returns null when nothing is rated, which is a served-but-empty zone rather
+ * than an error.
+ */
+async function beerCalibration(env) {
+  const score = "nullif(CAST(nullif(rating_score,'') AS REAL), 0)";
+  const hist = await q(
+    env,
+    `SELECT ${score} AS v, count(*) AS n
+     FROM t0_beer WHERE ${score} IS NOT NULL
+     GROUP BY v ORDER BY v`
+  );
+  if (!hist.length) return null;
+
+  const [totals] = await q(
+    env,
+    `SELECT count(*) AS checkins,
+            sum(CASE WHEN ${score} IS NULL THEN 1 ELSE 0 END) AS unrated,
+            max(substr(created,1,10)) AS last
+     FROM t0_beer`
+  );
+
+  const rated = hist.reduce((a, r) => a + r.n, 0);
+  const mean = hist.reduce((a, r) => a + r.v * r.n, 0) / rated;
+
+  // The value at or below which p of the ratings fall. Walks the cumulative
+  // counts, so it is the real order statistic and not an interpolation between
+  // buckets a quarter-step apart.
+  const at = (p) => {
+    const target = p * rated;
+    let seen = 0;
+    for (const r of hist) {
+      seen += r.n;
+      if (seen >= target) return r.v;
+    }
+    return hist[hist.length - 1].v;
+  };
+  const median = at(0.5);
+  const deciles = Array.from({ length: 9 }, (_, i) => at((i + 1) / 10));
+
+  // Where a 4.0 actually sits. This is the number the reader came for: the
+  // threshold in taste_profile is 4.0, and nobody can read it without knowing
+  // what share of the record clears it.
+  const shareAtOrAbove = (v) =>
+    hist.filter((r) => r.v >= v).reduce((a, r) => a + r.n, 0) / rated;
+  const pct = (x) => `${(x * 100).toFixed(0)}%`;
+  const num = (x) => (Math.round(x * 100) / 100).toFixed(2).replace(/\.?0+$/, "");
+  // Thousands separators without Intl. The runtime has it, but a document whose
+  // digits depend on which ICU build the isolate was compiled with is a document
+  // that reads differently in test and in production for no reason.
+  const n = (x) => String(x ?? 0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+  const text = [
+    "# The beer scale, calibrated",
+    "",
+    `Computed from the check-in log itself rather than written by hand: ${n(rated)} rated`,
+    `check-ins out of ${n(totals?.checkins ?? rated)}, last logged ${totals?.last ?? "unknown"}.`,
+    "",
+    "## Read this before reading a number",
+    "",
+    `The scale runs 0-5. The mean is ${num(mean)} — the number every other tool on this`,
+    `surface hands back — and the median is ${num(median)}. ${pct(shareAtOrAbove(4))} of rated check-ins`,
+    `are at 4.0 or above, ${pct(shareAtOrAbove(4.5))} are at 4.5 or above, and the ninetieth`,
+    `percentile is ${num(at(0.9))}.`,
+    "",
+    `A 4.0 therefore sits above ${pct(1 - shareAtOrAbove(4))} of what they drank and level with or`,
+    "below the rest. That is the fact to carry into a sentence about it, and it is",
+    "not the fact that 4 out of 5 suggests on its face.",
+    "",
+    "`taste_profile` carries `outing.breweryMinRating`, a threshold stated on this",
+    "same scale. Read it against the table below before treating it as a bar for a",
+    "favourite: on this distribution a threshold at 4.0 admits",
+    `${pct(shareAtOrAbove(4))} of what they drink.`,
+    "",
+    "## Deciles",
+    "",
+    "| decile | at or below |",
+    "|---|---|",
+    ...deciles.map((v, i) => `| ${(i + 1) * 10}% | ${num(v)} |`),
+    "",
+    "## Every step that occurs",
+    "",
+    "Untappd rates in quarter steps, so these are the buckets the record actually",
+    "uses rather than a binning chosen here.",
+    "",
+    "| rating | check-ins | share |",
+    "|---|---|---|",
+    ...hist.map((r) => `| ${num(r.v)} | ${n(r.n)} | ${pct(r.n / rated)} |`),
+    "",
+    "## What this scale does not carry",
+    "",
+    ...(totals?.unrated
+      ? [`${n(totals.unrated)} check-ins carry no rating at all. They are absent from every`,
+         "number above, and they are not zeroes.",
+         ""]
+      : []),
+    "Rating happens at the point of drinking, so this is a judgement on nearly",
+    "everything consumed rather than on a selected few — which is the opposite of",
+    "the music record, where the play count is the only judgement there is.",
+  ].join("\n");
+
+  return { kind: "beer", text };
+}
+
 const q = (env, sql, ...binds) =>
   env.DB.prepare(sql).bind(...binds).all().then((r) => r.results ?? []);
 
@@ -759,7 +935,7 @@ export const TOOLS = {
                  rate: { col: "score", scale: "1-10", label: "title", url: "url" } },
         music: { table: "t0_music",  unit: "scrobbles",  verdicts: "music", owns: "vinyl" },
         beer:  { table: "t0_beer",   unit: "check-ins",
-                 rate: { col: "rating_score", scale: "0-5",  label: "beer_name" } },
+                 rate: { col: "rating_score", scale: "0-5",  label: "beer_name", extra: BEER_META } },
         restaurant: { table: "t1_visits", unit: "visits",
                  rate: { col: "rating",       scale: "0-10", label: "restaurant" }, calibrated: true },
       };
@@ -825,8 +1001,18 @@ export const TOOLS = {
         rec.plan_to_watch = rec.by_status?.plan_to_watch ?? 0;
       }
       if (name === "beer") {
-        const [b] = await q(env, `SELECT count(DISTINCT lower(beer_name)) AS n FROM t0_beer`);
-        rec.distinct_beers = b?.n ?? null;
+        // Two counts and the gap between them, because the gap is the fact. The
+        // owner drinks 1,947 distinct beers across 1,964 check-ins: novelty is
+        // the point, and a return is rare enough to say more than a single 5.
+        // It was derivable by subtracting one number from another, and so it was
+        // never derived.
+        const [b] = await q(
+          env,
+          `SELECT count(*) AS distinct_beers, sum(CASE WHEN n > 1 THEN 1 ELSE 0 END) AS repeated
+           FROM (SELECT count(*) AS n FROM t0_beer GROUP BY lower(beer_name))`
+        );
+        rec.distinct_beers = b?.distinct_beers ?? null;
+        rec.repeat_count = b?.repeated ?? 0;
       }
       if (name === "book") {
         const [b] = await q(env, `SELECT count(*) AS n FROM t0_book WHERE shelf = 'to-read'`);
@@ -843,13 +1029,13 @@ export const TOOLS = {
            FROM ${d.table} ${filter}`
         );
         const urlCol = r.url ? `${r.url} AS url,` : "";
-        const top = await q(
+        const top = (await q(
           env,
           `SELECT ${r.label} AS label, ${cast} AS rating, ${urlCol}
-                  substr(created,1,10) AS when_
+                  substr(created,1,10) AS when_${selectMeta(r.extra)}
            FROM ${d.table} ${filter}
            ORDER BY ${cast} DESC, created DESC, id LIMIT 3`
-        );
+        )).map((row) => withMeta(row, r.extra));
         // The scale rides with the numbers, always. A bare 9.5 next to a bare
         // 4.5 invites the reader to rank them, and they are not on the same axis.
         rec.rated = { n: agg?.n ?? 0, scale: r.scale, average: agg?.average ?? null,
@@ -876,6 +1062,14 @@ export const TOOLS = {
       // Calibration is not decoration here: the dining median is 8.1, so an 8
       // read against a 0-10 scale looks like praise and is not.
       if (d.calibrated) notes.push("the owner's 0-10 dining scale runs high — call taste_summary(kind:'dining') before reading any of these numbers as praise");
+      if (name === "beer") {
+        notes.push(BEER_CALIBRATION_POINTER);
+        notes.push(
+          `${rec.repeat_count} of those beers were drunk more than once — `
+          + `facets(medium:'beer', by:'beer', min_n:2) is that list, and `
+          + `facets(medium:'beer', by:'family') is what the taste is made of`
+        );
+      }
       if (name === "film") notes.push(WATCH_GAP);
       if (name === "anime") notes.push(COUNT_GAP);
       if (!d.rate) {
@@ -941,8 +1135,16 @@ export const TOOLS = {
           rec.episodes_watched = e?.n ?? null;
         }
         if (name === "beer") {
-          const [b] = await q(env, `SELECT count(DISTINCT lower(beer_name)) AS n FROM t0_beer`);
-          rec.distinct_beers = b?.n ?? null;
+          // The same two numbers `medium` returns, from the same query, because
+          // two tools that report the beer shelf and disagree about it is worse
+          // than either of them being absent.
+          const [b] = await q(
+            env,
+            `SELECT count(*) AS distinct_beers, sum(CASE WHEN c > 1 THEN 1 ELSE 0 END) AS repeated
+             FROM (SELECT count(*) AS c FROM t0_beer GROUP BY lower(beer_name))`
+          );
+          rec.distinct_beers = b?.distinct_beers ?? null;
+          rec.repeat_count = b?.repeated ?? 0;
           rec.total_label = "check-ins";
         }
         if (name === "books") {
@@ -1455,7 +1657,7 @@ export const TOOLS = {
       const SRC = {
         films:       { table: "t0_film",   label: "title",      col: "rating",       scale: "0-5", url: "origin_ref" },
         books:       { table: "t0_book",   label: "title",      col: "my_rating",    scale: "0-5", where: "AND shelf IN ('read','partly-read')" },
-        beer:        { table: "t0_beer",   label: "beer_name",  col: "rating_score", scale: "0-5"  },
+        beer:        { table: "t0_beer",   label: "beer_name",  col: "rating_score", scale: "0-5", extra: BEER_META },
         restaurants: { table: "t1_visits", label: "restaurant", col: "rating",       scale: "0-10" },
         // Television's only ratings. Trakt has none, so before the MAL list
         // landed the honest answer for the whole medium was "he does not rate
@@ -1487,7 +1689,7 @@ export const TOOLS = {
         const rows = await q(
           env,
           `SELECT ${d.label} AS label, CAST(${d.col} AS REAL) AS rating, ${urlCol}
-                  substr(created,1,10) AS when_
+                  substr(created,1,10) AS when_${selectMeta(d.extra)}
            FROM ${d.table}
            WHERE ${d.col} IS NOT NULL AND CAST(${d.col} AS REAL) > 0
              AND CAST(${d.col} AS REAL) >= ? ${d.where ?? ""}
@@ -1495,9 +1697,152 @@ export const TOOLS = {
            LIMIT ?`,
           floor, medium ? probe(ctx) : probe(ctx, 5)
         );
-        for (const r of rows) out.push({ medium: name, scale: d.scale, ...r });
+        for (const r of rows) out.push({ medium: name, scale: d.scale, ...withMeta(r, d.extra) });
       }
-      return ordered(cap(out, ctx), { order: axis, ...(complaint ? { note: complaint } : {}) });
+      const capped = cap(out, ctx);
+      // Only when a beer row actually survived the cap. An unfiltered call
+      // returns five of each medium, and a calibration note about a medium the
+      // caller cannot see in the answer is noise they have to rule out.
+      const notes = [complaint];
+      if (capped.rows.some((r) => r.medium === "beer")) {
+        notes.push(BEER_CALIBRATION_POINTER, BEER_META_GAP);
+      }
+      const note = notes.filter(Boolean).join(" \u00b7 ");
+      return ordered(capped, { order: axis, ...(note ? { note } : {}) });
+    },
+  },
+
+  facets: {
+    class: "revealed", domain: "*", kind: "judgement",
+    reads: ["t0_beer"],
+    description:
+      "How the owner rates a medium BROKEN DOWN by a facet of the thing itself \u2014 for beer: by style family, by full style, by brewery, by venue, or by the beer. One row per group with how many check-ins, how many carried a rating, the mean, the best and the last. `ratings` returns twenty rows out of 1,906 and so cannot answer 'which styles do they rate highest'; this can, because a rollup is a summary rather than a page of a set. Ordered by how often they reached for it, which is the honest default \u2014 a mean over two check-ins is not a preference. Pass min_n:2 with by:'beer' for the beers they went back to, which is the rarest thing in this record.",
+    schema: {
+      type: "object",
+      properties: {
+        medium: { type: "string", description: "beer" },
+        by: { type: "string", description: "family | style | brewery | venue | beer" },
+        min_n: { type: "number", description: "Only groups with at least this many check-ins. Default 1." },
+        order: { type: "string", description: "played (default, most check-ins first) | rated | recent" },
+      },
+    },
+    async run(env, { medium, by, min_n, order }, ctx) {
+      // Beer alone, because beer alone has facets in the store. Film carries a
+      // year and books an author, and either could be added here the day
+      // somebody checks what the column actually holds \u2014 the registry is the
+      // extension point, and a medium listed before that check is a claim
+      // nobody verified.
+      const M = {
+        beer: {
+          table: "t0_beer",
+          unit: "check-ins",
+          scale: "0-5",
+          // Every one of these is NULL or "" on a check-in that came from the
+          // RSS feed rather than the CSV export. Grouping would give them a
+          // bucket of their own named "", so they are excluded and counted
+          // separately \u2014 an unknown style is a gap in the export, not a style.
+          by: {
+            // Untappd styles are "Family - Substyle" ("IPA - Hazy", "Stout -
+            // Irish Dry"). The family is what a reader means by "what do they
+            // drink"; the full string is what they mean by "which exact
+            // corner". Both, because twenty rows of substyle is a sample of the
+            // vocabulary and twenty rows of family is most of it.
+            family: { show: `trim(CASE WHEN instr(beer_type, ' - ') > 0
+                                       THEN substr(beer_type, 1, instr(beer_type, ' - ') - 1)
+                                       ELSE beer_type END)` },
+            style: { show: "beer_type" },
+            brewery: { show: "brewery_name" },
+            venue: { show: "venue_name" },
+            // The one facet with a published counterpart: `medium` counts
+            // distinct beers and repeats on lower(beer_name), so grouping this
+            // on the raw string would let `min_n:2` return a different set from
+            // the `repeat_count` sitting beside it. Group on the same key and
+            // show a real name off it.
+            beer: { show: "min(beer_name)", group: "lower(beer_name)" },
+          },
+          score: "nullif(CAST(nullif(rating_score,'') AS REAL), 0)",
+        },
+      };
+      const d = M[medium];
+      if (!d) {
+        return {
+          rows: [],
+          note: medium
+            ? `no facets for '${medium}' \u2014 this tool covers: ${Object.keys(M).join(", ")}`
+            : `name a medium \u2014 this tool covers: ${Object.keys(M).join(", ")}`,
+        };
+      }
+      const names = Object.keys(d.by);
+      const key = names.includes(by) ? by : names[0];
+      const { show, group = d.by[key].show } = d.by[key];
+
+      const floor = Number.isFinite(min_n) && min_n > 1 ? Math.floor(min_n) : 1;
+      // `played` first, and deliberately. A mean is the number a reader wants
+      // and the number that misleads: one check-in of one saison at 4.5 outranks
+      // forty hazy IPAs averaging 4.0 on any rating axis, and reads as a
+      // favourite. Sorting by how often they actually reached for it puts the
+      // groups that carry weight at the top, and `rated` is one argument away.
+      const by_ = ordering(order, {
+        played: "n DESC, mean DESC",
+        rated:  "mean DESC, n DESC",
+        recent: "last DESC, n DESC",
+      });
+
+      const rows = await q(
+        env,
+        // GROUP BY the alias, so the family expression is written once. `n`
+        // counts check-ins and `rated` counts the ones that carried a score:
+        // 58 of 1,964 beer rows have no rating, and a mean whose base is not
+        // stated is a mean a reader will attach to the wrong number.
+        `SELECT ${show} AS facet,
+                ${group} AS grp,
+                count(*) AS n,
+                count(${d.score}) AS rated,
+                round(avg(${d.score}), 2) AS mean,
+                max(${d.score}) AS best,
+                max(substr(created,1,10)) AS last
+         FROM ${d.table}
+         WHERE ${group} IS NOT NULL AND trim(${group}) <> ''
+         GROUP BY grp
+         HAVING count(*) >= ?
+         ORDER BY ${by_.sql}, grp
+         LIMIT ?`,
+        floor, probe(ctx)
+      );
+
+      // How much of the medium this breakdown actually covers. Without it a
+      // reader takes the top row as the top of everything, when the facet may
+      // be blank on a fifth of the record.
+      const [cov] = await q(
+        env,
+        `SELECT count(*) AS total,
+                sum(CASE WHEN ${group} IS NULL OR trim(${group}) = '' THEN 1 ELSE 0 END) AS blank
+         FROM ${d.table}`
+      );
+
+      const notes = [];
+      if (!names.includes(by) && by) {
+        notes.push(`no facet called '${by}' \u2014 grouped by ${key}; this medium offers ${names.join(", ")}`);
+      }
+      if (cov?.blank) {
+        notes.push(`${cov.blank} of ${cov.total} ${d.unit} carry no ${key} and are not in any group below \u2014 that field is in the CSV export only`);
+      }
+      if (by_.order === "rated") {
+        notes.push("sorted by mean, so a group of one sits beside a group of forty \u2014 read `n` before reading the order");
+      }
+      if (floor > 1) {
+        notes.push(`only groups with at least ${floor} ${d.unit}`);
+      }
+      notes.push(BEER_CALIBRATION_POINTER);
+
+      // The group key is named for what it IS \u2014 `brewery`, `family` \u2014 rather
+      // than sitting under a generic `facet`, so a row read on its own still
+      // says what it is a row about.
+      const shaped = rows.map(({ facet, grp, ...rest }) => ({ medium, [key]: facet, ...rest }));
+      return ordered(
+        { ...cap(shaped, ctx), scale: d.scale },
+        { order: by_.order, note: notes.join(" \u00b7 ") }
+      );
     },
   },
 
@@ -2148,17 +2493,52 @@ export const TOOLS = {
 
   taste_summary: {
     class: "derived", domain: "*", kind: "judgement",
-    reads: ["t0_taste_derived"],
+    reads: ["t0_taste_derived", "t0_beer"],
+    // `beer` is computed here and reads nothing else; the two stored documents
+    // read nothing else either. An unrecognised kind grades on both, which is
+    // the tightest reading and the right one for a typo.
+    readsFor: ({ kind }) =>
+      kind === "beer" ? ["t0_beer"]
+      : kind === "dining" || kind === "clusters" ? ["t0_taste_derived"]
+      : ["t0_taste_derived", "t0_beer"],
     description:
-      "Derived summaries of the owner's taste: how their rating scales actually behave, and the clusters their loved items fall into. Read the dining one BEFORE interpreting any restaurant rating \u2014 that 0-10 scale has a median of 8.1, so an 8 is average, not a rave.",
+      "Derived summaries of the owner's taste: how their rating scales actually behave, and the clusters their loved items fall into. Read the dining one BEFORE interpreting any restaurant rating \u2014 that 0-10 scale has a median of 8.1, so an 8 is average, not a rave. The beer one does the same job for the 0-5 beer scale and is computed from the check-in log rather than mirrored from anywhere, so it is always current: median, deciles, and the count at every quarter step the record actually uses.",
     schema: {
       type: "object",
-      properties: { kind: { type: "string", description: "dining | clusters" } },
+      properties: { kind: { type: "string", description: "dining | clusters | beer" } },
     },
     async run(env, { kind }, ctx) {
-      const rows = kind
-        ? await q(env, `SELECT kind, text FROM t0_taste_derived WHERE kind = ?`, kind)
-        : await q(env, `SELECT kind, text FROM t0_taste_derived`);
+      // `beer` is the one kind that is not a stored document. Nothing upstream
+      // writes it: `t0_taste_derived` is a mirror of a foreign system's output,
+      // and that system has never seen the beer log. The distribution it would
+      // need is sitting in D1, so the calibration is computed from the record
+      // it calibrates rather than waiting on a file nobody is writing.
+      if (kind === "beer") {
+        const doc = await beerCalibration(env);
+        return doc ? cap([doc], ctx) : { rows: [], note: "no beer ratings are published here" };
+      }
+
+      // The two halves are now independently held-able: ADR-0020 offers this
+      // tool when EITHER zone is served, so the stored documents may simply not
+      // be in the bundle. That is an absent table rather than an empty one, and
+      // it is the only failure swallowed here — a computed answer must not be
+      // taken down by a mirror this instance chose not to publish.
+      const derived = await q(
+        env,
+        kind
+          ? `SELECT kind, text FROM t0_taste_derived WHERE kind = ?`
+          : `SELECT kind, text FROM t0_taste_derived`,
+        ...(kind ? [kind] : [])
+      ).catch(() => []);
+
+      const rows = [...derived];
+      if (!kind) {
+        const doc = await beerCalibration(env);
+        if (doc) rows.push(doc);
+      }
+      if (!rows.length) {
+        return { rows: [], note: kind ? `no taste summary called '${kind}'` : "no taste summaries are published here" };
+      }
       // These are documents, not row sets: one is ~6KB and truncating it mid
       // table would drop exactly the calibration it exists to convey. Return one
       // at a time rather than clipping both.

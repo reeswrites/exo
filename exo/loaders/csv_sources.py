@@ -215,7 +215,7 @@ def untappd() -> list[Row]:
     keep = ["beer_name", "brewery_name", "beer_type", "beer_abv", "rating_score",
             "venue_name", "venue_city", "venue_state", "venue_country",
             "venue_lat", "venue_lng", "brewery_city", "brewery_state",
-            "brewery_country", "comment"]
+            "brewery_country", "comment", "serving_type"]
     rows: list[Row] = []
     with open(path, newline="", encoding="utf-8-sig") as fh:
         for rec in csv.DictReader(fh):
