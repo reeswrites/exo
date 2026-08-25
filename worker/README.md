@@ -10,7 +10,7 @@ and it can answer from your own notes, ratings, saves and repos without that
 assistant's vendor ever holding them.
 
 - `src/index.js` — JSON-RPC, auth, the brief and procedure resources, the audit and caller logs
-- `src/tools.js` — the 29 tools, and the caps
+- `src/tools.js` — the 31 tools, and the caps
 - `src/search.js` — vector search over `vectors.f32` from R2
 - `src/exposure.js` — how public each zone is (ADR-0019), and what that makes a tool
 - `src/surface.js` — which tools this instance offers (ADR-0020)
@@ -410,6 +410,7 @@ Adding one is a decision about exposure, not a feature increment.
 | `around_the_time` | * | lens | mixed | What was going on around a period: what the owner wrote, listened to, read or watched. |
 | `backlog` | * | intent | pointer | What the owner has queued but not done — things they decided they wanted and have not gotten to. |
 | `consumption` | * | revealed | event | Shape and recency of what the owner consumes, per medium: how much, and how current the record is. |
+| `facets` | * | revealed | judgement | How the owner rates a medium BROKEN DOWN by a facet of the thing itself — for beer: by style family, by full style, by brewery, by venue, or by the beer. |
 | `medium` | * | lens | mixed | Everything about one medium in a single call: how much of it the owner consumes, how they rate it ON ITS OWN SCALE, what they own, and what they have written about it. |
 | `ratings` | * | revealed | judgement | What the owner rated and how highly, per medium. |
 | `saves` | * | intent | pointer | Links the owner bookmarked — 2,188 of them across nine years. |
@@ -423,10 +424,10 @@ which orders the answer — from one vocabulary, so it is learned once:
 
 | `order` | what it means | offered by |
 |---|---|---|
-| `recent` | newest first — the default wherever the record carries a date | `ratings`, `reviews`, `places`, `collection`, `backlog`, `projects`, `taste` |
+| `recent` | newest first — the default wherever the record carries a date | `ratings`, `reviews`, `places`, `collection`, `backlog`, `projects`, `taste`, `facets` |
 | `oldest` | the same axis reversed, for what has been sitting | `backlog`, `collection`, `taste` |
-| `rated` | the owner's own rating, highest first | `ratings` (default), `reviews`, `places` (default) |
-| `played` | how often they actually reached for it | `collection`, `taste` (default) |
+| `rated` | the owner's own rating, highest first | `ratings` (default), `reviews`, `places` (default), `facets` |
+| `played` | how often they actually reached for it | `collection`, `taste` (default), `facets` (default) |
 
 A tool that offers a choice returns `order: "<name>"` beside `returned_count`
 and `has_more`, because a capped list means something different on each axis:
