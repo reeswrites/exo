@@ -42,7 +42,7 @@ from pathlib import Path
 
 from .. import config
 from ..provenance import Row, stable_id
-from .titles import match_key
+from .titles import match_key, show_key
 
 # MAL's own words -> one spelling this record can filter on. The numeric forms
 # are what older exports wrote; both have been seen in the same account.
@@ -168,6 +168,10 @@ def load() -> list[Row]:
                 # Best-effort, and only ever used to borrow a watch date off
                 # Trakt. See titles.py for why it is not used for anything else.
                 "match_key": match_key(title),
+                # The coarser key, which DOES merge seasons. `watching` sums
+                # `episodes_total` across every entry sharing it, because the
+                # numerator it divides is Trakt's and Trakt counts a show.
+                "show_key": show_key(title),
             },
         ))
     return rows

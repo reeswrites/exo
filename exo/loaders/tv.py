@@ -24,7 +24,7 @@ import json
 
 from .. import config
 from ..provenance import Row, stable_id
-from .titles import match_key
+from .titles import match_key, show_key
 
 
 def load() -> list[Row]:
@@ -68,6 +68,12 @@ def load() -> list[Row]:
                 # and safe to add because this row's id is minted from the Trakt
                 # id above rather than from its payload.
                 "match_key": match_key(title),
+                # Trakt files one show where MAL files a season each, so this is
+                # the key the denominator is summed over. Identical to
+                # `match_key` for most Trakt rows — Trakt rarely spells a season
+                # into the title — and that is fine: it is MAL's side that needs
+                # collapsing.
+                "show_key": show_key(title),
             },
         ))
     return rows

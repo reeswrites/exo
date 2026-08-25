@@ -390,7 +390,7 @@ Adding one is a decision about exposure, not a feature increment.
 | `reviews` | culture | authored | text | The owner's written film reviews from Letterboxd — 115 of them, in their own words, each with a link. |
 | `taste` | culture | revealed | event | What the owner actually listens to, straight off the scrobble stream — revealed preference, as distinct from what they say. |
 | `verdicts` | culture | authored | text | The owner's written opinions on books, films, tv and music — in their own words, with reasoning. |
-| `watching` | culture | revealed | entity | What the owner started and has not finished, per title: episodes watched against episodes total, how long since the last one, and their own MyAnimeList status. |
+| `watching` | culture | revealed | entity | What the owner started and has not finished, per show: episodes watched, how long since the last one, and an episode total where one is known. |
 | `places` | table | authored | entity | Restaurants the owner has been to, with their own notes and ratings. |
 | `recipes` | table | authored | text | What the owner actually cooks — recipes they wrote up and published, with their source links. |
 | `drafts` | mind | authored | text | Longform pieces the owner is in the middle of writing — the state between a private note and a published post. |
