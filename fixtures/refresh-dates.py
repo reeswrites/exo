@@ -34,7 +34,10 @@ STALE_AFTER_DAYS = 45
 # character, so a word boundary there never matches and every commit date in
 # the fixture went unseen. Guard against a longer number instead.
 DATE = re.compile(r"(?<!\d)(20\d{2})-(\d{2})-(\d{2})(?!\d)")
-TEXT_SUFFIXES = {".md", ".json", ".jsonl", ".csv", ".toml"}
+TEXT_SUFFIXES = {".md", ".json", ".jsonl", ".csv", ".toml", ".xml"}
+# .xml is the MyAnimeList export. Left out, its dates would sit still while
+# everything around them slid forward, and the anime shelf would drift into
+# looking abandoned relative to the Trakt history it is joined against.
 
 
 def _files() -> list[Path]:

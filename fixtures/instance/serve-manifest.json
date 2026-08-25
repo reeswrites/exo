@@ -17,6 +17,7 @@
     "t0_film": "serve",
     "t0_beer": "serve",
     "t0_tv": "serve",
+    "t0_anime": "serve",
     "t0_raindrop": "serve",
     "t0_meal_event": "serve",
     "t0_meal_rating": "serve",
@@ -48,6 +49,7 @@
     "cache_open_questions": "hold"
   },
   "zone_notes": {
+    "t0_anime": "The MyAnimeList half of television: episode totals, 1-10 scores and declared statuses. Deliberately overlaps t0_tv by title on some rows and not on others, so `watching` is exercised both when the join finds a Trakt date and when it falls back to the list entry's own.",
     "t0_chat": "Declared, but this fixture never runs `exo chatindex`, so the zone is not built and publish skips it with a message. Kept here on purpose: a declared-but-unbuilt zone is a state the engine has to survive, and the fixture should exercise it.",
     "rows": "Cross-zone union — would bypass every per-zone decision in this file.",
     "cache_embed": "The content-addressed vector cache. Machine output about machine output; no reader.",

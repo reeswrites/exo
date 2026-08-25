@@ -1206,6 +1206,85 @@ const x_bogus = await TOOLS.medium.run(env, { name: "opera" });
 ok(x_bogus.rows.length >= 5 && (x_bogus.note ?? "").includes("no medium"),
    "an unknown medium returns the directory and says why");
 
+console.log("\n── anime: the half of television that has a denominator ──");
+// Skipped rather than failed when the zone is absent, like `releases` and
+// `criticism`: an instance that has never dropped a MyAnimeList export into
+// raw/ is not a broken instance. What is asserted when it IS there is the
+// arithmetic and the honesty around it, not any particular show.
+if (!(await hasZone("t0_anime"))) {
+  console.log("   (no MyAnimeList export ingested — skipping)");
+} else {
+  const w = await TOOLS.watching.run(env, {});
+  ok(w.rows.length > 0, `watching -> ${w.rows.length} titles`);
+  ok(w.order === "oldest", "and leads with what has been sitting longest");
+  ok(w.rows.every((r) => r.status), "every row carries a status");
+  ok(w.rows.every((r) => typeof r.episodes_watched === "number"),
+     "and how far it got");
+  // The whole point of the zone. A row with a total can be judged; one without
+  // must come back as null rather than as zero, which would read as a show with
+  // no episodes rather than as a length nobody knows yet.
+  ok(w.rows.every((r) => r.episodes_total === null || r.episodes_total > 0),
+     "an unknown episode total is null, never 0");
+  ok(/only the anime shelf carries episode totals/.test(w.note ?? ""),
+     "every answer states that the rest of television has no denominator");
+  ok(/stalled means no episode in \d+ days/.test(w.note ?? ""),
+     "and defines the one status it derives rather than reads");
+  ok(/\d+ titles on the anime list/.test(w.scope ?? ""),
+     `it names the population it drew from ("${w.scope}")`);
+
+  // `stalled` is derived and `dropped` is declared, and a caller must be able
+  // to tell them apart — abandoning something on purpose and drifting away
+  // from it are different facts about a person.
+  const dropped = await TOOLS.watching.run(env, { status: "dropped" });
+  ok(dropped.rows.every((r) => r.status === "dropped"), "the status filter holds");
+  ok(dropped.rows.every((r) => r.declared === "dropped"),
+     "and a dropped row is the owner's own word, never an inference");
+  const stalled = await TOOLS.watching.run(env, { status: "stalled" });
+  ok(stalled.rows.every((r) => r.declared !== "stalled"),
+     "nothing is ever declared stalled — it is only ever derived");
+  ok(stalled.rows.every((r) => r.episodes_total > r.episodes_watched),
+     "a stalled title has episodes left, or it is finished rather than stalled");
+  ok(stalled.rows.every((r) => r.days_since >= 180),
+     "and has not been touched inside the window");
+  const done = await TOOLS.watching.run(env, { status: "completed" });
+  ok(done.rows.every((r) => r.episodes_total === null || r.episodes_watched >= r.episodes_total),
+     "completed means the count reached the total");
+
+  // MAL spells its statuses "On-Hold" and "Plan to Watch"; a caller passing
+  // either through must not get an empty answer that reads as "he has none".
+  const hy = await TOOLS.watching.run(env, { status: "On-Hold" });
+  ok(hy.rows.every((r) => r.status === "on_hold"), "a MAL-spelled status is normalised, not missed");
+  const bogus = await TOOLS.watching.run(env, { status: "abandoned" });
+  ok(/no status called 'abandoned'/.test(bogus.note ?? ""),
+     "an unknown status filters nothing and says so, rather than answering nobody");
+
+  const since = await TOOLS.watching.run(env, { stalled_since: "1970-01-01" });
+  ok(since.rows.length === 0, "stalled_since filters rather than being ignored");
+  const recent = await TOOLS.watching.run(env, { order: "recent" });
+  ok(recent.order === "recent", "both ends of the date axis");
+  ok(!recent.rows.length || !w.rows.length || recent.rows[0].title !== w.rows[0].title
+     || w.rows.length <= 1, "and they are not the same list");
+
+  console.log("\n── ratings reach television at last ──");
+  const an = await TOOLS.ratings.run(env, { medium: "anime" });
+  ok(an.rows.length > 0, `anime ratings -> ${an.rows.length}`);
+  ok(an.rows.every((r) => r.scale === "1-10"), "on MAL's own 1-10 scale, not 0-5");
+  ok(an.rows.every((r) => r.rating > 0), "unrated entries excluded — MAL's 0 means unrated");
+  ok(an.rows.every((r) => /myanimelist\.net\/anime\//.test(r.url || "")), "each links out");
+
+  const mt = await TOOLS.medium.run(env, { name: "tv" });
+  ok(!/does not rate tv item by item/.test(mt.note ?? ""),
+     "medium(tv) no longer claims television is unrated — Trakt is, he is not");
+  ok(/ratings\(medium:'anime'\)/.test(mt.note ?? ""), "and points at where the ratings are");
+  const ma = await TOOLS.medium.run(env, { name: "anime" });
+  ok(ma.rows[0]?.rated?.scale === "1-10", "medium(anime) carries the 1-10 scale");
+  ok(ma.rows[0]?.by_status, "and the shape of the list, not just a total");
+
+  const briefAnime = await (await env.VECTORS.get("brief.md")).text();
+  ok(/watching/.test(briefAnime),
+     "the brief names `watching`, or the tool is effectively unshipped");
+}
+
 console.log("\n── drafts ──");
 {
   const all = await TOOLS.drafts.run(env, {});

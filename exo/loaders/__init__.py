@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Callable
 
 from .. import plugins
-from . import chat, csv_sources, meal, raindrop, tv
+from . import anime, chat, csv_sources, meal, raindrop, tv
 
 
 def t0_loaders() -> dict[str, list[tuple[str, Callable]]]:
@@ -26,6 +26,9 @@ def t0_loaders() -> dict[str, list[tuple[str, Callable]]]:
         "meal_event": meal.events,   # what you ate (ADR-0003)
         "meal_rating": meal.ratings, # how it turned out
         "tv": tv.load,               # trakt watched shows
+        # The denominator Trakt has no column for: MAL scores, statuses and
+        # season lengths, which is what makes "unfinished" computable.
+        "anime": anime.load,
         # Conversation TOPICS, not turns. t0_chat stays held.
         "chat_topic": chat.topics,
     }

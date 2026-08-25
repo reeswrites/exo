@@ -228,6 +228,20 @@ const POOL_GAP =
 const WATCH_GAP =
   "watching is not covered: the Letterboxd watchlist was never exported, so absence of films here is a gap in the data, not an empty queue";
 
+/**
+ * The other half of the television record, and why only one half can be
+ * measured.
+ *
+ * Trakt records episodes watched and nothing about how many there were, so
+ * "did he finish it" is not a hard question over t0_tv, it is an unanswerable
+ * one. MAL carries a total per entry, which is what makes a fraction possible —
+ * and MAL only covers anime. Every answer that reports on progress says so,
+ * because a reader who sees 40 anime measured and no drama measured will read
+ * the silence as "he finishes everything else".
+ */
+const COUNT_GAP =
+  "only the anime shelf carries episode totals \u2014 the rest of the television record is Trakt, which counts what was watched and never how much there was to watch, so no other show here can be called finished or unfinished";
+
 const q = (env, sql, ...binds) =>
   env.DB.prepare(sql).bind(...binds).all().then((r) => r.results ?? []);
 
@@ -706,6 +720,7 @@ export const TOOLS = {
   medium: {
     class: "lens", domain: "*", kind: "mixed",
     reads: [
+      "t0_anime",
       "t0_beer",
       "t0_book",
       "t0_film",
@@ -721,7 +736,7 @@ export const TOOLS = {
     schema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "film | book | tv | music | beer | restaurant" },
+        name: { type: "string", description: "film | book | tv | anime | music | beer | restaurant" },
       },
     },
     async run(env, { name }, ctx) {
@@ -736,6 +751,12 @@ export const TOOLS = {
                  rate: { col: "my_rating",    scale: "0-5",  label: "title",
                          where: "AND shelf IN ('read','partly-read')" } },
         tv:    { table: "t0_tv",     unit: "shows",      verdicts: "tv" },
+        // Shelf-aware for the same reason `book` is: a MAL list is a queue as
+        // well as a history, and plan-to-watch entries have been watched
+        // exactly as much as a to-read book has been read.
+        anime: { table: "t0_anime",  unit: "titles watched or watching",
+                 where: "WHERE status <> 'plan_to_watch'",
+                 rate: { col: "score", scale: "1-10", label: "title", url: "url" } },
         music: { table: "t0_music",  unit: "scrobbles",  verdicts: "music", owns: "vinyl" },
         beer:  { table: "t0_beer",   unit: "check-ins",
                  rate: { col: "rating_score", scale: "0-5",  label: "beer_name" } },
@@ -743,34 +764,65 @@ export const TOOLS = {
                  rate: { col: "rating",       scale: "0-10", label: "restaurant" }, calibrated: true },
       };
 
-      // No name: the directory, so an assistant can pick one rather than guess a
-      // label. Cheaper than returning six full profiles and blowing the cap.
-      if (!name || !M[name]) {
+      // How many rows a medium has, or null if this instance does not hold it.
+      //
+      // Not defensive garnish: the map above is the ENGINE's list of media and
+      // an instance holds whichever zones it has ingested. A medium nobody has
+      // a zone for used to take the whole tool down inside D1 — including the
+      // directory call, which is the one an assistant makes first — and "no
+      // such table" is the only error a bare count over a fixed name can raise.
+      // A medium this record does not hold is simply not in the directory.
+      const countOf = async (d) => {
+        const rows = await q(env, `SELECT count(*) AS n, max(substr(created,1,10)) AS last_logged
+                                   FROM ${d.table} ${d.where ?? ""}`).catch(() => null);
+        return rows?.[0] ?? null;
+      };
+
+      const directory = async (missing) => {
         const out = [];
         for (const [k, d] of Object.entries(M)) {
-          const [r] = await q(env, `SELECT count(*) AS n FROM ${d.table} ${d.where ?? ""}`);
-          out.push({ medium: k, unit: d.unit, total: r?.n ?? 0 });
+          const base = await countOf(d);
+          if (base) out.push({ medium: k, unit: d.unit, total: base.n ?? 0 });
         }
         return {
           ...cap(out, ctx),
-          note: name
-            ? `no medium called '${name}' — ask for one of these`
+          note: missing
+            ? `no medium called '${missing}' here — ask for one of these`
             : "ask for one by name to get ratings, what is owned, and what was written about it",
         };
-      }
+      };
+
+      // No name: the directory, so an assistant can pick one rather than guess a
+      // label. Cheaper than returning six full profiles and blowing the cap.
+      if (!name || !M[name]) return directory(name);
 
       const d = M[name];
-      const [base] = await q(
-        env,
-        `SELECT count(*) AS n, max(substr(created,1,10)) AS last_logged
-         FROM ${d.table} ${d.where ?? ""}`
-      );
-      const rec = { medium: name, consumed: base?.n ?? 0, unit: d.unit,
-                    last_logged: base?.last_logged ?? null };
+      const base = await countOf(d);
+      // Named, known to the engine, absent from this record. Same answer as an
+      // unknown name, because from the caller's side it is the same fact.
+      if (!base) return directory(name);
+      const rec = { medium: name, consumed: base.n ?? 0, unit: d.unit,
+                    last_logged: base.last_logged ?? null };
 
       if (name === "tv") {
         const [e] = await q(env, `SELECT sum(episodes_watched) AS n FROM t0_tv`);
         rec.episodes_watched = e?.n ?? null;
+      }
+      if (name === "anime") {
+        // The shape of a MAL list is its status column — how much is finished,
+        // how much was abandoned, how much is queued. Returning a bare total
+        // for a zone that holds all four states says almost nothing.
+        const st = await q(
+          env,
+          `SELECT status AS status, count(*) AS n FROM t0_anime
+           WHERE status <> '' GROUP BY status ORDER BY n DESC, status`
+        );
+        // by_status counts the WHOLE list, queue included; `consumed` above
+        // does not. Both are wanted and they are different numbers, so the
+        // queue is also stated on its own, the way `book` states its to-read
+        // shelf — read off the breakdown rather than counted a second time.
+        if (st.length) rec.by_status = Object.fromEntries(st.map((r) => [r.status, r.n]));
+        rec.plan_to_watch = rec.by_status?.plan_to_watch ?? 0;
       }
       if (name === "beer") {
         const [b] = await q(env, `SELECT count(DISTINCT lower(beer_name)) AS n FROM t0_beer`);
@@ -825,7 +877,18 @@ export const TOOLS = {
       // read against a 0-10 scale looks like praise and is not.
       if (d.calibrated) notes.push("the owner's 0-10 dining scale runs high — call taste_summary(kind:'dining') before reading any of these numbers as praise");
       if (name === "film") notes.push(WATCH_GAP);
-      if (!d.rate) notes.push(`the owner does not rate ${name} item by item — the counts are the record`);
+      if (name === "anime") notes.push(COUNT_GAP);
+      if (!d.rate) {
+        // The one place this sentence was wrong. Trakt carries no ratings, so
+        // "he does not rate television" was true of the SOURCE and false of
+        // him — the anime half of the same medium is rated item by item, and an
+        // assistant told otherwise stopped looking.
+        const rated = name === "tv" ? await countOf(M.anime) : null;
+        notes.push(
+          rated?.n
+            ? "Trakt carries no ratings, so the television counts are the whole of what it says \u2014 but the anime half of the same medium is scored title by title: ask medium(name:'anime') or ratings(medium:'anime'), and `watching` for how far through each show they got"
+            : `the owner does not rate ${name} item by item — the counts are the record`);
+      }
 
       return { rows: [rec], ...(notes.length ? { note: notes.join(" · ") } : {}) };
     },
@@ -1296,10 +1359,17 @@ export const TOOLS = {
          ORDER BY created LIMIT 4`,
         from, to
       );
+      // The scale string is doing real work on this branch. A show is IN the
+      // window because its last episode was, and the number beside it is every
+      // episode ever watched of it — so `5` on a June row means "five in total,
+      // the last of them in June", not "five during June". Labelled 'episodes'
+      // it read as the second, and there is no column here that could mean it:
+      // t0_tv is one row per show and holds no per-episode dates at all.
       const tv = await q(
         env,
         `SELECT 'tv' AS kind, title AS label, substr(created,1,10) AS when_,
-                CAST(episodes_watched AS TEXT) AS rating, 'episodes' AS scale
+                CAST(episodes_watched AS TEXT) AS rating,
+                'episodes watched in total, not in this window' AS scale
          FROM t0_tv WHERE substr(created,1,10) BETWEEN ? AND ?
          ORDER BY created LIMIT 4`,
         from, to
@@ -1346,7 +1416,7 @@ export const TOOLS = {
         held?.artists ? `${held.artists} artists over ${held.plays} plays` : null,
         held?.films ? `${held.films} films` : null,
         held?.books ? `${held.books} books` : null,
-        held?.tv ? `${held.tv} shows` : null,
+        held?.tv ? `${held.tv} shows last watched` : null,
       ].filter(Boolean).join(" · ");
       const capped = cap(all, ctx);
       return {
@@ -1359,20 +1429,20 @@ export const TOOLS = {
 
   ratings: {
     class: "revealed", domain: "*", kind: "judgement",
-    reads: ["t0_beer", "t0_book", "t0_film", "t1_visits"],
+    reads: ["t0_anime", "t0_beer", "t0_book", "t0_film", "t1_visits"],
     // Restaurant visits are the owner's own record and never public; films,
     // books and beer are profiles on services that may be. One medium per call,
     // so one grade per call.
     readsFor: ({ medium }) => ({
       films: ["t0_film"], books: ["t0_book"],
-      beer: ["t0_beer"], restaurants: ["t1_visits"],
-    })[medium] ?? ["t0_beer", "t0_book", "t0_film", "t1_visits"],
+      beer: ["t0_beer"], restaurants: ["t1_visits"], anime: ["t0_anime"],
+    })[medium] ?? ["t0_anime", "t0_beer", "t0_book", "t0_film", "t1_visits"],
     description:
-      "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
+      "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
     schema: {
       type: "object",
       properties: {
-        medium: { type: "string", description: "films | books | beer | restaurants" },
+        medium: { type: "string", description: "films | books | beer | restaurants | anime" },
         min_rating: { type: "number", description: "Only at or above this, on that medium's own scale." },
         order: { type: "string", description: "rated (default, highest first) | recent" },
       },
@@ -1387,6 +1457,12 @@ export const TOOLS = {
         books:       { table: "t0_book",   label: "title",      col: "my_rating",    scale: "0-5", where: "AND shelf IN ('read','partly-read')" },
         beer:        { table: "t0_beer",   label: "beer_name",  col: "rating_score", scale: "0-5"  },
         restaurants: { table: "t1_visits", label: "restaurant", col: "rating",       scale: "0-10" },
+        // Television's only ratings. Trakt has none, so before the MAL list
+        // landed the honest answer for the whole medium was "he does not rate
+        // it" \u2014 true of Trakt and false of him. MAL's 0 means unrated
+        // rather than terrible, which the shared `> 0` filter already reads
+        // correctly.
+        anime:       { table: "t0_anime",  label: "title",      col: "score",        scale: "1-10", url: "url" },
       };
       const picked = medium ? { [medium]: SRC[medium] } : SRC;
       const out = [];
@@ -1563,6 +1639,153 @@ export const TOOLS = {
         ...capped,
         ...(shelf.length ? { genres: shelf.map((r) => `${r.name} (${r.n})`) } : {}),
         ...(note ? { note } : {}),
+      }, by);
+    },
+  },
+
+  watching: {
+    class: "revealed", domain: "culture", kind: "entity",
+    reads: ["t0_anime", "t0_tv"],
+    description:
+      "What the owner started and has not finished, per title: episodes watched against episodes total, how long since the last one, and their own MyAnimeList status. This is the only place the record has a denominator — Trakt says what was watched and never how much there was to watch — so it is the only tool that can tell 'five episodes in' from 'five episodes, which was all of them'. Filter by status='dropped' for what they abandoned on purpose, or status='stalled' for what quietly stopped.",
+    schema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          description:
+            "watching | stalled | completed | dropped | on_hold | plan_to_watch | unknown. `dropped`, `on_hold` and `plan_to_watch` are the owner's own declaration; `stalled` is derived and is never something they said.",
+        },
+        stalled_since: {
+          type: "string",
+          description:
+            "ISO date. Only titles whose last episode was on or before it, and which are neither finished nor deliberately dropped.",
+        },
+        order: { type: "string", description: "oldest (default, longest untouched first) | recent | rated" },
+      },
+    },
+    async run(env, { status, stalled_since, order }, ctx) {
+      // Today, bound rather than read inside SQL, so the same call against the
+      // same bundle is reproducible from outside and the day boundary is the
+      // worker's rather than D1's.
+      const today = new Date().toISOString().slice(0, 10);
+      // What counts as stalled, in one place. 180 days is a season and a half:
+      // long enough that a gap is not a break between cours, short enough that
+      // a show abandoned last winter shows up before it is a year gone.
+      const STALL_DAYS = 180;
+
+      // The closed vocabulary. A caller's word is normalised into it — "On-Hold"
+      // and "plan to watch" are what MAL prints — and one that is not in it
+      // filters nothing rather than matching nothing, because an empty answer
+      // reads as "he has none of those" and a typo is not that fact.
+      const STATUSES = ["watching", "stalled", "completed", "dropped", "on_hold", "plan_to_watch", "unknown"];
+      const asked = typeof status === "string"
+        ? status.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
+      const want = STATUSES.includes(asked) ? asked : null;
+
+      const by = ordering(order, {
+        oldest: "(last_watched IS NULL), last_watched ASC",
+        recent: "(last_watched IS NULL), last_watched DESC",
+        rated:  "score DESC, last_watched DESC",
+      });
+
+      // The join borrows a DATE and nothing else. MAL files each season as its
+      // own entry where Trakt keeps one show with many seasons, so a Trakt
+      // episode count and a MAL season length do not measure the same thing —
+      // the fraction is computed inside one MAL row, where both halves agree,
+      // and Trakt only supplies a fresher "last seen" than a list edit does.
+      const rows = await q(
+        env,
+        `WITH entry AS (
+           SELECT a.id AS id, a.title AS title, a.status AS declared,
+                  a.series_type AS series_type, a.url AS url,
+                  CAST(a.score AS INTEGER) AS score,
+                  CAST(a.episodes_watched AS INTEGER) AS watched,
+                  CAST(a.episodes_total AS INTEGER) AS total,
+                  (SELECT max(substr(t.created, 1, 10)) FROM t0_tv t
+                    WHERE t.match_key = a.match_key AND a.match_key <> '') AS trakt_seen,
+                  nullif(substr(a.created, 1, 10), '') AS list_moved
+             FROM t0_anime a
+         ),
+         dated AS (
+           SELECT entry.*,
+                  coalesce(nullif(trakt_seen, ''), list_moved) AS last_watched,
+                  CASE WHEN nullif(trakt_seen, '') IS NOT NULL THEN 'trakt'
+                       ELSE 'the list entry' END AS dated_by
+             FROM entry
+         ),
+         judged AS (
+           SELECT dated.*,
+                  CASE WHEN last_watched IS NULL THEN NULL
+                       ELSE CAST(julianday(?) - julianday(last_watched) AS INTEGER)
+                  END AS idle_days,
+                  CASE
+                    WHEN declared IN ('dropped', 'on_hold', 'plan_to_watch') THEN declared
+                    WHEN total > 0 AND watched >= total THEN 'completed'
+                    WHEN declared = 'completed' THEN 'completed'
+                    WHEN total > 0 AND watched < total AND last_watched IS NOT NULL
+                         AND julianday(?) - julianday(last_watched) >= ? THEN 'stalled'
+                    WHEN declared = 'watching' THEN 'watching'
+                    ELSE 'unknown'
+                  END AS status
+             FROM dated
+         )
+         SELECT * FROM judged
+          WHERE (? IS NULL OR status = ?)
+            AND (? IS NULL OR (last_watched IS NOT NULL AND last_watched <= ?
+                               AND status NOT IN ('completed', 'dropped', 'plan_to_watch')))
+          ORDER BY ${by.sql}, id
+          LIMIT ?`,
+        today, today, STALL_DAYS,
+        want, want,
+        stalled_since ?? null, stalled_since ?? null,
+        probe(ctx)
+      );
+
+      // The population, and the part of it this tool cannot measure (ADR-0023).
+      // MAL writes 0 for a series whose length is not settled yet, and a row
+      // with no denominator can never be called stalled however long it sits —
+      // which is a fact about the export, not about the owner losing interest.
+      const [held] = await q(
+        env,
+        `SELECT count(*) AS listed,
+                sum(CASE WHEN CAST(episodes_total AS INTEGER) = 0
+                          AND status <> 'plan_to_watch' THEN 1 ELSE 0 END) AS undenominated
+           FROM t0_anime`
+      );
+
+      const out = rows.map((r) => ({
+        title: r.title,
+        status: r.status,
+        // MAL's own word, kept beside the derived one. `stalled` is never in
+        // here: a caller must be able to tell what the owner declared from what
+        // this tool worked out.
+        ...(r.declared ? { declared: r.declared } : {}),
+        episodes_watched: r.watched,
+        episodes_total: r.total > 0 ? r.total : null,
+        ...(r.score > 0 ? { score: r.score, scale: "1-10" } : {}),
+        last_watched: r.last_watched ?? null,
+        ...(r.last_watched ? { dated_by: r.dated_by, days_since: r.idle_days } : {}),
+        ...(r.series_type ? { series_type: r.series_type } : {}),
+        ...(r.url ? { url: r.url } : {}),
+      }));
+
+      const notes = [
+        COUNT_GAP,
+        `stalled means no episode in ${STALL_DAYS} days with episodes still to watch — derived here, never declared`,
+        held?.undenominated
+          ? `${held.undenominated} ${held.undenominated === 1 ? "title carries" : "titles carry"} no episode total (MAL writes 0 while a series is airing), so ${held.undenominated === 1 ? "it" : "they"} cannot be called stalled at any age`
+          : null,
+        status && !want
+          ? `no status called '${status}' — unfiltered; this tool knows ${STATUSES.join(", ")}`
+          : null,
+      ].filter(Boolean);
+
+      const capped = cap(out, ctx);
+      return ordered({
+        ...capped,
+        scope: `${held?.listed ?? 0} titles on the anime list; these are the head of it`,
+        note: [capped.note, ...notes].filter(Boolean).join(" · "),
       }, by);
     },
   },
