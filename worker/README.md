@@ -386,7 +386,7 @@ Adding one is a decision about exposure, not a feature increment.
 |---|---|---|---|---|
 | `collection` | culture | possession | entity | What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. |
 | `reviews` | culture | authored | text | The owner's written film reviews from Letterboxd — 115 of them, in their own words, each with a link. |
-| `taste` | culture | revealed | event | What the owner actually listens to, by play count — the revealed preference, as distinct from what they say. |
+| `taste` | culture | revealed | event | What the owner actually listens to, straight off the scrobble stream — revealed preference, as distinct from what they say. |
 | `verdicts` | culture | authored | text | The owner's written opinions on books, films, tv and music — in their own words, with reasoning. |
 | `places` | table | authored | entity | Restaurants the owner has been to, with their own notes and ratings. |
 | `recipes` | table | authored | text | What the owner actually cooks — recipes they wrote up and published, with their source links. |
@@ -421,10 +421,10 @@ which orders the answer — from one vocabulary, so it is learned once:
 
 | `order` | what it means | offered by |
 |---|---|---|
-| `recent` | newest first — the default wherever the record carries a date | `ratings`, `reviews`, `places`, `collection`, `backlog`, `projects` |
-| `oldest` | the same axis reversed, for what has been sitting | `backlog`, `collection` |
+| `recent` | newest first — the default wherever the record carries a date | `ratings`, `reviews`, `places`, `collection`, `backlog`, `projects`, `taste` |
+| `oldest` | the same axis reversed, for what has been sitting | `backlog`, `collection`, `taste` |
 | `rated` | the owner's own rating, highest first | `ratings` (default), `reviews`, `places` (default) |
-| `played` | how often they actually reached for it | `collection` |
+| `played` | how often they actually reached for it | `collection`, `taste` (default) |
 
 A tool that offers a choice returns `order: "<name>"` beside `returned_count`
 and `has_more`, because a capped list means something different on each axis:
@@ -433,6 +433,28 @@ recency are the *last* twenty. A tool with one axis says nothing, because there
 is nothing a caller could have asked for instead. An unrecognised name falls back to the default and says so rather than
 failing the call. `verdicts` offers no `recent`, because that zone carries no
 date and a sort over an all-NULL column is hash order wearing a promise.
+
+**And a slice says what it is a slice of (ADR-0023).** Naming the axis fixed
+half the problem: it says which end of a list twenty rows came from, and it
+still cannot say twenty *of what*. Where a tool's rows are drawn from a
+population the caller cannot see — every artist in the scrobble stream, every
+medium inside a date window — the answer carries `scope`, which counts that
+population in a sentence:
+
+```
+taste            "40,561 plays by 2,314 artists, 2016-04-02 → 2026-06-02"
+around_the_time  "2026-03-01 → 2026-03-31 held 12 notes · 61 artists over 704
+                  plays · 9 films · 2 books; these rows are the head of each"
+```
+
+Two more rules fall out of the same failure. A tool is graded on the record it
+is *about*, so an optional column drawn from a more private zone is opt-in and
+costs its grade only on the call that asks for it — `taste(with_mentions:true)`
+reads the notes and answers twenty; `taste` alone reads the scrobbles and
+answers a hundred. And a field whose values are a closed hand-kept vocabulary
+returns that vocabulary, because a search that misses one of its buckets is a
+gap in the vocabulary and not in the shelf — `collection` carries `genres` on
+every answer for exactly that reason.
 
 The four project tools carry prose and metadata only. No source code is captured
 at any layer (ADR-0011), so a reader offering to review that code from here is

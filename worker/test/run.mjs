@@ -195,6 +195,9 @@ console.log("\n── per-call grading, and the invariant that makes it safe ─
 const grades = {
   t0_book: "profile", t0_film: "profile", t0_music: "profile",
   t0_raindrop: "private", t1_visits: "private", t0_beer: "private", t0_tv: "private",
+  // Derived off a notes join, so private by ADR-0019 §2 — spelled out here
+  // because `taste` is the tool that turns on it being the tighter of the two.
+  t2_affinity: "private",
 };
 ok(gradeOf(grades, TOOLS.backlog.readsFor({ kind: "read" })) === "profile",
    "backlog kind=read grades on the shelf it actually reads");
@@ -227,11 +230,35 @@ ok(widened.length === 0, `readsFor only ever narrows (${widened.join("; ") || "n
 
 // An unrecognised argument must fall back to the union, not to whatever the map
 // happened to return for undefined — the shape a typo takes.
+//
+// Probed with two shapes, because the two kinds of switch fail differently. A
+// tool switching on an ENUM (`backlog.kind`, `ratings.medium`) has an unknown
+// value and must read it as "could be any of them", so a typo grades tightest.
+// A tool switching on a BOOLEAN (`taste.with_mentions`) has no unknown value:
+// absent means the flag was not set, which is a fact rather than a guess, and
+// any non-boolean a caller sends is truthy, which ADDS the optional zone and so
+// still grades tightest. What both must satisfy is the same property — there is
+// a shape that reaches the full union — and neither may ever widen past `reads`,
+// which the scan above already holds.
+const UNION_PROBES = [
+  { kind: "zzz", medium: "zzz" },
+  { kind: "zzz", medium: "zzz", with_mentions: "zzz" },
+];
 for (const [name, t] of Object.entries(TOOLS)) {
   if (!t.readsFor) continue;
-  ok(t.readsFor({ kind: "zzz", medium: "zzz" }).length === t.reads.length,
+  ok(UNION_PROBES.some((a) => t.readsFor(a).length === t.reads.length),
      `${name} falls back to every zone it can read on an unknown argument`);
 }
+
+// And the flag's default must be the LOOSER read, or the fix it exists for did
+// not happen: `taste` is about the scrobble stream, and only a caller who asks
+// for the notes join pays the notes grade (ADR-0023 §2).
+ok(TOOLS.taste.readsFor({}).length === 1 && TOOLS.taste.readsFor({})[0] === "t0_music",
+   "taste grades on the record it is about, not on the colour column it can add");
+ok(gradeOf(grades, TOOLS.taste.readsFor({})) === "profile",
+   "so the default taste answer is profile-graded and returns a hundred rows");
+ok(gradeOf(grades, TOOLS.taste.readsFor({ with_mentions: true })) === "private",
+   "and asking for mentions pays the notes grade, on that call only");
 
 ok(bestGradeOf(grades, TOOLS.backlog) === "profile",
    "tools/list advertises the best case a tool can reach");
@@ -361,11 +388,11 @@ ok(!probed.rows.some((r) => r.i === MAX_ROWS), "the probe row is counted, never 
 // A tool with its own smaller page must detect ITS overflow, not the global one.
 // `ratings` shows five per medium; without this it would report has_more=false
 // on a medium with fifty rated films.
-const small = cap(Array.from({ length: probe(5) }, (_, i) => ({ i })), { want: 5 });
-ok(small.returned_count === 5 && small.has_more === true, "want=5 overflows at 5, not at 20");
-ok(cap([{ i: 1 }], { want: 5 }).has_more === false, "want=5 under-full -> has_more=false");
-ok(cap(Array.from({ length: 100 }, (_, i) => ({ i })), { want: 999 }).returned_count === MAX_ROWS,
-   "want narrows the page and can never widen it past MAX_ROWS");
+const small = cap(Array.from({ length: probe(undefined, 5) }, (_, i) => ({ i })), undefined, 5);
+ok(small.returned_count === 5 && small.has_more === true, "own=5 overflows at 5, not at 20");
+ok(cap([{ i: 1 }], undefined, 5).has_more === false, "own=5 under-full -> has_more=false");
+ok(cap(Array.from({ length: 100 }, (_, i) => ({ i })), { limit: 999 }).returned_count === MAX_ROWS,
+   "a caller's limit narrows the page and can never widen it past the grade's ceiling");
 
 // The regression that actually bites: a tool binding MAX_ROWS instead of probe()
 // loses the ability to say there is more, and NOTHING ELSE FAILS — the rows come
@@ -432,6 +459,59 @@ ok(rnList.rows.length > 1 && !("body" in rnList.rows[0]),
 // no enumeration affordance
 ok(!TOOLS.notes_on.schema.properties.id && !TOOLS.notes_on.schema.properties.offset,
    "no id/offset parameter — nothing to walk");
+
+console.log("\n── a slice says what it is a slice of (ADR-0023) ──");
+// The recurring failure this section exists for: an assistant read a capped
+// answer as the whole of a taste and said the listening was narrow. Every
+// assertion here is about the ENVELOPE, not the rows, because the rows are an
+// instance's and the property has to hold for any of them.
+const t = await TOOLS.taste.run(env, {}, { exposure: "profile" });
+ok(t.rows.length > 0, `taste -> ${t.rows.length} artists`);
+ok(typeof t.scope === "string" && /\d+ artists?/.test(t.scope),
+   `taste names the population it drew from ("${t.scope}")`);
+ok(t.order === "played", "and the axis it drew them on");
+ok(t.rows.every((r) => r.first_played && r.last_played),
+   "every artist carries the span it was played over, so 'lately' is checkable");
+
+// The cap must be the profile one now. A tool about a profile-graded record
+// answering twenty at a time, because one optional column came off the notes,
+// is the whole bug (ADR-0023 §2).
+const scrobbleGrade = gradeOf(await loadExposure(env), TOOLS.taste.readsFor({}));
+ok(scrobbleGrade === "profile" || scrobbleGrade === "published",
+   `taste is graded on the scrobble record (${scrobbleGrade}), not on the notes`);
+ok(t.rows.length <= ROW_CAP[scrobbleGrade], "and returns no more than that grade allows");
+
+// Reach. Each of these was unaskable before: the surface held one lifetime
+// ranking and no way to enter it from any other direction.
+const recent = await TOOLS.taste.run(env, { order: "recent" }, { exposure: "profile" });
+ok(recent.order === "recent", "taste offers a recency axis");
+ok(JSON.stringify(recent.rows) !== JSON.stringify(t.rows) || t.rows.length <= 1,
+   "which is a different list from the all-time count");
+const quiet = t.rows.length ? await TOOLS.taste.run(env, { artist: t.rows.at(-1).artist }, { exposure: "profile" }) : null;
+ok(quiet && quiet.rows.length >= 1, "an artist can be asked about by name");
+const miss = await TOOLS.taste.run(env, { artist: "zzzznotanartistzzzz" }, { exposure: "profile" });
+ok(miss.rows.length === 0 && /never scrobbled/.test(miss.note ?? ""),
+   "and a miss says what absence means rather than implying they have never heard it");
+const windowed = await TOOLS.taste.run(env, { since: "1970-01-01", until: "1970-12-31" }, { exposure: "profile" });
+ok(windowed.rows.length === 0 && !!windowed.note, "an empty window is explained, not returned bare");
+
+// around_the_time hands back four or five rows per medium by necessity. It must
+// not let four artists stand for a month of listening.
+const win = await TOOLS.around_the_time.run(env, { from: "2020-01-01", to: "2026-12-31" });
+ok(!win.rows.length || /head of each/.test(win.scope ?? ""),
+   `around_the_time says its rows are the head of each source ("${(win.scope ?? "").slice(0, 60)}")`);
+ok(!win.rows.length || /artists over \d+ plays|nothing/.test(win.scope ?? ""),
+   "and counts the artists the window actually held");
+
+// collection.genre is a hand-kept column with a closed handful of values in it.
+// A topic that is not one of them must not come back as an empty shelf.
+const vinyl = await TOOLS.collection.run(env, { kind: "vinyl" });
+ok(!vinyl.rows.length || Array.isArray(vinyl.genres),
+   `collection returns its genre vocabulary (${(vinyl.genres ?? []).length} buckets)`);
+const noSuchGenre = await TOOLS.collection.run(env, { topic: "zzzznotagenrezzzz" });
+ok(noSuchGenre.rows.length === 0, "a topic nothing matches returns no rows");
+ok(Array.isArray(noSuchGenre.genres) && /vocabulary/.test(noSuchGenre.note ?? ""),
+   "and answers with the vocabulary instead, so the miss is legible as a gap in it");
 
 console.log("\n── new zones + join ──");
 const ev = await TOOLS.events.run(env, {});
