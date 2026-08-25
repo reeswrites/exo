@@ -136,8 +136,16 @@ TOOL_ZONES: dict[str, Reads] = {
                             ("t0_beer",), ("t1_visits",), ("t1_verdicts",),
                             ("t1_film_review",), ("t1_collection",))),
     "ratings": Reads(any_of=(("t0_film",), ("t0_book",), ("t0_beer",), ("t1_visits",))),
+    # A rollup over a facet of the thing rated. Beer is the only medium whose
+    # rows carry one, so holding that zone is the whole tool rather than a
+    # narrower answer — which is `required`, not `any_of` with one group.
+    "facets": Reads(required=("t0_beer",)),
     "saves": Reads(required=("t0_raindrop",)),
-    "taste_summary": Reads(required=("t0_taste_derived",)),
+    # Two independent halves. `dining` and `clusters` are taste-engine's
+    # documents; `beer` is computed from the check-in log, because taste-engine
+    # has never seen it and nothing upstream is going to write that file. Either
+    # zone alone still answers something, so neither is required.
+    "taste_summary": Reads(any_of=(("t0_taste_derived",), ("t0_beer",))),
 }
 
 
@@ -181,6 +189,7 @@ TOOL_DOMAINS: dict[str, str] = {
     "consumption": "*",
     "medium": "*",
     "ratings": "*",
+    "facets": "*",
     "saves": "*",
     "taste_summary": "*",
 }

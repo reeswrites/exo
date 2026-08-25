@@ -299,13 +299,22 @@ def build(served_counts: dict[str, int] | None = None,
     # (it keyed on the permalink, and Letterboxd issues a different one per
     # context, so one watch counted three times).
     beers_distinct = _one(con, f"SELECT count(DISTINCT lower(beer_name)) FROM {P('t0_beer')}")
+    # The gap between those two numbers, named rather than left to be subtracted.
+    # Almost every check-in is a beer never drunk before, so a return is the
+    # rarest judgement in this record and the one worth the most.
+    beers_repeat = _one(con, f"""SELECT count(*) FROM (
+        SELECT count(*) AS c FROM {P('t0_beer')} GROUP BY lower(beer_name)) WHERE c > 1""")
     reviews_n = _one(con, f"SELECT count(*) FROM {P('t1_film_review')}")
 
     A(f"- **what has been consumed** — {counts.get('t0_music', 0):,} scrobbles, "
       f"{read_n:,} books read and {toread_n:,} shelved to-read, "
       f"{counts.get('t0_film', 0):,} films, "
       f"{counts.get('t0_tv', 0):,} tv shows ({_one(con, f'SELECT sum(episodes_watched) FROM {P("t0_tv")}'):,} episodes), "
-      f"{beers_distinct:,} beers across {counts.get('t0_beer', 0):,} check-ins")
+      f"{beers_distinct:,} beers across {counts.get('t0_beer', 0):,} check-ins "
+      f"(only {beers_repeat:,} of those beers were ever drunk twice — novelty is the "
+      "point, so a return says more than a high score does). Beer rows carry the "
+      "brewery, style, abv and venue; `facets` rolls them up by style family, "
+      "brewery or venue, which twenty rating rows cannot.")
     A(f"- **{config.OWNER_POSSESSIVE} own criticism** — {reviews_n:,} written film "
       f"reviews with links, plus {counts.get('t1_verdicts', 0):,} longer verdicts "
       f"across media. These are verbatim \u2014 {config.OWNER_POSSESSIVE} sentences, "
@@ -440,11 +449,38 @@ def build(served_counts: dict[str, int] | None = None,
         A(f"- **what they SAY they like** — {taste_n:,} stated preferences across "
           "events, outings, travel and dining, distinct from what they actually do. "
           "Where the two disagree is usually the interesting part.")
-    if counts.get("t0_taste_derived"):
-        A(f"- **how to read {config.OWNER_POSSESSIVE} ratings** — scale calibration "
-          "per medium. Read it before interpreting any number: "
-          f"{config.OWNER_POSSESSIVE} restaurant scale is 0-10 with a median of 8.1, "
-          "so an 8 is average, not a rave.")
+    # Gated on EITHER half, because the two kinds now come from different places:
+    # the dining and cluster documents are taste-engine's, mirrored; the beer one
+    # is computed by the surface from the check-in log. An instance with beer and
+    # no taste-engine still has a calibration to advertise.
+    if counts.get("t0_taste_derived") or counts.get("t0_beer"):
+        cal = [f"- **how to read {config.OWNER_POSSESSIVE} ratings** — scale calibration "
+               "per medium, from `taste_summary`. Read it before interpreting any "
+               "number."]
+        if counts.get("t0_taste_derived"):
+            # Sentence-initial, and the possessive is configured per instance —
+            # `capitalize()` would lowercase the tail of a name-shaped one.
+            poss = config.OWNER_POSSESSIVE
+            cal.append(f" {poss[:1].upper()}{poss[1:]} restaurant scale is "
+                       "0-10 with a median of 8.1, so an 8 is average, not a rave.")
+        if counts.get("t0_beer"):
+            # Computed, never stated. A median written into this file is a number
+            # that stops being true the next time they drink something, and the
+            # claim it supports ("a 4 is not high") is only true of some
+            # distributions — so the numbers go in and the adjective does not.
+            beer_cal = _q(con, f"""SELECT median(r), avg(r),
+                                          sum(CASE WHEN r >= 4 THEN 1 ELSE 0 END) * 1.0 / count(*)
+                                   FROM (SELECT CAST(rating_score AS DOUBLE) AS r
+                                         FROM {P('t0_beer')}
+                                         WHERE nullif(rating_score, '') IS NOT NULL
+                                           AND CAST(rating_score AS DOUBLE) > 0)""")
+            if beer_cal and beer_cal[0][0] is not None:
+                med, avg, at4 = beer_cal[0]
+                cal.append(f" The beer scale is 0-5 with a median of {med:g} and a mean "
+                           f"of {avg:.2f}, and {at4:.0%} of rated check-ins are at 4.0 or "
+                           "above — call `taste_summary(kind:'beer')` before reading a 4 "
+                           "as praise.")
+        A("".join(cal))
 
     A("")
 
