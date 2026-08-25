@@ -1360,19 +1360,42 @@ if (!(await hasZone("t0_anime"))) {
      "every answer states that the rest of television has no denominator");
   ok(/stalled means no episode in \d+ days/.test(w.note ?? ""),
      "and defines the one status it derives rather than reads");
-  ok(/\d+ titles on the anime list/.test(w.scope ?? ""),
+  ok(/\d+ shows in the television record/.test(w.scope ?? ""),
      `it names the population it drew from ("${w.scope}")`);
+  // The spine is Trakt now (ADR-0025), so the population is every show watched
+  // and not the 243 that happen to be on a list abandoned in 2023.
+  ok(/every status here is derived from Trakt activity/.test(w.note ?? ""),
+     "and says which source the status came from");
+  ok(w.rows.every((r) => !r.declared || r.declared_on === "2023-08-31"),
+     "a declared word is always stamped with the day the list stopped");
 
   // `stalled` is derived and `dropped` is declared, and a caller must be able
   // to tell them apart — abandoning something on purpose and drifting away
   // from it are different facts about a person.
+  // `dropped` is a DECLARATION, not a derived status, and asking for it as a
+  // status is answered by routing rather than by an empty list — the old schema
+  // advertised it that way and a caller must not be told "he dropped nothing".
   const dropped = await TOOLS.watching.run(env, { status: "dropped" });
-  ok(dropped.rows.every((r) => r.status === "dropped"), "the status filter holds");
-  ok(dropped.rows.every((r) => r.declared === "dropped"),
-     "and a dropped row is the owner's own word, never an inference");
+  ok(dropped.rows.every((r) => r.declared === "dropped"), "the status filter holds");
+  ok(/read as declared='dropped'/.test(dropped.note ?? ""),
+     "and the reroute is stated rather than silent");
+  ok(dropped.rows.every((r) => r.status !== "dropped"),
+     "a dropped row's derived status is still whatever Trakt says it is");
+  const decl = await TOOLS.watching.run(env, { declared: "dropped" });
+  ok(decl.rows.every((r) => r.declared === "dropped"),
+     "and the declaration can be asked for directly");
   const stalled = await TOOLS.watching.run(env, { status: "stalled" });
   ok(stalled.rows.every((r) => r.declared !== "stalled"),
      "nothing is ever declared stalled — it is only ever derived");
+  // The guard that makes the flip safe: MAL closed while Trakt kept counting,
+  // so a rolled-up total that is already behind the watch count is not a
+  // denominator and must not be served as one.
+  ok(w.rows.every((r) => r.episodes_total === null
+                         || r.episodes_watched <= r.episodes_total),
+     "a served total is never smaller than what has already been watched");
+  ok(w.rows.every((r) => r.episodes_total !== null || !r.no_episode_total
+                         || typeof r.no_episode_total === "string"),
+     "and a missing total says why it is missing");
   ok(stalled.rows.every((r) => r.episodes_total > r.episodes_watched),
      "a stalled title has episodes left, or it is finished rather than stalled");
   ok(stalled.rows.every((r) => r.days_since >= 180),
@@ -1384,7 +1407,7 @@ if (!(await hasZone("t0_anime"))) {
   // MAL spells its statuses "On-Hold" and "Plan to Watch"; a caller passing
   // either through must not get an empty answer that reads as "he has none".
   const hy = await TOOLS.watching.run(env, { status: "On-Hold" });
-  ok(hy.rows.every((r) => r.status === "on_hold"), "a MAL-spelled status is normalised, not missed");
+  ok(hy.rows.every((r) => r.declared === "on_hold"), "a MAL-spelled status is normalised, not missed");
   const bogus = await TOOLS.watching.run(env, { status: "abandoned" });
   ok(/no status called 'abandoned'/.test(bogus.note ?? ""),
      "an unknown status filters nothing and says so, rather than answering nobody");

@@ -22,7 +22,7 @@ import pytest
 
 from exo import config
 from exo.loaders import anime, tv
-from exo.loaders.titles import match_key
+from exo.loaders.titles import match_key, show_key
 
 ENTRY = """<?xml version="1.0" encoding="UTF-8" ?>
 <myanimelist>
@@ -225,3 +225,39 @@ def test_the_key_is_not_part_of_any_id(exports, monkeypatch):
     original = one(exports, id="9001", title="A Show").id
     monkeypatch.setattr(anime, "match_key", lambda t: "something else entirely")
     assert one(exports, id="9001", title="A Show").id == original
+
+
+class TestShowKey:
+    """The coarser key, and the only place a season is deliberately stripped.
+
+    `match_key` must not do this (see TestMatchKey). `show_key` must, because
+    the numerator it serves is Trakt's and Trakt counts a show: against 41
+    episodes of Overlord, a 13-episode season total is the wrong denominator,
+    not a safer one (ADR-0025).
+    """
+
+    def test_it_merges_the_seasons_match_key_keeps_apart(self):
+        assert show_key("Overlord III") == show_key("Overlord")
+        assert show_key("Log Horizon 2nd Season") == show_key("Log Horizon")
+        assert show_key("Spy x Family Part 2") == show_key("Spy x Family")
+        assert show_key("Sword Art Online II") == show_key("Sword Art Online")
+        assert show_key("Wistoria: Wand and Sword Season 2") == show_key("Wistoria: Wand and Sword")
+
+    def test_it_peels_repeatedly(self):
+        assert show_key("Log Horizon 2nd Season Part 2") == show_key("Log Horizon")
+
+    def test_a_bare_number_is_not_a_season(self):
+        """The failure that would turn a title into its own sequel."""
+        assert show_key("Mob Psycho 100") == match_key("Mob Psycho 100")
+        assert show_key("Hunter x Hunter (2011)") == match_key("Hunter x Hunter (2011)")
+        assert show_key("Kakegurui\u00d7\u00d7") == match_key("Kakegurui")
+
+    def test_a_lone_i_is_a_word_not_a_numeral(self):
+        assert show_key("Kimi to Boku I") == match_key("Kimi to Boku I")
+
+    def test_it_still_separates_different_shows(self):
+        assert show_key("Mission: Yozakura Family") != show_key("Mission: Yozakura-ke")
+
+    def test_an_empty_title_makes_an_empty_key(self):
+        assert show_key("") == ""
+        assert show_key("!!!") == ""

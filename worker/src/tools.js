@@ -1990,26 +1990,31 @@ export const TOOLS = {
 
   watching: {
     class: "revealed", domain: "culture", kind: "entity",
-    reads: ["t0_anime", "t0_tv"],
+    reads: ["t0_tv", "t0_anime"],
     description:
-      "What the owner started and has not finished, per title: episodes watched against episodes total, how long since the last one, and their own MyAnimeList status. This is the only place the record has a denominator — Trakt says what was watched and never how much there was to watch — so it is the only tool that can tell 'five episodes in' from 'five episodes, which was all of them'. Filter by status='dropped' for what they abandoned on purpose, or status='stalled' for what quietly stopped.",
+      "What the owner started and has not finished, per show: episodes watched, how long since the last one, and an episode total where one is known. Trakt is the record of what is actually watched and is what every status here is derived from. MyAnimeList supplies denominators only — the list was abandoned in August 2023, so the word they last filed against a title is returned as `declared` and clearly dated, never as the current state. Filter status='stalled' for what quietly stopped, or declared='dropped' for what they abandoned on purpose back when they were still keeping the list.",
     schema: {
       type: "object",
       properties: {
         status: {
           type: "string",
           description:
-            "watching | stalled | completed | dropped | on_hold | plan_to_watch | unknown. `dropped`, `on_hold` and `plan_to_watch` are the owner's own declaration; `stalled` is derived and is never something they said.",
+            "watching | stalled | completed | unknown. All four are DERIVED from Trakt activity and none is something the owner said. `completed` and `stalled` need an episode total, so a show without one is `unknown` however plainly it ended.",
+        },
+        declared: {
+          type: "string",
+          description:
+            "watching | completed | dropped | on_hold | plan_to_watch — the owner's own MyAnimeList word, frozen 2023-08-31. A historical fact about the list, not a claim about now.",
         },
         stalled_since: {
           type: "string",
           description:
-            "ISO date. Only titles whose last episode was on or before it, and which are neither finished nor deliberately dropped.",
+            "ISO date. Only shows whose last episode was on or before it, and which are not already finished.",
         },
         order: { type: "string", description: "oldest (default, longest untouched first) | recent | rated" },
       },
     },
-    async run(env, { status, stalled_since, order }, ctx) {
+    async run(env, { status, declared, stalled_since, order }, ctx) {
       // Today, bound rather than read inside SQL, so the same call against the
       // same bundle is reproducible from outside and the day boundary is the
       // worker's rather than D1's.
@@ -2019,14 +2024,27 @@ export const TOOLS = {
       // a show abandoned last winter shows up before it is a year gone.
       const STALL_DAYS = 180;
 
-      // The closed vocabulary. A caller's word is normalised into it — "On-Hold"
-      // and "plan to watch" are what MAL prints — and one that is not in it
-      // filters nothing rather than matching nothing, because an empty answer
-      // reads as "he has none of those" and a typo is not that fact.
-      const STATUSES = ["watching", "stalled", "completed", "dropped", "on_hold", "plan_to_watch", "unknown"];
-      const asked = typeof status === "string"
-        ? status.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
-      const want = STATUSES.includes(asked) ? asked : null;
+      // Two vocabularies now, because there are two sources and they no longer
+      // mean the same kind of thing. Everything in STATUSES is worked out here
+      // from Trakt; everything in DECLARED is a word the owner typed into a
+      // list they stopped keeping. Collapsing them is what made a 2023 edit
+      // read as "currently watching" for three years.
+      const STATUSES = ["watching", "stalled", "completed", "unknown"];
+      const DECLARED = ["watching", "completed", "dropped", "on_hold", "plan_to_watch"];
+      const norm = (v) =>
+        typeof v === "string" ? v.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
+
+      const askedStatus = norm(status);
+      const askedDeclared = norm(declared);
+      // `dropped`, `on_hold` and `plan_to_watch` used to be status values and
+      // the old schema advertised them, so a caller still asking that way is
+      // answered rather than silently given everything. They are declarations,
+      // so the ask is routed to the column that still holds them.
+      const rerouted = STATUSES.includes(askedStatus) ? null
+        : DECLARED.includes(askedStatus) ? askedStatus : null;
+      const wantStatus = STATUSES.includes(askedStatus) ? askedStatus : null;
+      const wantDeclared = DECLARED.includes(askedDeclared) ? askedDeclared
+        : rerouted;
 
       const by = ordering(order, {
         oldest: "(last_watched IS NULL), last_watched ASC",
@@ -2034,106 +2052,155 @@ export const TOOLS = {
         rated:  "score DESC, last_watched DESC",
       });
 
-      // The join borrows a DATE and nothing else. MAL files each season as its
-      // own entry where Trakt keeps one show with many seasons, so a Trakt
-      // episode count and a MAL season length do not measure the same thing —
-      // the fraction is computed inside one MAL row, where both halves agree,
-      // and Trakt only supplies a fresher "last seen" than a list edit does.
+      // The spine is Trakt, because that is where watching leaves a trace
+      // (ADR-0025). MAL is joined in twice and for two different reasons:
+      //
+      //   `shelf`, on show_key, sums episode totals across every season entry —
+      //   Trakt counts a show and MAL files a season each, so the denominator
+      //   only measures the same thing as the numerator once it is summed.
+      //
+      //   the scalar subqueries, on match_key, read the exact entry for that
+      //   title. `declared` and `score` are annotations on one list row and
+      //   must not be smeared across a rollup.
       const rows = await q(
         env,
-        `WITH entry AS (
-           SELECT a.id AS id, a.title AS title, a.status AS declared,
-                  a.series_type AS series_type, a.url AS url,
-                  CAST(a.score AS INTEGER) AS score,
-                  CAST(a.episodes_watched AS INTEGER) AS watched,
-                  CAST(a.episodes_total AS INTEGER) AS total,
-                  (SELECT max(substr(t.created, 1, 10)) FROM t0_tv t
-                    WHERE t.match_key = a.match_key AND a.match_key <> '') AS trakt_seen,
-                  nullif(substr(a.created, 1, 10), '') AS list_moved
-             FROM t0_anime a
+        `WITH shelf AS (
+           SELECT show_key AS k,
+                  sum(CAST(episodes_total AS INTEGER)) AS listed_total,
+                  count(*) AS seasons_listed
+             FROM t0_anime
+            WHERE show_key <> ''
+            GROUP BY show_key
          ),
-         dated AS (
-           SELECT entry.*,
-                  coalesce(nullif(trakt_seen, ''), list_moved) AS last_watched,
-                  CASE WHEN nullif(trakt_seen, '') IS NOT NULL THEN 'trakt'
-                       ELSE 'the list entry' END AS dated_by
-             FROM entry
+         seen AS (
+           SELECT t.id AS id, t.title AS title, t.url AS url,
+                  t.imdb AS imdb, t.year AS year,
+                  CAST(t.episodes_watched AS INTEGER) AS watched,
+                  CAST(t.seasons_touched AS INTEGER) AS seasons_touched,
+                  nullif(substr(t.created, 1, 10), '') AS last_watched,
+                  shelf.listed_total AS listed_total,
+                  shelf.seasons_listed AS seasons_listed,
+                  (SELECT a.status FROM t0_anime a
+                    WHERE a.match_key = t.match_key AND t.match_key <> ''
+                    LIMIT 1) AS declared,
+                  (SELECT CAST(a.score AS INTEGER) FROM t0_anime a
+                    WHERE a.match_key = t.match_key AND t.match_key <> ''
+                    LIMIT 1) AS score,
+                  (SELECT a.url FROM t0_anime a
+                    WHERE a.match_key = t.match_key AND t.match_key <> ''
+                    LIMIT 1) AS mal_url
+             FROM t0_tv t
+             LEFT JOIN shelf ON shelf.k = t.show_key AND t.show_key <> ''
+         ),
+         graded AS (
+           SELECT seen.*,
+                  -- A denominator is believed only if it can still be true. MAL
+                  -- closed while Trakt kept counting, so a show whose later
+                  -- seasons were never listed rolls up SHORT of what has
+                  -- already been watched. That is not 110% of a series; it is a
+                  -- total that stopped being the total, and a ratio built on it
+                  -- would read as finished-and-then-some.
+                  CASE WHEN listed_total > 0 AND watched <= listed_total
+                       THEN listed_total END AS total,
+                  CASE WHEN listed_total IS NULL THEN 'never on the anime list'
+                       WHEN listed_total > 0 AND watched > listed_total
+                       THEN 'the list stops short of what Trakt has counted'
+                       WHEN listed_total = 0
+                       THEN 'the list carries no episode total for it'
+                  END AS no_total_because
+             FROM seen
          ),
          judged AS (
-           SELECT dated.*,
+           SELECT graded.*,
                   CASE WHEN last_watched IS NULL THEN NULL
                        ELSE CAST(julianday(?) - julianday(last_watched) AS INTEGER)
                   END AS idle_days,
                   CASE
-                    WHEN declared IN ('dropped', 'on_hold', 'plan_to_watch') THEN declared
+                    WHEN last_watched IS NULL THEN 'unknown'
                     WHEN total > 0 AND watched >= total THEN 'completed'
-                    WHEN declared = 'completed' THEN 'completed'
-                    WHEN total > 0 AND watched < total AND last_watched IS NOT NULL
+                    WHEN total > 0 AND watched < total
                          AND julianday(?) - julianday(last_watched) >= ? THEN 'stalled'
-                    WHEN declared = 'watching' THEN 'watching'
+                    WHEN julianday(?) - julianday(last_watched) < ? THEN 'watching'
                     ELSE 'unknown'
                   END AS status
-             FROM dated
+             FROM graded
          )
          SELECT * FROM judged
           WHERE (? IS NULL OR status = ?)
+            AND (? IS NULL OR declared = ?)
             AND (? IS NULL OR (last_watched IS NOT NULL AND last_watched <= ?
-                               AND status NOT IN ('completed', 'dropped', 'plan_to_watch')))
+                               AND status <> 'completed'))
           ORDER BY ${by.sql}, id
           LIMIT ?`,
-        today, today, STALL_DAYS,
-        want, want,
+        today,
+        today, STALL_DAYS,
+        today, STALL_DAYS,
+        wantStatus, wantStatus,
+        wantDeclared, wantDeclared,
         stalled_since ?? null, stalled_since ?? null,
         probe(ctx)
       );
 
       // The population, and the part of it this tool cannot measure (ADR-0023).
-      // MAL writes 0 for a series whose length is not settled yet, and a row
-      // with no denominator can never be called stalled however long it sits —
-      // which is a fact about the export, not about the owner losing interest.
+      // Both numbers are about the DENOMINATOR, which is the only thing MAL is
+      // still trusted for: how many shows Trakt knows, and how many of those
+      // the list can put a total against.
       const [held] = await q(
         env,
-        `SELECT count(*) AS listed,
-                sum(CASE WHEN CAST(episodes_total AS INTEGER) = 0
-                          AND status <> 'plan_to_watch' THEN 1 ELSE 0 END) AS undenominated
-           FROM t0_anime`
+        `SELECT (SELECT count(*) FROM t0_tv) AS shows,
+                (SELECT count(*) FROM t0_tv t
+                  WHERE t.show_key <> '' AND EXISTS (
+                    SELECT 1 FROM t0_anime a
+                     WHERE a.show_key = t.show_key
+                       AND CAST(a.episodes_total AS INTEGER) > 0)) AS denominated`
       );
 
       const out = rows.map((r) => ({
         title: r.title,
         status: r.status,
-        // MAL's own word, kept beside the derived one. `stalled` is never in
-        // here: a caller must be able to tell what the owner declared from what
-        // this tool worked out.
-        ...(r.declared ? { declared: r.declared } : {}),
+        // The owner's own word, kept beside the derived one and DATED. Without
+        // the date this is the bug it replaced: a 2023 list edit reading as a
+        // present-tense claim.
+        ...(r.declared ? { declared: r.declared, declared_on: "2023-08-31" } : {}),
         episodes_watched: r.watched,
-        episodes_total: r.total > 0 ? r.total : null,
+        episodes_total: r.total ?? null,
+        ...(r.total == null && r.no_total_because
+          ? { no_episode_total: r.no_total_because } : {}),
         ...(r.score > 0 ? { score: r.score, scale: "1-10" } : {}),
         last_watched: r.last_watched ?? null,
-        ...(r.last_watched ? { dated_by: r.dated_by, days_since: r.idle_days } : {}),
-        ...(r.series_type ? { series_type: r.series_type } : {}),
+        ...(r.last_watched ? { days_since: r.idle_days } : {}),
+        ...(r.seasons_touched > 0 ? { seasons_touched: r.seasons_touched } : {}),
         ...(r.url ? { url: r.url } : {}),
+        ...(r.mal_url ? { mal_url: r.mal_url } : {}),
       }));
 
       const notes = [
         COUNT_GAP,
+        `every status here is derived from Trakt activity; \`declared\` is the owner's MyAnimeList word and the list was abandoned on 2023-08-31`,
         `stalled means no episode in ${STALL_DAYS} days with episodes still to watch — derived here, never declared`,
-        held?.undenominated
-          ? `${held.undenominated} ${held.undenominated === 1 ? "title carries" : "titles carry"} no episode total (MAL writes 0 while a series is airing), so ${held.undenominated === 1 ? "it" : "they"} cannot be called stalled at any age`
+        held?.shows
+          ? `${held.denominated} of ${held.shows} shows can be given an episode total; the rest can be called neither finished nor unfinished`
           : null,
-        status && !want
+        rerouted
+          ? `'${rerouted}' is a declaration rather than a derived status, so it was read as declared='${rerouted}'`
+          : null,
+        status && !wantStatus && !rerouted
           ? `no status called '${status}' — unfiltered; this tool knows ${STATUSES.join(", ")}`
+          : null,
+        declared && !DECLARED.includes(askedDeclared)
+          ? `no declaration called '${declared}' — unfiltered; the list knows ${DECLARED.join(", ")}`
           : null,
       ].filter(Boolean);
 
       const capped = cap(out, ctx);
       return ordered({
         ...capped,
-        scope: `${held?.listed ?? 0} titles on the anime list; these are the head of it`,
+        scope: `${held?.shows ?? 0} shows in the television record; these are the head of it`,
         note: [capped.note, ...notes].filter(Boolean).join(" · "),
       }, by);
     },
   },
+
 
   saves: {
     class: "intent", domain: "*", kind: "pointer",
