@@ -1025,6 +1025,94 @@ export const TOOLS = {
     },
   },
 
+  // The empty cell ADR-0015's grid left in `culture`: every culture tool reads
+  // something he did or owns, and nothing said what the world was saying about
+  // any of it. `events` was the only `class: "world"` tool on the surface.
+  criticism: {
+    class: "world", domain: "culture", kind: "text",
+    reads: ["t0_criticism"],
+    description:
+      "What the music press is publishing \u2014 titles, bylines, dates and the outlet's own blurb, from the underground outlets the owner follows, with the link to the piece. SOMEBODY ELSE'S WRITING, never his: quote it as the outlet's, and answer with the link rather than a paraphrase. Use it for what is being said about a scene or an artist right now, which is the one thing this record cannot answer from his own consumption. Pair with `taste` for whether he already plays what is being written about.",
+    schema: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "Match against the headline, blurb, tags or byline." },
+        outlet: { type: "string", description: "One outlet, by name or slug (e.g. 'no-bells')." },
+        since: { type: "string", description: "ISO date. Only pieces published on or after it." },
+        order: { type: "string", description: "recent (default) | oldest." },
+      },
+    },
+    async run(env, { topic, outlet, since, order }, ctx) {
+      const by = ordering(order, {
+        recent: "published DESC, url",
+        oldest: "published ASC, url",
+      });
+      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const who = outlet ? outlet.toLowerCase() : null;
+
+      // Round-robin by outlet, so a daily reviewer cannot fill an answer a
+      // weekly essayist should be in \u2014 the same rule `events` applies to
+      // its nine scrapers, and the reason this zone stores an outlet at all.
+      //
+      // Only when nothing was ASKED for, though. Dominance is a problem for a
+      // browse; on a topic search the caller wants the matches, and capping
+      // them per outlet would hide four of five pieces about one record because
+      // they ran in the same place.
+      const share = topic || who ? 1000 : 3;
+
+      const rows = await q(
+        env,
+        `WITH f AS (
+           SELECT outlet, outlet_slug, byline, title, url, published, summary, chars, tags
+           FROM t0_criticism
+           WHERE (? IS NULL OR published >= ?)
+             AND (? IS NULL OR lower(outlet_slug) = ? OR lower(outlet) = ?)
+             AND (? IS NULL OR lower(title) LIKE ?
+                            OR lower(COALESCE(summary,'')) LIKE ?
+                            OR lower(COALESCE(tags,'')) LIKE ?
+                            OR lower(COALESCE(byline,'')) LIKE ?)
+         ), ranked AS (
+           SELECT *, row_number() OVER (PARTITION BY outlet_slug ORDER BY ${by.sql}) AS rn
+           FROM f
+         )
+         SELECT outlet, byline, title, published, url, tags,
+                -- Clipped again here, and deliberately. The stored blurb runs to
+                -- 700 chars, which at twenty rows is the whole byte budget and
+                -- returns eleven links instead of twenty. A dek is enough to
+                -- decide whether to follow one, and the count says there is more
+                -- behind it.
+                substr(COALESCE(summary,''), 1, 320) AS summary,
+                CASE WHEN chars > 320 THEN chars END AS blurb_chars
+         FROM ranked WHERE rn <= ?
+         ORDER BY ${by.sql}
+         LIMIT ?`,
+        since ?? null, since ?? null,
+        who, who, who,
+        like, like, like, like, like,
+        share, probe(ctx)
+      );
+
+      // An empty answer is explained, and the two reasons are not the same
+      // answer. "Nothing matched" is a fact about the question; "the press has
+      // not been read yet" is a fact about the pipeline, and a caller told the
+      // first when the second is true will report that nobody has written about
+      // an artist all year.
+      if (!rows.length) {
+        const [{ n }] = await q(env, `SELECT count(*) AS n FROM t0_criticism`);
+        return {
+          rows: [],
+          returned_count: 0,
+          has_more: false,
+          note: n
+            ? `nothing in ${n} collected pieces matched`
+            : "no press has been collected yet — this is an empty zone, not an empty week",
+          order: by.order,
+        };
+      }
+      return ordered(cap(rows, ctx), by);
+    },
+  },
+
   taste_profile: {
     class: "authored", domain: "world", kind: "judgement",
     reads: ["t1_taste"],

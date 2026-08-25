@@ -483,9 +483,9 @@ ok(t.rows.length <= ROW_CAP[scrobbleGrade], "and returns no more than that grade
 
 // Reach. Each of these was unaskable before: the surface held one lifetime
 // ranking and no way to enter it from any other direction.
-const recent = await TOOLS.taste.run(env, { order: "recent" }, { exposure: "profile" });
-ok(recent.order === "recent", "taste offers a recency axis");
-ok(JSON.stringify(recent.rows) !== JSON.stringify(t.rows) || t.rows.length <= 1,
+const tasteRecent = await TOOLS.taste.run(env, { order: "tasteRecent" }, { exposure: "profile" });
+ok(tasteRecent.order === "tasteRecent", "taste offers a recency axis");
+ok(JSON.stringify(tasteRecent.rows) !== JSON.stringify(t.rows) || t.rows.length <= 1,
    "which is a different list from the all-time count");
 const quiet = t.rows.length ? await TOOLS.taste.run(env, { artist: t.rows.at(-1).artist }, { exposure: "profile" }) : null;
 ok(quiet && quiet.rows.length >= 1, "an artist can be asked about by name");
@@ -497,17 +497,20 @@ ok(windowed.rows.length === 0 && !!windowed.note, "an empty window is explained,
 
 // around_the_time hands back four or five rows per medium by necessity. It must
 // not let four artists stand for a month of listening.
-const win = await TOOLS.around_the_time.run(env, { from: "2020-01-01", to: "2026-12-31" });
-ok(!win.rows.length || /head of each/.test(win.scope ?? ""),
-   `around_the_time says its rows are the head of each source ("${(win.scope ?? "").slice(0, 60)}")`);
-ok(!win.rows.length || /artists over \d+ plays|nothing/.test(win.scope ?? ""),
+// Named apart from the `win` further down: both are around_the_time at module
+// scope, and the collision was a SyntaxError that took the whole suite out
+// rather than one assertion — every test below it stopped running.
+const winAll = await TOOLS.around_the_time.run(env, { from: "2020-01-01", to: "2026-12-31" });
+ok(!winAll.rows.length || /head of each/.test(winAll.scope ?? ""),
+   `around_the_time says its rows are the head of each source ("${(winAll.scope ?? "").slice(0, 60)}")`);
+ok(!winAll.rows.length || /artists over \d+ plays|nothing/.test(winAll.scope ?? ""),
    "and counts the artists the window actually held");
 
 // collection.genre is a hand-kept column with a closed handful of values in it.
 // A topic that is not one of them must not come back as an empty shelf.
-const vinyl = await TOOLS.collection.run(env, { kind: "vinyl" });
-ok(!vinyl.rows.length || Array.isArray(vinyl.genres),
-   `collection returns its genre vocabulary (${(vinyl.genres ?? []).length} buckets)`);
+const vinylGenres = await TOOLS.collection.run(env, { kind: "vinylGenres" });
+ok(!vinylGenres.rows.length || Array.isArray(vinylGenres.genres),
+   `collection returns its genre vocabulary (${(vinylGenres.genres ?? []).length} buckets)`);
 const noSuchGenre = await TOOLS.collection.run(env, { topic: "zzzznotagenrezzzz" });
 ok(noSuchGenre.rows.length === 0, "a topic nothing matches returns no rows");
 ok(Array.isArray(noSuchGenre.genres) && /vocabulary/.test(noSuchGenre.note ?? ""),
@@ -664,6 +667,46 @@ const evTitles = ev2.rows.map((r) => r.title);
 ok(new Set(evTitles).size === evTitles.length, "no title repeated in one answer");
 ok(ev2.rows.every((r) => r.start.slice(0, 10) >= new Date().toISOString().slice(0, 10)),
    "nothing already past");
+
+console.log("\n── criticism: somebody else's writing ──");
+// Skipped rather than failed when the zone is absent: an instance that has not
+// run `fetch-criticism` is not a broken instance, and this suite is run against
+// whatever record the operator happens to have built.
+const crit = await TOOLS.criticism.run(env, {}, { exposure: "private" });
+if (!crit.rows.length && /empty zone/.test(crit.note ?? "")) {
+  console.log("   (no press collected — skipping)");
+} else {
+  ok(crit.rows.length > 0, `criticism -> ${crit.rows.length} pieces`);
+  ok(crit.rows.every((r) => r.url && r.outlet && r.title),
+     "every row carries an outlet, a headline and the link");
+  // The answer is the link. A row that arrived without one is a paraphrase
+  // waiting to happen, which is the failure class:"world" exists to flag.
+  ok(crit.rows.every((r) => /^https?:\/\//.test(r.url)), "the link is a link");
+
+  const spread = {};
+  for (const r of crit.rows) spread[r.outlet] = (spread[r.outlet] || 0) + 1;
+  ok(Math.max(...Object.values(spread)) <= 3,
+     `no outlet takes more than 3 of an unfiltered answer (${JSON.stringify(spread)})`);
+
+  // ...and the round-robin lifts for a topic, or a record written about five
+  // times in one place comes back once.
+  const one = Object.keys(spread)[0];
+  const only = await TOOLS.criticism.run(env, { outlet: one }, { exposure: "private" });
+  ok(only.rows.every((r) => r.outlet === one), "the outlet filter holds");
+  ok(only.rows.length >= Math.min(4, spread[one]) || !only.has_more,
+     "and is not still capped at the round-robin share");
+
+  const old = await TOOLS.criticism.run(env, { order: "oldest" }, { exposure: "private" });
+  ok(old.order === "oldest", "criticism offers both ends of its one axis");
+  const bad = await TOOLS.criticism.run(env, { order: "alphabetical" }, { exposure: "private" });
+  ok(bad.order === "recent" && /no order called/.test(bad.note ?? ""),
+     "an unknown axis falls back and says so rather than lying");
+
+  const nothing = await TOOLS.criticism.run(
+    env, { topic: "zzzznotatopiczzzz" }, { exposure: "private" });
+  ok(nothing.rows.length === 0 && /matched/.test(nothing.note ?? ""),
+     "an empty answer is explained, and does not read as an empty week");
+}
 
 console.log("\n── saves ──");
 // No filter returns the AXES, not a flat sample: 20 arbitrary links out of

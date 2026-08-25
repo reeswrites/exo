@@ -10,7 +10,7 @@ and it can answer from your own notes, ratings, saves and repos without that
 assistant's vendor ever holding them.
 
 - `src/index.js` — JSON-RPC, auth, the brief and procedure resources, the audit and caller logs
-- `src/tools.js` — the 28 tools, and the caps
+- `src/tools.js` — the 29 tools, and the caps
 - `src/search.js` — vector search over `vectors.f32` from R2
 - `src/exposure.js` — how public each zone is (ADR-0019), and what that makes a tool
 - `src/surface.js` — which tools this instance offers (ADR-0020)
@@ -385,6 +385,7 @@ Adding one is a decision about exposure, not a feature increment.
 | tool | domain | class | kind | answers |
 |---|---|---|---|---|
 | `collection` | culture | possession | entity | What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. |
+| `criticism` | culture | world | text | What the music press is publishing — titles, bylines, dates and the outlet's own blurb, from the underground outlets the owner follows, with the link to the piece. |
 | `reviews` | culture | authored | text | The owner's written film reviews from Letterboxd — 115 of them, in their own words, each with a link. |
 | `taste` | culture | revealed | event | What the owner actually listens to, straight off the scrobble stream — revealed preference, as distinct from what they say. |
 | `verdicts` | culture | authored | text | The owner's written opinions on books, films, tv and music — in their own words, with reasoning. |
