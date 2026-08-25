@@ -1044,7 +1044,7 @@ export const TOOLS = {
     class: "world", domain: "culture", kind: "entity",
     reads: ["t0_release", "t0_music", "t1_collection"],
     description:
-      "Records that came out lately in the scenes the owner listens to, with what they have NOT already heard removed. This is the one tool that can surface an artist with no listeners yet: the pool is crawled by scene tag rather than by similarity to what they already play, so it reaches releases a `getSimilar` recommendation structurally cannot. It does NOT rank by preference and will not tell you what they would like \u2014 it attaches the measured facts (their lifetime plays of that artist, whether they own anything by it, how many scenes surfaced it) and leaves the judgement to you. order='unfamiliar' is the discovery axis; order='familiar' is new work by artists already in heavy rotation.",
+      "Records that came out lately in the scenes the owner listens to, with what they have NOT already heard removed. This is the one tool that can surface an artist with no listeners yet: the pool is crawled by SCENE — a tag, a label roster, a critic's byline, whichever the instance uses — rather than by similarity to what they already play, so it reaches releases a `getSimilar` recommendation structurally cannot. It does NOT rank by preference and will not tell you what they would like \u2014 it attaches the measured facts (their lifetime plays of that artist, whether they own anything by it, how many scenes surfaced it) and leaves the judgement to you. order='unfamiliar' is the discovery axis; order='familiar' is new work by artists already in heavy rotation.",
     schema: {
       type: "object",
       properties: {
