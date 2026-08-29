@@ -125,6 +125,15 @@ const groupedTiebreak = (clause, sql) => {
   const g = sql.match(/GROUP BY\s+([A-Za-z_][\w.]*)/i);
   return !!g && new RegExp(`,\\s*${g[1]}\\s*$`, "i").test(clause);
 };
+// The axis strings an interpolated ORDER BY can resolve to, read out of the
+// ordering() call in the same function. Values only — the axis NAMES are the
+// caller's vocabulary and say nothing about stability.
+const axesOf = (src) => {
+  const m = src.match(/ordering\([^,]*,\s*\{([\s\S]*?)\n\s*\}\)/);
+  if (!m) return null;
+  const found = [...m[1].matchAll(/:\s*[`"']([^`"']+)[`"']/g)].map((x) => x[1]);
+  return found.length ? found : null;
+};
 const unstable = [];
 for (const [name, t] of Object.entries(TOOLS)) {
   const src = t.run.toString();
@@ -134,6 +143,24 @@ for (const [name, t] of Object.entries(TOOLS)) {
     // opened in, so a GROUP BY in a different query cannot vouch for this one.
     const stmt = src.slice(src.lastIndexOf("`", m.index) + 1, m.index + m[0].length);
     if (UNIQUE.test(clause + "LIMIT") || groupedTiebreak(clause, stmt)) continue;
+    // An ORDER BY that ends on the axis interpolation cannot be read literally
+    // — the source says `${by.sql}`, not the SQL it resolves to — and every
+    // such site was reported unstable whether or not it was. That is a blind
+    // spot, not a finding: `criticism` has ended both of its axes on `url`
+    // from the start and was flagged anyway, while `releases` genuinely ended
+    // on `artist, title` and was flagged for the same undifferentiated reason.
+    //
+    // The axes are right there in the ordering() map in the same function, so
+    // resolve them and require EVERY one to end unique. The caller picks the
+    // axis, so an order that is total on three of four is unstable on the
+    // fourth, and which one you get is the caller's choice, not ours.
+    if (/\$\{[\w.]*\bsql\}$/.test(clause)) {
+      const axes = axesOf(src);
+      const loose = axes ? axes.filter((a) => !UNIQUE.test(a + "LIMIT")) : null;
+      if (loose && !loose.length) continue;
+      unstable.push(`${name}: ${loose ? `axis ${loose.join(" / ")}` : "interpolated order, no axis map to check"}`.slice(0, 90));
+      continue;
+    }
     unstable.push(`${name}: ${clause.slice(0, 70)}`);
   }
   // A LIMIT with no ORDER BY at all is the same bug, louder.

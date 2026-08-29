@@ -1328,10 +1328,17 @@ export const TOOLS = {
     },
     async run(env, { topic, scene, since, include_heard, order }, ctx) {
       const by = ordering(order, {
-        recent: "release_date DESC, artist, title",
-        unfamiliar: "plays ASC, release_date DESC, artist, title",
-        familiar: "plays DESC, release_date DESC, artist, title",
-        spread: "scene_count DESC, listings DESC, release_date DESC, artist, title",
+        // Every axis ends on `url`, which is the only unique column in the
+        // pool: two labels can announce the same artist and title on the same
+        // day, and without a final key those tie and SQLite is free to return
+        // them in either order. import.sh DROPs and re-INSERTs this table on
+        // every publish, so "either order" changes under a caller who asked
+        // the same question twice. criticism has ended its axes this way from
+        // the start; this one had not.
+        recent: "release_date DESC, artist, title, url",
+        unfamiliar: "plays ASC, release_date DESC, artist, title, url",
+        familiar: "plays DESC, release_date DESC, artist, title, url",
+        spread: "scene_count DESC, listings DESC, release_date DESC, artist, title, url",
       });
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const inScene = scene ? `%${scene.toLowerCase()}%` : null;
