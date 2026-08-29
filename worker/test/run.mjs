@@ -948,10 +948,23 @@ const b4 = await (await env.VECTORS.get("brief.md")).text();
 ok(/tv shows/.test(b4), "brief mentions television at all");
 
 console.log("\n── events: date range ──");
-const wknd = await TOOLS.events.run(env, { from: "2026-08-22", to: "2026-08-23" });
-ok(wknd.rows.length > 0, `weekend window -> ${wknd.rows.length}`);
-ok(wknd.rows.every((r) => r.start.slice(0,10) >= "2026-08-22" && r.start.slice(0,10) <= "2026-08-23"),
-   "every row falls inside the requested window");
+// Derived from the pool, not written down. This was a literal
+// "2026-08-22".."2026-08-23" weekend, and it went red the week the event pool
+// moved past it — the test failing on the calendar rather than on a defect,
+// which is the exact failure mode fixtures/refresh-dates.py exists to prevent
+// on the fixture side. The soonest upcoming event anchors the window instead,
+// so it contains at least that one by construction and cannot age out.
+const upcoming = await TOOLS.events.run(env, {});
+if (!upcoming.rows.length) {
+  console.log("   (no upcoming events — skipping the window assertions)");
+} else {
+  const from = upcoming.rows[0].start.slice(0, 10);
+  const to = new Date(Date.parse(`${from}T00:00:00Z`) + 2 * 86400000).toISOString().slice(0, 10);
+  const wndw = await TOOLS.events.run(env, { from, to });
+  ok(wndw.rows.length > 0, `window ${from}..${to} -> ${wndw.rows.length}`);
+  ok(wndw.rows.every((r) => r.start.slice(0,10) >= from && r.start.slice(0,10) <= to),
+     "every row falls inside the requested window");
+}
 const past = await TOOLS.events.run(env, { from: "2020-01-01", to: "2020-12-31" });
 ok(past.rows.length === 0, "a window entirely in the past returns nothing, not the future");
 const dflt = await TOOLS.events.run(env, {});
