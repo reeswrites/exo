@@ -2446,7 +2446,7 @@ export const TOOLS = {
     schema: {
       type: "object",
       properties: {
-        topic: { type: "string", description: "Match against the conversation title." },
+        topic: { type: "string", description: "Match against the conversation title, its gist, or where it landed." },
         min_turns: { type: "number", description: "Only conversations at least this long." },
       },
     },
@@ -2461,11 +2461,18 @@ export const TOOLS = {
                 -- what a list is for.
                 substr(COALESCE(summary,''), 1, 200) AS gist
          FROM t0_chat_topic
-         WHERE (? IS NULL OR lower(title) LIKE ?)
+         -- Title, gist and landing, not title alone. Titles here are topical
+         -- and the gist is thematic: a thread about theory of change is titled
+         -- after healthcare, so a title-only match answers "no such thread" to
+         -- a question the corpus does contain. The gist was already SELECTed
+         -- and shown to the caller; it was simply never searched.
+         WHERE (? IS NULL OR lower(title) LIKE ?
+                          OR lower(COALESCE(summary, '')) LIKE ?
+                          OR lower(COALESCE(landed, '')) LIKE ?)
            AND (? IS NULL OR turns >= ?)
          ORDER BY last_seen DESC, turns DESC, id
          LIMIT ?`,
-        like, like, min_turns ?? null, min_turns ?? 0, probe(ctx)
+        like, like, like, like, min_turns ?? null, min_turns ?? 0, probe(ctx)
       );
       return cap(rows, ctx);
     },
@@ -2486,14 +2493,22 @@ export const TOOLS = {
     },
     async run(env, { topic, include }, ctx) {
       const want = include || "both";
+      const like = `%${(topic || "").toLowerCase()}%`;
       const [hit] = await q(
         env,
         `SELECT title, landed, turns, his_turns, last_seen,
                 COALESCE(summary, '') AS summary, COALESCE(summary_by, '') AS summary_by
          FROM t0_chat_topic
+         -- Widened with recent_topics, and for the same reason. This param has
+         -- always been documented as "thread title, or what it was about", and
+         -- until now only the first half was true. Title matches still win —
+         -- the ORDER BY puts them first — so naming a thread outright returns
+         -- that thread, not one that merely mentions it in passing.
          WHERE lower(title) LIKE ?
-         ORDER BY turns DESC LIMIT 1`,
-        `%${(topic || "").toLowerCase()}%`
+            OR lower(COALESCE(summary, '')) LIKE ?
+            OR lower(COALESCE(landed, '')) LIKE ?
+         ORDER BY (lower(title) LIKE ?) DESC, turns DESC LIMIT 1`,
+        like, like, like, like
       );
       if (!hit) return { rows: [], note: "no thread matched — try recent_topics to see what exists" };
 

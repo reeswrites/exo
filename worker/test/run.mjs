@@ -1021,6 +1021,39 @@ const full = await TOOLS.thread.run(env, { topic: listed.rows.find((r) => r.gist
 ok(!!full.rows[0].summary, "thread returns the full summary");
 ok(/not the owner's words/.test(full.rows[0].summary_is || ""), "summary is attributed as machine-written");
 ok(typeof full.rows[0].landed === "string", "the verbatim it can be checked against ships with it");
+
+// Searchable, not merely displayed. The gist was SELECTed and returned from the
+// first day and never appeared in a WHERE clause, so a caller could read a
+// thread's subject in one row and get zero rows asking for it by name. These
+// titles are topical where the gist is thematic — "Cafe Society and modern
+// social status" is where the owner worked through pooling — so title-only
+// matching answered "no such thread" about threads that exist.
+const byGist = await TOOLS.recent_topics.run(env, { topic: "pooling" });
+ok(byGist.rows.length > 0, "recent_topics finds a thread by a word only its gist carries");
+ok(byGist.rows.every((r) => !r.title.toLowerCase().includes("pooling")),
+   "and that word is genuinely absent from the title");
+const threadByGist = await TOOLS.thread.run(env, { topic: "pooling" });
+ok(threadByGist.rows.length === 1, "thread resolves the same query its param always claimed to accept");
+
+// Naming a thread outright must still win over one that merely mentions it.
+const titleWins = await TOOLS.thread.run(env, { topic: "cafe society" });
+ok(titleWins.rows[0]?.title?.toLowerCase().includes("cafe society"),
+   "a title match outranks a gist match");
+
+// The widening must not widen the wall. Held threads are windowed out of
+// t0_chat_topic at publish, so their gists are not in the table to match —
+// assert it rather than assume it, because a new match arm is exactly where
+// that stops being true.
+//
+// Probed by the held TITLES, not by a topic word: "relationship" legitimately
+// names threads the owner chose to publish, and asserting its absence would
+// fail on those. What must never come back is a held thread.
+for (const probe of ["nonmonogamy", "group dating", "relationship anarchy", "compatibility"]) {
+  const leak = JSON.stringify(await TOOLS.recent_topics.run(env, { topic: probe })).toLowerCase();
+  for (const h of HELD) {
+    ok(!leak.includes(h.toLowerCase()), `held under gist search: "${probe}" does not surface ${h}`);
+  }
+}
 const b5 = await (await env.VECTORS.get("brief.md")).text();
 ok(/distillation/i.test(b5), "brief tells an assistant the distillations exist");
 
