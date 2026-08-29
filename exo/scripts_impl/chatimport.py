@@ -83,6 +83,18 @@ def run(dry: bool = False) -> int:
     from . import sync_raw
     sync_raw.sync_vault()
     chat.run()
+    # t0_chat is turns. Every thread TOOL reads t0_chat_topic instead — both
+    # `recent_topics` and `thread` resolve through it — so an import that stopped
+    # at the turns landed threads that nothing could find: present in the record,
+    # absent from every surface that lists or fetches one, until someone
+    # remembered to run `wh ingest chat_topic` by hand. Importing is the moment
+    # the topic row is owed, so it is taken here rather than left to a habit.
+    #
+    # Through the registry rather than calling `chat.topics` directly: a plugin
+    # may contribute to this zone too (ADR-0014 §3), and a direct call would
+    # write a parquet with the core rows only and silently drop theirs.
+    from ..cli import _ingest
+    _ingest(["chat_topic"])
     from .. import catalog
     names = catalog.build()
     print(f"  catalog: {len(names)} views rebuilt")
