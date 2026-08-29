@@ -175,8 +175,12 @@ ok(desc(oFilmsRated.rows, (r) => num(r.rating)), "and the ratings actually desce
 const oFilmsRecent = await TOOLS.ratings.run(env, { medium: "films", order: "recent" });
 ok(oFilmsRecent.order === "recent" && desc(oFilmsRecent.rows, (r) => day(r.when_)),
    "ratings order=recent reaches what was watched lately, which the top twenty never showed");
-ok(oFilmsRated.rows[0]?.label !== oFilmsRecent.rows[0]?.label
-   || oFilmsRated.rows.length <= 1,
+// Compared as sequences, not by their heads. The head is a coincidence waiting
+// to happen — the newest watch is often also a high rating, and when it is, two
+// genuinely different orderings share row 0 and this read as one list. What the
+// assertion is named for is whether the twenty differ at all.
+const labels = (r) => JSON.stringify(r.rows.map((x) => x.label));
+ok(labels(oFilmsRated) !== labels(oFilmsRecent) || oFilmsRated.rows.length <= 1,
    "the two axes are not the same twenty");
 
 const oRevRecent = await TOOLS.reviews.run(env, {});
@@ -366,6 +370,17 @@ const angryR2 = { VECTORS: { head: async () => { throw new Error("R2 down"); } }
 ok(typeof (await loadExposure(angryR2, Date.now() + TTL_MS * 198)) === "object",
    "an R2 outage returns a map rather than throwing");
 
+// Those two stubs wrote to exposure.js's module-level cache, and the noR2 one
+// left an empty map leased until Date.now() + TTL_MS*99. The freshness check is
+// `now - checked < TTL_MS`, so against a real clock that difference is NEGATIVE
+// and reads as fresh: every later loadExposure(env) in this file inherited the
+// empty map and graded every zone private. That is what failed the taste
+// assertions below on a bundle that grades t0_music profile — a stub leaking
+// forward, not a grading defect. Re-warm from the real env past the stub lease.
+await loadExposure(env, Date.now() + TTL_MS * 200);
+ok((await loadExposure(env))["t0_music"] !== undefined,
+   "the real exposure map survives the outage stubs above");
+
 // Every tool declares what it reads, and the declaration is checked against the
 // SQL it actually runs. A tool edited to query a new table without updating
 // `reads` would be graded on the zones it USED to touch — the one direction of
@@ -518,8 +533,13 @@ ok(t.rows.length <= ROW_CAP[scrobbleGrade], "and returns no more than that grade
 
 // Reach. Each of these was unaskable before: the surface held one lifetime
 // ranking and no way to enter it from any other direction.
-const tasteRecent = await TOOLS.taste.run(env, { order: "tasteRecent" }, { exposure: "profile" });
-ok(tasteRecent.order === "tasteRecent", "taste offers a recency axis");
+// "tasteRecent" is the variable's name, not an axis this tool has: `ordering`
+// offers played | recent | oldest, and an unknown order falls back to played
+// while saying so. Asking for the identifier meant the assertion compared the
+// default list against itself and the reach this section exists to prove was
+// never exercised.
+const tasteRecent = await TOOLS.taste.run(env, { order: "recent" }, { exposure: "profile" });
+ok(tasteRecent.order === "recent", "taste offers a recency axis");
 ok(JSON.stringify(tasteRecent.rows) !== JSON.stringify(t.rows) || t.rows.length <= 1,
    "which is a different list from the all-time count");
 const quiet = t.rows.length ? await TOOLS.taste.run(env, { artist: t.rows.at(-1).artist }, { exposure: "profile" }) : null;
@@ -543,12 +563,21 @@ ok(!winAll.rows.length || /artists over \d+ plays|nothing/.test(winAll.scope ?? 
 
 // collection.genre is a hand-kept column with a closed handful of values in it.
 // A topic that is not one of them must not come back as an empty shelf.
-const vinylGenres = await TOOLS.collection.run(env, { kind: "vinylGenres" });
-ok(!vinylGenres.rows.length || Array.isArray(vinylGenres.genres),
+// Same slip as the taste order above: "vinylGenres" is the variable, and the
+// kinds are vinyl | dvd | board_game | fragrance. An unknown kind returns no
+// rows, so the `!rows.length ||` guard short-circuited and this passed while
+// asserting nothing about the genre list it is named for.
+const vinylGenres = await TOOLS.collection.run(env, { kind: "vinyl" });
+ok(vinylGenres.rows.length > 0 && Array.isArray(vinylGenres.genres) && vinylGenres.genres.length > 0,
    `collection returns its genre vocabulary (${(vinylGenres.genres ?? []).length} buckets)`);
 const noSuchGenre = await TOOLS.collection.run(env, { topic: "zzzznotagenrezzzz" });
 ok(noSuchGenre.rows.length === 0, "a topic nothing matches returns no rows");
-ok(Array.isArray(noSuchGenre.genres) && /vocabulary/.test(noSuchGenre.note ?? ""),
+// Pinned to the shape, not to a word. The note explains the miss in the
+// tool's own terms — "the genres listed above are the whole of it" — and never
+// says "vocabulary", so grepping for that word failed a message that does
+// exactly what this asserts, and would keep failing on any rewording of it.
+ok(Array.isArray(noSuchGenre.genres) && noSuchGenre.genres.length > 0
+   && (noSuchGenre.note ?? "").includes("zzzznotagenrezzzz"),
    "and answers with the vocabulary instead, so the miss is legible as a gap in it");
 
 console.log("\n── beer: a check-in is more than a name (G1-G4) ──");
