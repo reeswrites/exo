@@ -24,7 +24,29 @@ console.log("\n── protocol ──");
 const init = await (await post({ jsonrpc: "2.0", id: 1, method: "initialize" })).json();
 ok(init.result?.serverInfo?.name === "exo", "initialize returns serverInfo");
 const list = await (await post({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
-ok(list.result.tools.length === Object.keys(TOOLS).length, `tools/list -> ${list.result.tools.length} tools`);
+// The engine's tool count is a ceiling, not the answer. `exo publish` resolves
+// which tools THIS instance offers into surface.json (ADR-0020) and drops the
+// ones whose zones are held or empty, so asserting equality with
+// Object.keys(TOOLS) only ever passed on an instance where nothing was
+// withheld — which no fresh instance is, and this one stopped being the day a
+// zone went empty. What the surface promises is the thing worth pinning.
+const surfaceDoc = JSON.parse(await (await env.VECTORS.get("surface.json")).text());
+const offered = (Array.isArray(surfaceDoc?.tools) ? surfaceDoc.tools : Object.keys(TOOLS)).slice().sort();
+const advertised = list.result.tools.map((t) => t.name).sort();
+ok(advertised.length === offered.length && advertised.every((n, i) => n === offered[i]),
+   `tools/list -> ${advertised.length} tools, exactly what surface.json offers (${offered.length})`);
+ok(offered.every((n) => TOOLS[n]), "every offered tool exists in this build");
+const withheld = Object.keys(TOOLS).filter((n) => !offered.includes(n));
+ok(withheld.every((n) => !advertised.includes(n)),
+   `withheld tools stay unadvertised (${withheld.length}: ${withheld.join(", ") || "none"})`);
+// Unadvertised is not the same as unreachable. A caller working from a stale
+// list still names it, and must be told the tool is real and not served here.
+if (withheld.length) {
+  const denied = await (await post({ jsonrpc: "2.0", id: 99, method: "tools/call",
+                                     params: { name: withheld[0], arguments: {} } })).json();
+  ok(denied.error?.code === -32602 && /does not offer/.test(denied.error.message || ""),
+     `calling a withheld tool is refused as withheld, not as unknown: ${withheld[0]}`);
+}
 ok(list.result.tools.every((t) => t.description && t.inputSchema), "every tool has description + schema");
 const res = await (await post({ jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: "warehouse://brief" } })).json();
 ok(/^# \S/.test(res.result.contents[0].text), "brief resource served from R2");
