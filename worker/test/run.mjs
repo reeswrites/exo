@@ -24,7 +24,29 @@ console.log("\n── protocol ──");
 const init = await (await post({ jsonrpc: "2.0", id: 1, method: "initialize" })).json();
 ok(init.result?.serverInfo?.name === "exo", "initialize returns serverInfo");
 const list = await (await post({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
-ok(list.result.tools.length === Object.keys(TOOLS).length, `tools/list -> ${list.result.tools.length} tools`);
+// The engine's tool count is a ceiling, not the answer. `exo publish` resolves
+// which tools THIS instance offers into surface.json (ADR-0020) and drops the
+// ones whose zones are held or empty, so asserting equality with
+// Object.keys(TOOLS) only ever passed on an instance where nothing was
+// withheld — which no fresh instance is, and this one stopped being the day a
+// zone went empty. What the surface promises is the thing worth pinning.
+const surfaceDoc = JSON.parse(await (await env.VECTORS.get("surface.json")).text());
+const offered = (Array.isArray(surfaceDoc?.tools) ? surfaceDoc.tools : Object.keys(TOOLS)).slice().sort();
+const advertised = list.result.tools.map((t) => t.name).sort();
+ok(advertised.length === offered.length && advertised.every((n, i) => n === offered[i]),
+   `tools/list -> ${advertised.length} tools, exactly what surface.json offers (${offered.length})`);
+ok(offered.every((n) => TOOLS[n]), "every offered tool exists in this build");
+const withheld = Object.keys(TOOLS).filter((n) => !offered.includes(n));
+ok(withheld.every((n) => !advertised.includes(n)),
+   `withheld tools stay unadvertised (${withheld.length}: ${withheld.join(", ") || "none"})`);
+// Unadvertised is not the same as unreachable. A caller working from a stale
+// list still names it, and must be told the tool is real and not served here.
+if (withheld.length) {
+  const denied = await (await post({ jsonrpc: "2.0", id: 99, method: "tools/call",
+                                     params: { name: withheld[0], arguments: {} } })).json();
+  ok(denied.error?.code === -32602 && /does not offer/.test(denied.error.message || ""),
+     `calling a withheld tool is refused as withheld, not as unknown: ${withheld[0]}`);
+}
 ok(list.result.tools.every((t) => t.description && t.inputSchema), "every tool has description + schema");
 const res = await (await post({ jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: "warehouse://brief" } })).json();
 ok(/^# \S/.test(res.result.contents[0].text), "brief resource served from R2");
@@ -103,6 +125,15 @@ const groupedTiebreak = (clause, sql) => {
   const g = sql.match(/GROUP BY\s+([A-Za-z_][\w.]*)/i);
   return !!g && new RegExp(`,\\s*${g[1]}\\s*$`, "i").test(clause);
 };
+// The axis strings an interpolated ORDER BY can resolve to, read out of the
+// ordering() call in the same function. Values only — the axis NAMES are the
+// caller's vocabulary and say nothing about stability.
+const axesOf = (src) => {
+  const m = src.match(/ordering\([^,]*,\s*\{([\s\S]*?)\n\s*\}\)/);
+  if (!m) return null;
+  const found = [...m[1].matchAll(/:\s*[`"']([^`"']+)[`"']/g)].map((x) => x[1]);
+  return found.length ? found : null;
+};
 const unstable = [];
 for (const [name, t] of Object.entries(TOOLS)) {
   const src = t.run.toString();
@@ -112,6 +143,24 @@ for (const [name, t] of Object.entries(TOOLS)) {
     // opened in, so a GROUP BY in a different query cannot vouch for this one.
     const stmt = src.slice(src.lastIndexOf("`", m.index) + 1, m.index + m[0].length);
     if (UNIQUE.test(clause + "LIMIT") || groupedTiebreak(clause, stmt)) continue;
+    // An ORDER BY that ends on the axis interpolation cannot be read literally
+    // — the source says `${by.sql}`, not the SQL it resolves to — and every
+    // such site was reported unstable whether or not it was. That is a blind
+    // spot, not a finding: `criticism` has ended both of its axes on `url`
+    // from the start and was flagged anyway, while `releases` genuinely ended
+    // on `artist, title` and was flagged for the same undifferentiated reason.
+    //
+    // The axes are right there in the ordering() map in the same function, so
+    // resolve them and require EVERY one to end unique. The caller picks the
+    // axis, so an order that is total on three of four is unstable on the
+    // fourth, and which one you get is the caller's choice, not ours.
+    if (/\$\{[\w.]*\bsql\}$/.test(clause)) {
+      const axes = axesOf(src);
+      const loose = axes ? axes.filter((a) => !UNIQUE.test(a + "LIMIT")) : null;
+      if (loose && !loose.length) continue;
+      unstable.push(`${name}: ${loose ? `axis ${loose.join(" / ")}` : "interpolated order, no axis map to check"}`.slice(0, 90));
+      continue;
+    }
     unstable.push(`${name}: ${clause.slice(0, 70)}`);
   }
   // A LIMIT with no ORDER BY at all is the same bug, louder.
@@ -153,8 +202,12 @@ ok(desc(oFilmsRated.rows, (r) => num(r.rating)), "and the ratings actually desce
 const oFilmsRecent = await TOOLS.ratings.run(env, { medium: "films", order: "recent" });
 ok(oFilmsRecent.order === "recent" && desc(oFilmsRecent.rows, (r) => day(r.when_)),
    "ratings order=recent reaches what was watched lately, which the top twenty never showed");
-ok(oFilmsRated.rows[0]?.label !== oFilmsRecent.rows[0]?.label
-   || oFilmsRated.rows.length <= 1,
+// Compared as sequences, not by their heads. The head is a coincidence waiting
+// to happen — the newest watch is often also a high rating, and when it is, two
+// genuinely different orderings share row 0 and this read as one list. What the
+// assertion is named for is whether the twenty differ at all.
+const labels = (r) => JSON.stringify(r.rows.map((x) => x.label));
+ok(labels(oFilmsRated) !== labels(oFilmsRecent) || oFilmsRated.rows.length <= 1,
    "the two axes are not the same twenty");
 
 const oRevRecent = await TOOLS.reviews.run(env, {});
@@ -344,6 +397,17 @@ const angryR2 = { VECTORS: { head: async () => { throw new Error("R2 down"); } }
 ok(typeof (await loadExposure(angryR2, Date.now() + TTL_MS * 198)) === "object",
    "an R2 outage returns a map rather than throwing");
 
+// Those two stubs wrote to exposure.js's module-level cache, and the noR2 one
+// left an empty map leased until Date.now() + TTL_MS*99. The freshness check is
+// `now - checked < TTL_MS`, so against a real clock that difference is NEGATIVE
+// and reads as fresh: every later loadExposure(env) in this file inherited the
+// empty map and graded every zone private. That is what failed the taste
+// assertions below on a bundle that grades t0_music profile — a stub leaking
+// forward, not a grading defect. Re-warm from the real env past the stub lease.
+await loadExposure(env, Date.now() + TTL_MS * 200);
+ok((await loadExposure(env))["t0_music"] !== undefined,
+   "the real exposure map survives the outage stubs above");
+
 // Every tool declares what it reads, and the declaration is checked against the
 // SQL it actually runs. A tool edited to query a new table without updating
 // `reads` would be graded on the zones it USED to touch — the one direction of
@@ -496,8 +560,13 @@ ok(t.rows.length <= ROW_CAP[scrobbleGrade], "and returns no more than that grade
 
 // Reach. Each of these was unaskable before: the surface held one lifetime
 // ranking and no way to enter it from any other direction.
-const tasteRecent = await TOOLS.taste.run(env, { order: "tasteRecent" }, { exposure: "profile" });
-ok(tasteRecent.order === "tasteRecent", "taste offers a recency axis");
+// "tasteRecent" is the variable's name, not an axis this tool has: `ordering`
+// offers played | recent | oldest, and an unknown order falls back to played
+// while saying so. Asking for the identifier meant the assertion compared the
+// default list against itself and the reach this section exists to prove was
+// never exercised.
+const tasteRecent = await TOOLS.taste.run(env, { order: "recent" }, { exposure: "profile" });
+ok(tasteRecent.order === "recent", "taste offers a recency axis");
 ok(JSON.stringify(tasteRecent.rows) !== JSON.stringify(t.rows) || t.rows.length <= 1,
    "which is a different list from the all-time count");
 const quiet = t.rows.length ? await TOOLS.taste.run(env, { artist: t.rows.at(-1).artist }, { exposure: "profile" }) : null;
@@ -521,12 +590,21 @@ ok(!winAll.rows.length || /artists over \d+ plays|nothing/.test(winAll.scope ?? 
 
 // collection.genre is a hand-kept column with a closed handful of values in it.
 // A topic that is not one of them must not come back as an empty shelf.
-const vinylGenres = await TOOLS.collection.run(env, { kind: "vinylGenres" });
-ok(!vinylGenres.rows.length || Array.isArray(vinylGenres.genres),
+// Same slip as the taste order above: "vinylGenres" is the variable, and the
+// kinds are vinyl | dvd | board_game | fragrance. An unknown kind returns no
+// rows, so the `!rows.length ||` guard short-circuited and this passed while
+// asserting nothing about the genre list it is named for.
+const vinylGenres = await TOOLS.collection.run(env, { kind: "vinyl" });
+ok(vinylGenres.rows.length > 0 && Array.isArray(vinylGenres.genres) && vinylGenres.genres.length > 0,
    `collection returns its genre vocabulary (${(vinylGenres.genres ?? []).length} buckets)`);
 const noSuchGenre = await TOOLS.collection.run(env, { topic: "zzzznotagenrezzzz" });
 ok(noSuchGenre.rows.length === 0, "a topic nothing matches returns no rows");
-ok(Array.isArray(noSuchGenre.genres) && /vocabulary/.test(noSuchGenre.note ?? ""),
+// Pinned to the shape, not to a word. The note explains the miss in the
+// tool's own terms — "the genres listed above are the whole of it" — and never
+// says "vocabulary", so grepping for that word failed a message that does
+// exactly what this asserts, and would keep failing on any rewording of it.
+ok(Array.isArray(noSuchGenre.genres) && noSuchGenre.genres.length > 0
+   && (noSuchGenre.note ?? "").includes("zzzznotagenrezzzz"),
    "and answers with the vocabulary instead, so the miss is legible as a gap in it");
 
 console.log("\n── beer: a check-in is more than a name (G1-G4) ──");
@@ -948,10 +1026,23 @@ const b4 = await (await env.VECTORS.get("brief.md")).text();
 ok(/tv shows/.test(b4), "brief mentions television at all");
 
 console.log("\n── events: date range ──");
-const wknd = await TOOLS.events.run(env, { from: "2026-08-22", to: "2026-08-23" });
-ok(wknd.rows.length > 0, `weekend window -> ${wknd.rows.length}`);
-ok(wknd.rows.every((r) => r.start.slice(0,10) >= "2026-08-22" && r.start.slice(0,10) <= "2026-08-23"),
-   "every row falls inside the requested window");
+// Derived from the pool, not written down. This was a literal
+// "2026-08-22".."2026-08-23" weekend, and it went red the week the event pool
+// moved past it — the test failing on the calendar rather than on a defect,
+// which is the exact failure mode fixtures/refresh-dates.py exists to prevent
+// on the fixture side. The soonest upcoming event anchors the window instead,
+// so it contains at least that one by construction and cannot age out.
+const upcoming = await TOOLS.events.run(env, {});
+if (!upcoming.rows.length) {
+  console.log("   (no upcoming events — skipping the window assertions)");
+} else {
+  const from = upcoming.rows[0].start.slice(0, 10);
+  const to = new Date(Date.parse(`${from}T00:00:00Z`) + 2 * 86400000).toISOString().slice(0, 10);
+  const wndw = await TOOLS.events.run(env, { from, to });
+  ok(wndw.rows.length > 0, `window ${from}..${to} -> ${wndw.rows.length}`);
+  ok(wndw.rows.every((r) => r.start.slice(0,10) >= from && r.start.slice(0,10) <= to),
+     "every row falls inside the requested window");
+}
 const past = await TOOLS.events.run(env, { from: "2020-01-01", to: "2020-12-31" });
 ok(past.rows.length === 0, "a window entirely in the past returns nothing, not the future");
 const dflt = await TOOLS.events.run(env, {});
@@ -1021,6 +1112,39 @@ const full = await TOOLS.thread.run(env, { topic: listed.rows.find((r) => r.gist
 ok(!!full.rows[0].summary, "thread returns the full summary");
 ok(/not the owner's words/.test(full.rows[0].summary_is || ""), "summary is attributed as machine-written");
 ok(typeof full.rows[0].landed === "string", "the verbatim it can be checked against ships with it");
+
+// Searchable, not merely displayed. The gist was SELECTed and returned from the
+// first day and never appeared in a WHERE clause, so a caller could read a
+// thread's subject in one row and get zero rows asking for it by name. These
+// titles are topical where the gist is thematic — "Cafe Society and modern
+// social status" is where the owner worked through pooling — so title-only
+// matching answered "no such thread" about threads that exist.
+const byGist = await TOOLS.recent_topics.run(env, { topic: "pooling" });
+ok(byGist.rows.length > 0, "recent_topics finds a thread by a word only its gist carries");
+ok(byGist.rows.every((r) => !r.title.toLowerCase().includes("pooling")),
+   "and that word is genuinely absent from the title");
+const threadByGist = await TOOLS.thread.run(env, { topic: "pooling" });
+ok(threadByGist.rows.length === 1, "thread resolves the same query its param always claimed to accept");
+
+// Naming a thread outright must still win over one that merely mentions it.
+const titleWins = await TOOLS.thread.run(env, { topic: "cafe society" });
+ok(titleWins.rows[0]?.title?.toLowerCase().includes("cafe society"),
+   "a title match outranks a gist match");
+
+// The widening must not widen the wall. Held threads are windowed out of
+// t0_chat_topic at publish, so their gists are not in the table to match —
+// assert it rather than assume it, because a new match arm is exactly where
+// that stops being true.
+//
+// Probed by the held TITLES, not by a topic word: "relationship" legitimately
+// names threads the owner chose to publish, and asserting its absence would
+// fail on those. What must never come back is a held thread.
+for (const probe of ["nonmonogamy", "group dating", "relationship anarchy", "compatibility"]) {
+  const leak = JSON.stringify(await TOOLS.recent_topics.run(env, { topic: probe })).toLowerCase();
+  for (const h of HELD) {
+    ok(!leak.includes(h.toLowerCase()), `held under gist search: "${probe}" does not surface ${h}`);
+  }
+}
 const b5 = await (await env.VECTORS.get("brief.md")).text();
 ok(/distillation/i.test(b5), "brief tells an assistant the distillations exist");
 

@@ -1328,10 +1328,17 @@ export const TOOLS = {
     },
     async run(env, { topic, scene, since, include_heard, order }, ctx) {
       const by = ordering(order, {
-        recent: "release_date DESC, artist, title",
-        unfamiliar: "plays ASC, release_date DESC, artist, title",
-        familiar: "plays DESC, release_date DESC, artist, title",
-        spread: "scene_count DESC, listings DESC, release_date DESC, artist, title",
+        // Every axis ends on `url`, which is the only unique column in the
+        // pool: two labels can announce the same artist and title on the same
+        // day, and without a final key those tie and SQLite is free to return
+        // them in either order. import.sh DROPs and re-INSERTs this table on
+        // every publish, so "either order" changes under a caller who asked
+        // the same question twice. criticism has ended its axes this way from
+        // the start; this one had not.
+        recent: "release_date DESC, artist, title, url",
+        unfamiliar: "plays ASC, release_date DESC, artist, title, url",
+        familiar: "plays DESC, release_date DESC, artist, title, url",
+        spread: "scene_count DESC, listings DESC, release_date DESC, artist, title, url",
       });
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const inScene = scene ? `%${scene.toLowerCase()}%` : null;
@@ -2446,7 +2453,7 @@ export const TOOLS = {
     schema: {
       type: "object",
       properties: {
-        topic: { type: "string", description: "Match against the conversation title." },
+        topic: { type: "string", description: "Match against the conversation title, its gist, or where it landed." },
         min_turns: { type: "number", description: "Only conversations at least this long." },
       },
     },
@@ -2461,11 +2468,18 @@ export const TOOLS = {
                 -- what a list is for.
                 substr(COALESCE(summary,''), 1, 200) AS gist
          FROM t0_chat_topic
-         WHERE (? IS NULL OR lower(title) LIKE ?)
+         -- Title, gist and landing, not title alone. Titles here are topical
+         -- and the gist is thematic: a thread about theory of change is titled
+         -- after healthcare, so a title-only match answers "no such thread" to
+         -- a question the corpus does contain. The gist was already SELECTed
+         -- and shown to the caller; it was simply never searched.
+         WHERE (? IS NULL OR lower(title) LIKE ?
+                          OR lower(COALESCE(summary, '')) LIKE ?
+                          OR lower(COALESCE(landed, '')) LIKE ?)
            AND (? IS NULL OR turns >= ?)
          ORDER BY last_seen DESC, turns DESC, id
          LIMIT ?`,
-        like, like, min_turns ?? null, min_turns ?? 0, probe(ctx)
+        like, like, like, like, min_turns ?? null, min_turns ?? 0, probe(ctx)
       );
       return cap(rows, ctx);
     },
@@ -2486,14 +2500,22 @@ export const TOOLS = {
     },
     async run(env, { topic, include }, ctx) {
       const want = include || "both";
+      const like = `%${(topic || "").toLowerCase()}%`;
       const [hit] = await q(
         env,
         `SELECT title, landed, turns, his_turns, last_seen,
                 COALESCE(summary, '') AS summary, COALESCE(summary_by, '') AS summary_by
          FROM t0_chat_topic
+         -- Widened with recent_topics, and for the same reason. This param has
+         -- always been documented as "thread title, or what it was about", and
+         -- until now only the first half was true. Title matches still win —
+         -- the ORDER BY puts them first — so naming a thread outright returns
+         -- that thread, not one that merely mentions it in passing.
          WHERE lower(title) LIKE ?
-         ORDER BY turns DESC LIMIT 1`,
-        `%${(topic || "").toLowerCase()}%`
+            OR lower(COALESCE(summary, '')) LIKE ?
+            OR lower(COALESCE(landed, '')) LIKE ?
+         ORDER BY (lower(title) LIKE ?) DESC, turns DESC LIMIT 1`,
+        like, like, like, like
       );
       if (!hit) return { rows: [], note: "no thread matched — try recent_topics to see what exists" };
 
