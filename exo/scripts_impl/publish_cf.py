@@ -54,7 +54,19 @@ _TYPE_MAP = {
 _INDEXES = {
     "t1_notes": ["origin_ref", "folder"],
     "t2_atom": ["origin_ref"],
-    "t0_music": ["artist"],
+    # No index, deliberately. Seven query sites read t0_music and not one can
+    # do a LOOKUP through an index on `artist`: `music` wraps it in lower() and
+    # matches with a leading %, `releases` and `collection` group on
+    # lower(artist), `around_the_time` and the relevance window filter on
+    # `created` first, and `consumption` and `medium` never name the column. At
+    # most it lets a GROUP BY read in index order instead of sorting — inside a
+    # scan of all 41,294 rows that those queries do anyway, and which `music`
+    # then re-sorts by plays.
+    #
+    # It is not free. D1 bills a row written per index entry, so this one costs
+    # 41,294 writes on every full import — a third of the whole daily free
+    # budget, spent on a sort. See ADR-0026, which is about the rewrite itself.
+    "t0_music": [],
     "t1_open_thread": [],
     # Every project tool filters or groups by repo first, and the commit table is
     # the only one big enough for that to matter.
