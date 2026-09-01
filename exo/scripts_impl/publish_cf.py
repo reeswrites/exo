@@ -31,6 +31,7 @@ Bundle layout under zones/_serve/cf/:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sys
@@ -39,6 +40,12 @@ from array import array
 import duckdb
 
 from .. import config
+
+# The per-row digest column. Every published table carries it, and the import
+# reads its sum back to decide whether a table needs writing at all (ADR-0026).
+# Costs nothing at the meter: a column is not an index, and D1 bills index
+# entries, not columns.
+ROW_HASH = "row_hash"
 
 # parquet type -> SQLite affinity. The projection only ever contains these.
 _TYPE_MAP = {
@@ -114,12 +121,35 @@ def _sql_literal(v) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
-def _emit_table(con, parquet, table, out_dir) -> tuple[str, int]:
+def _row_hash(rendered: str) -> int:
+    """A 31-bit digest of one row, from the literals about to be written.
+
+    Hashing the RENDERED tuple rather than the parquet values is deliberate: it
+    digests exactly what D1 will hold, so a difference in what arrives is a
+    difference in the hash, and a re-publish of unchanged data produces the same
+    number on any machine (Python's `hash()` is salted per process and cannot).
+
+    31 bits, not 64, so `sum(row_hash)` stays exact in SQLite's int64 no matter
+    how big a table gets: 41,294 scrobbles x 2^31 is 2^46, and ten million rows
+    would still be 2^54.
+    """
+    return int(hashlib.sha1(rendered.encode()).hexdigest()[:8], 16) & 0x7FFFFFFF
+
+
+def _emit_table(con, parquet, table, out_dir) -> tuple[str, dict]:
     cols = con.execute(f"DESCRIBE SELECT * FROM read_parquet('{parquet}')").fetchall()
     names = [c[0] for c in cols]
+    if ROW_HASH in names:
+        # Fail rather than emit two columns of one name. No loader writes this
+        # today, and the envelope cannot (payload keys that collide with it are
+        # renamed p_*), so reaching here means a zone invented the name and the
+        # digest would silently stop being a digest of the row.
+        raise SystemExit(
+            f"publish-cf: {table} already has a `{ROW_HASH}` column — rename it "
+            "or the load digest cannot be trusted")
     ddl_cols = ", ".join(
         f'"{n}" {_TYPE_MAP.get(t.upper(), "TEXT")}' for n, t, *_ in cols
-    )
+    ) + f', "{ROW_HASH}" INTEGER'
     # DROP then CREATE, not CREATE IF NOT EXISTS. The bundle is authoritative
     # over D1 (ADR-0005), and that has to cover shape as well as rows: with IF
     # NOT EXISTS an existing table keeps its old columns forever, so adding
@@ -134,14 +164,35 @@ def _emit_table(con, parquet, table, out_dir) -> tuple[str, int]:
             )
 
     rows = con.execute(f"SELECT * FROM read_parquet('{parquet}')").fetchall()
-    collist = ", ".join(f'"{n}"' for n in names)
+    collist = ", ".join(f'"{n}"' for n in names) + f', "{ROW_HASH}"'
     header = f'INSERT INTO "{table}" ({collist}) VALUES\n'
     lines = [f'DELETE FROM "{table}";']  # re-import is idempotent
 
+    # The key a diff would use, checked rather than assumed (ADR-0026 §1). It is
+    # only RECORDED here — nothing keys off it yet — because the answer for the
+    # served slice is not the answer publish.py reports for the whole record:
+    # t1_notes is 3,444 rows and 1,984 distinct ids there, and the published
+    # table is a different, smaller set of rows.
+    key_at = [names.index(c) for c in ("id", "origin_ref") if c in names]
+    seen: set[tuple] = set()
+    duplicate_keys = 0
+
+    digest = 0
     batch: list[str] = []
     size = len(header)
     for r in rows:
-        tup = "(" + ", ".join(_sql_literal(v) for v in r) + ")"
+        # The hash covers the row's own values and not itself, so it is stable
+        # under re-publish. The rendered text is reused for both, never rebuilt.
+        body = ", ".join(_sql_literal(v) for v in r)
+        h = _row_hash(body)
+        digest += h
+        tup = f"({body}, {h})"
+        if key_at:
+            k = tuple(r[i] for i in key_at)
+            if k in seen:
+                duplicate_keys += 1
+            else:
+                seen.add(k)
         # +2 for the ",\n" joiner; flush before crossing the limit, and never
         # emit an empty batch when a single row is itself oversized.
         if batch and size + len(tup) + 2 > _MAX_STATEMENT_BYTES:
@@ -153,7 +204,12 @@ def _emit_table(con, parquet, table, out_dir) -> tuple[str, int]:
         lines.append(header + ",\n".join(batch) + ";")
 
     (out_dir / f"{table}.sql").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return "\n".join(ddl), len(rows)
+    return "\n".join(ddl), {
+        "rows": len(rows),
+        "digest": digest,
+        "key": [names[i] for i in key_at],
+        "duplicate_keys": duplicate_keys,
+    }
 
 
 # Every vector kind the blob is made of. `vectors.f32` is ONE artifact — the
@@ -332,17 +388,6 @@ sed -n 's/.*"name" *: *"\([^"]*\)".*/\1/p' "$LIVE" | while IFS= read -r t; do
 done
 fi
 
-echo "== schema =="
-$WRANGLER d1 execute "$DB" --remote --file "$HERE/schema.sql"
-
-echo "== data =="
-# Batched, not one call per table. Each `wrangler d1 execute` spawns node and
-# pays a full round trip, so 18 tables meant 18 startups against remote D1 —
-# minutes of the deploy were process launches. Files are concatenated up to a
-# size budget, keeping whole tables together so a failure is still attributable.
-BATCH="$(mktemp)"
-: > "$BATCH"
-BUDGET=4000000
 # D1 runs a large --file import ASYNCHRONOUSLY and refuses a second one while the
 # first is in flight ("Cannot start another import until that completes"). The
 # first batched version submitted all of them back to back, so the early tables
@@ -362,6 +407,8 @@ BUDGET=4000000
 # the earlier ones did not.
 BUSY_BUDGET=${D1_BUSY_BUDGET:-1200}
 DEADLINE=$(( $(date +%s) + BUSY_BUDGET ))
+# Rows written by every call below, summed. Printed at the end; see apply_file.
+WRITTEN=0
 # One place that talks to D1, so the busy-queue handling and the budget are
 # shared by the bulk load and by any repair that follows it.
 apply_file() {
@@ -393,8 +440,33 @@ apply_file() {
   if [ "$waited" -gt 0 ]; then
     echo "    (waited ${waited}s for the previous import to drain)"
   fi
+
+  # The meter. D1 bills rows WRITTEN, wrangler reports them per call, and this
+  # script threw that number away on success — so the cost of a load was only
+  # ever knowable by arithmetic. It is a running total and never a gate: a
+  # format change here must leave the import alone, hence the `|| true` and the
+  # `+ 0`. `grep -o`, not `sed`, because a one-line JSON body would hide every
+  # match but the last.
+  n=$(printf '%s' "$out" | grep -o '"rows_written" *: *[0-9]*' 2>/dev/null \
+      | grep -o '[0-9]*$' | awk '{s += $1} END {print s + 0}' || true)
+  WRITTEN=$(( WRITTEN + ${n:-0} ))
 }
 
+echo "== schema =="
+# Through apply_file like every other write. It used to be a bare wrangler call,
+# which meant the one statement that must land before any data had no busy-queue
+# handling and no place in the meter — a D1 still draining the previous import
+# failed the whole run here rather than waiting the five seconds it needed.
+apply_file "$HERE/schema.sql"
+
+echo "== data =="
+# Batched, not one call per table. Each `wrangler d1 execute` spawns node and
+# pays a full round trip, so 18 tables meant 18 startups against remote D1 —
+# minutes of the deploy were process launches. Files are concatenated up to a
+# size budget, keeping whole tables together so a failure is still attributable.
+BATCH="$(mktemp)"
+: > "$BATCH"
+BUDGET=4000000
 flush() {
   [ -s "$BATCH" ] || return 0
   echo "  applying batch ($(wc -c < "$BATCH" | tr -d ' ') bytes)"
@@ -422,7 +494,7 @@ rm -f "$BATCH"
 # reads them back. This is deliberately a check on CONTENT rather than on exit
 # status: whatever swallowed that batch, it did not announce itself, and the
 # only durable defence against a silent write is to go and look.
-echo "== verifying row counts =="
+echo "== verifying rows and digest =="
 ACTUAL="$(mktemp)"
 MISMATCH="$(mktemp)"
 trap 'rm -f "$LIVE" "$ACTUAL" "$MISMATCH"' EXIT
@@ -443,12 +515,26 @@ read_counts() {
 
 find_mismatches() {
   : > "$MISMATCH"
-  while IFS="|" read -r t want; do
+  # expected-counts.txt is `table|rows|digest`, and verify.sql returns
+  # "<table>": "<rows>|<digest>" — one subquery per table carrying both facts.
+  #
+  # The digest is the half that is new and the half that matters. A count proves
+  # how MANY rows arrived; the sum of the per-row hashes proves WHICH. A batch
+  # that loaded yesterday's rows, or half a table twice, satisfies the count
+  # exactly and is the failure the count cannot see.
+  while IFS="|" read -r t want_n want_h; do
     [ -n "$t" ] || continue
-    got=$(sed -n "s/.*\"$t\" *: *\([0-9][0-9]*\).*/\1/p" "$ACTUAL" | head -1)
-    [ -n "$got" ] || got="absent"
-    if [ "$got" != "$want" ]; then
-      echo "$t|$want|$got" >> "$MISMATCH"
+    got=$(sed -n "s/.*\"$t\" *: *\"\([0-9|]*\)\".*/\1/p" "$ACTUAL" | head -1)
+    if [ -z "$got" ]; then
+      echo "$t|$want_n rows|absent" >> "$MISMATCH"
+      continue
+    fi
+    got_n=${got%%|*}
+    got_h=${got##*|}
+    if [ "$got_n" != "$want_n" ]; then
+      echo "$t|$want_n rows|$got_n rows" >> "$MISMATCH"
+    elif [ "$got_h" != "$want_h" ]; then
+      echo "$t|digest $want_h|digest $got_h" >> "$MISMATCH"
     fi
   done < "$HERE/expected-counts.txt"
 }
@@ -479,8 +565,10 @@ if [ -s "$MISMATCH" ]; then
       apply_file "$HERE/data/$t.sql" < /dev/null
     done < "$MISMATCH"
     # Long enough to outlast the stale read, short enough that three rounds
-    # still fit inside the job's timeout.
-    sleep $(( attempt * 10 ))
+    # still fit inside the job's timeout. Overridable ONLY so this path can be
+    # tested at all: three rounds at the real pause is a minute, which is why it
+    # went untested until the digest gave it something to catch.
+    sleep $(( attempt * ${D1_REPAIR_PAUSE:-10} ))
     read_counts
     find_mismatches
     attempt=$(( attempt + 1 ))
@@ -498,7 +586,10 @@ else
   echo "  every table matches the bundle"
 fi
 
-echo "== done: $DB now matches this bundle =="
+# What the load cost at the meter D1 actually bills. Printed always, because a
+# number nobody sees is a number nobody acts on: this load is a full rewrite, so
+# it spends the corpus every night whatever the delta was (ADR-0026).
+echo "== done: $DB now matches this bundle — $WRITTEN rows written =="
 """
 
 
@@ -511,7 +602,7 @@ echo "== done: $DB now matches this bundle =="
 _PROTECTED_PREFIXES = ("sqlite_", "_cf_", "d1_", "wh_")
 
 
-def _emit_reconcile(out, counts: dict[str, int], scope: str) -> None:
+def _emit_reconcile(out, tables: dict[str, dict], scope: str) -> None:
     """Make the bundle authoritative over D1, not merely additive.
 
     Row-level tightening already revokes: every data file opens with DELETE FROM,
@@ -540,7 +631,7 @@ def _emit_reconcile(out, counts: dict[str, int], scope: str) -> None:
                           tables and nothing it knows nothing about.
       served-tables.txt   the reconcile authority. Full bundles only.
     """
-    served_tables = sorted(counts)
+    served_tables = sorted(tables)
     (out / "bundle-scope.txt").write_text(scope + "\n", encoding="utf-8")
     (out / "bundle-tables.txt").write_text("\n".join(served_tables) + "\n",
                                            encoding="utf-8")
@@ -551,8 +642,13 @@ def _emit_reconcile(out, counts: dict[str, int], scope: str) -> None:
     # What the import reads back after loading. Shipped as data rather than
     # derived in the shell, because the shell cannot know what the bundle meant
     # to contain — only what D1 happens to hold, which is the thing in question.
+    # `table|rows|digest`. The digest is the sum of the per-row hashes this
+    # bundle wrote, so the read-back checks WHICH rows arrived and not merely how
+    # many. On 2026-08-19 a lost batch was caught by the count; a batch that
+    # loaded the right number of wrong rows would not have been.
     (out / "expected-counts.txt").write_text(
-        "".join(f"{t}|{counts[t]}\n" for t in served_tables), encoding="utf-8")
+        "".join(f"{t}|{tables[t]['rows']}|{tables[t]['digest']}\n"
+                for t in served_tables), encoding="utf-8")
 
     # One query, one round trip: a single row whose COLUMN NAMES are the table
     # names, so the shell matches a count to its table without depending on
@@ -562,9 +658,16 @@ def _emit_reconcile(out, counts: dict[str, int], scope: str) -> None:
     # this was written as first, and D1 rejects it outright — "too many terms in
     # compound SELECT: SQLITE_ERROR" — at a limit far below SQLite's documented
     # 500. It passed against a stubbed wrangler and failed against the real one.
+    #
+    # Both facts come back in ONE subquery per table, joined by `|`, rather than
+    # two columns per table. That keeps this query the exact shape production has
+    # already proved — 34 scalar subqueries, not 68 — because the limit that bit
+    # here once was a limit on how many terms D1 would take, and there is no
+    # reason to go back and find the next one.
     (out / "verify.sql").write_text(
         "SELECT\n" + ",\n".join(
-            f'  (SELECT count(*) FROM "{t}") AS "{t}"' for t in served_tables
+            f'  (SELECT count(*) || \'|\' || COALESCE(sum("{ROW_HASH}"), 0) '
+            f'FROM "{t}") AS "{t}"' for t in served_tables
         ) + ";\n", encoding="utf-8")
 
     script = IMPORT_SH
@@ -605,7 +708,7 @@ def run() -> int:
     con = duckdb.connect(":memory:")
     try:
         schema: list[str] = []
-        counts: dict[str, int] = {}
+        tables: dict[str, dict] = {}
         for p in sorted(src.glob("*.parquet")):
             if p.stem.endswith("_vec"):
                 continue  # vectors do not go to D1
@@ -615,12 +718,19 @@ def run() -> int:
             # copy from last night over whatever a lane loaded an hour ago.
             if scope == "partial" and p.stem not in rebuilt:
                 continue
-            ddl, n = _emit_table(con, p, p.stem, out / "data")
+            ddl, info = _emit_table(con, p, p.stem, out / "data")
             schema.append(ddl)
-            counts[p.stem] = n
-            print(f"  D1  {p.stem:<18}{n:>8,} rows")
+            tables[p.stem] = info
+            # The duplicate count is reported, not enforced. ADR-0026 §1 keys a
+            # diff on (id, origin_ref) and CHECKS rather than assumes it — this
+            # is that check, landed while the load is still a full rewrite, so
+            # the answer arrives from production before anything depends on it.
+            dup = info["duplicate_keys"]
+            print(f"  D1  {p.stem:<18}{info['rows']:>8,} rows"
+                  + (f"   — {dup:,} rows share a key with another"
+                     if dup else ""))
 
-        if not counts:
+        if not tables:
             print("publish-cf: REFUSING — the scope names no table this "
                   "projection holds; the bundle would be empty")
             return 1
@@ -664,15 +774,18 @@ def run() -> int:
                   + (f", {len(doc['withheld'])} withheld" if doc.get("withheld") else ""))
         else:
             print("  R2  surface.json: absent — the surface will offer every tool it defines")
-        _emit_reconcile(out, counts, scope)
+        _emit_reconcile(out, tables, scope)
         vinfo = _emit_vectors(con, out, partial=(scope == "partial"))
         if vinfo.get("complete"):
             print(f"  R2  vectors.f32     {vinfo['count']:>8,} x {vinfo['dim']}d "
                   f"= {vinfo['bytes'] / 1e6:.2f} MB")
 
         (out / "MANIFEST.json").write_text(json.dumps({
-            "d1_tables": counts,
-            "d1_rows_total": sum(counts.values()),
+            "d1_tables": {t: i["rows"] for t, i in tables.items()},
+            "d1_rows_total": sum(i["rows"] for i in tables.values()),
+            # What a diff would key on, and whether it could (ADR-0026 §1).
+            "d1_keys": {t: {"key": i["key"], "duplicate_keys": i["duplicate_keys"]}
+                        for t, i in tables.items()},
             "vectors": vinfo,
             "cosine": "vectors are unit-norm; similarity = dot product",
             "scope": scope,

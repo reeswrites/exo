@@ -60,7 +60,7 @@ ends against real D1, not against the stub.
 
 ---
 
-## Phase 0 — see the meter
+## Phase 0 — see the meter ✅ SHIPPED 2026-09-01
 
 **What:** `apply_file()` already captures wrangler's JSON and discards it on
 success. Parse `rows_written` out of it, total across batches, print one line at
@@ -73,9 +73,34 @@ the end of the import, and put it in the nightly's step summary.
 
 **Risk:** none. It reads output that is already there.
 
+**What actually landed**, and one thing the plan did not ask for: the schema
+step was a bare `wrangler` call, outside `apply_file`. So the one statement that
+must land before any data had no busy-queue handling and no place in the meter —
+a D1 still draining the previous import failed the whole run there rather than
+waiting the five seconds it needed. It goes through `apply_file` now, which is
+what the function's own comment always claimed ("one place that talks to D1").
+
 ---
 
-## Phase 1 — the digest, shipped and checked, not yet acted on
+## Phase 1 — the digest, shipped and checked, not yet acted on ✅ SHIPPED 2026-09-01
+
+**Two corrections to this section as written, both found while building it:**
+
+1. **One subquery per table, not two.** The plan said `verify.sql` gains a
+   second scalar subquery per table. It gains nothing of the sort: the subquery
+   now returns `count(*) || '|' || COALESCE(sum(row_hash), 0)`, one string
+   carrying both facts. The reason is the scar this file already cites — D1
+   rejected a compound SELECT at a term limit far below SQLite's documented one.
+   Going from 34 subqueries to 68 is walking back toward a limit that has bitten
+   here once, for nothing.
+2. **`expected-counts.txt` is extended, not joined by a second file.** It is
+   `table|rows|digest` now. Nothing outside `publish_cf.py` reads it — checked
+   across both repos — so the format is bundle-internal and the script and the
+   file always travel together.
+
+Also shipped: `D1_REPAIR_PAUSE`, so the repair path can be tested at all. Three
+rounds at the real pause is a minute of wall clock, which is why that path went
+untested until the digest gave it something to catch.
 
 **What:**
 
@@ -110,6 +135,17 @@ writes — a column is not an index.
 
 **Verify:** a nightly whose verify step compares digests, plus the uniqueness
 report in the step summary.
+
+**What to look for on the first nightly after the pin moves:**
+
+- `== done: warehouse now matches this bundle — N rows written ==`. N should be
+  near 86,981. A number far above it means something writes that this plan has
+  not accounted for.
+- `== verifying rows and digest ==` passing on the first attempt. A digest
+  mismatch here is not a false alarm: it means the bundle and D1 disagree about
+  content, which the count could never see.
+- Any `— N rows share a key with another` line in the publish step. That is the
+  question ADR-0026 §1 could only guess at, answered by production.
 
 ---
 
