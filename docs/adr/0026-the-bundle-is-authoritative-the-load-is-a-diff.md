@@ -114,9 +114,20 @@ one:
 - **Diff against the previous bundle**, which the nightly already writes to R2
   as the warm copy.
 
-Prefer the previous bundle: it costs no D1 quota and it is already carried.
-Fall back to reading the keys when it is missing — a first run, a restored
-account, a lane whose predecessor failed.
+*Corrected 2026-09-01, while planning the phases:* this ADR first said to prefer
+the previous bundle, because it costs no D1 quota. That is the wrong preference.
+The previous bundle records what the last run *meant* to load; D1 records what it
+holds — and those differ after exactly the failures this has already had (a
+batch lost in silence, a run that died between tables). Reading it back is also
+free of new durable state, which the ledger's frozen-key episode is a standing
+argument for. So: **read the base from D1**, cheaply, as a per-table digest
+rather than 74,000 keys. See
+[the plan](../plans/0026-the-load-becomes-a-diff.md) for the shape of it.
+
+One constraint that read imposes, and it is not optional: **D1 reads back stale
+for seconds after a bulk load** — on 2026-08-19 six tables verified as EMPTY and
+five of them had been full the whole time. So the read that computes a diff must
+be taken before the run writes anything, never between two writes.
 
 Most zones then need no `UPDATE` at all. Their ids are content-derived, so a
 changed row is a *new* id and a vanished old one: insert, delete, done. A true
