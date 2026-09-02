@@ -1,8 +1,13 @@
 """The engine may know the shape of a life, never the contents of one (ADR-0014).
 
 This is the leak guard for the public split. It runs over the engine tree — the
-package and the worker's source — and fails on anything that identifies *this*
-instance: a home directory, the owner's name, his blog, a Cloudflare id.
+package, the worker's source and the shipped skills — and fails on anything that
+identifies *this* instance: a home directory, the owner's name, his blog, a
+Cloudflare id.
+
+`skills/` is markdown rather than code and is guarded anyway (ADR-0027). It is
+the one tree here whose text an assistant is meant to *act on*, so an instance
+detail that reached it would be followed rather than merely read.
 
 The allowlist below is an exceptions ledger, not a config. It may only ever
 shrink. Each entry names the leg that removes it, so a line that outlives its
@@ -14,8 +19,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TREES = ("exo", "worker/src")
-SUFFIXES = {".py", ".js", ".mjs", ".toml", ".json", ".sh"}
+TREES = ("exo", "worker/src", "skills")
+SUFFIXES = {".py", ".js", ".mjs", ".toml", ".json", ".sh", ".md"}
 
 PATTERNS = {
     "home directory": re.compile(r"/Users/|/home/[a-z]"),

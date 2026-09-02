@@ -37,6 +37,16 @@ choosing a filename, an id scheme, a landing path — is reimplementing the
 contract rather than answering it. [docs/notes-sources.md](docs/notes-sources.md)
 is the how-to, including a worked adapter.
 
+The same rule decides a **skill** (`skills/`, ADR-0027). A skill's input is the
+read surface — named tools with declared facets, which every instance has — so
+it ships here. A skill that names your other MCP server, your city or the way
+you personally phrase things has a *place* compiled into it, and belongs in your
+instance. Five constraints hold in this tree: the engine surface only, name
+every tool you need and say what you do without it, no claim about the owner, no
+row counts, and read-only. `tests/test_no_personal_strings.py` runs over
+`skills/` too — it is the one tree here whose text an assistant is meant to act
+on.
+
 ## Things that look like small changes and are not
 
 - **`source=` strings.** Every row id is a hash of its content *and* its source

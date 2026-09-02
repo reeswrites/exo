@@ -169,6 +169,22 @@ works the same way — Poke is just the one that reaches you by text message.
 Then read [CONTEXT.md](CONTEXT.md) — it is the vocabulary, and the rest of the
 repo assumes it.
 
+## Teach the assistant to read it
+
+[skills/](skills/) holds instructions for the assistant at the other end —
+markdown you copy into your client. They are not part of the record and not part
+of a bundle; they exist because a surface that returns true rows still affords a
+short list of false statements, and the facets on each tool predict exactly
+which ones (ADR-0015). A saved link read as something they consumed. A rating
+reported without its scale. A machine's conclusion quoted as the owner's
+sentence.
+
+A skill is the engine's half of that and holds nothing about any particular
+owner. The half that *is* about you — your Sunday, your other MCP server, your
+checklist — is a **procedure**, written by hand in your instance and published
+as a resource (ADR-0016). Same test as loaders: format here, place there
+(ADR-0027).
+
 ## Honest limits
 
 - **The startup cost is real.** This is a tool for someone who already keeps
@@ -202,6 +218,7 @@ ones:
 | [0019](docs/adr/0019-publicity-is-an-axis-not-an-adjective.md) | publicity is an axis, not an adjective |
 | [0020](docs/adr/0020-the-surface-is-modular-and-a-peer-is-not-a-competitor.md) | the surface is modular, and a peer is not a competitor |
 | [0024](docs/adr/0024-a-denominator-is-a-source.md) | a denominator is a source, not a calculation |
+| [0027](docs/adr/0027-a-skill-ships-with-the-engine-a-procedure-belongs-to-the-owner.md) | a skill ships with the engine; a procedure belongs to the owner |
 
 ## Contributing
 
