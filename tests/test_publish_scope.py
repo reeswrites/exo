@@ -49,10 +49,11 @@ def test_only_refuses_an_unknown_zone_rather_than_doing_nothing(manifest, capsys
 # ───────────────────── only a full bundle may drop ─────────────────────
 
 
-def _bundle(tmp_path, scope, tables):
+def _bundle(tmp_path, scope, tables, digest=0):
     out = tmp_path / "cf"
     (out / "data").mkdir(parents=True, exist_ok=True)
-    publish_cf._emit_reconcile(out, {t: 1 for t in tables}, scope)
+    publish_cf._emit_reconcile(
+        out, {t: {"rows": 1, "digest": digest} for t in tables}, scope)
     return out
 
 
@@ -131,14 +132,22 @@ for a in "$@"; do
   esac
 done
 case "$*" in
-  *verify*|*"SELECT"*"count(*)"*) echo '[{"results":[{"t0_music":1,"t1_notes":1}]}]' ;;
+  # Every --file call is a write, and wrangler reports what it cost. 7 is
+  # arbitrary; what matters is that the meter sums it rather than losing it.
+  *--file*) printf '%s\n' '{"meta":{"rows_written":7}}' ;;
+  # verify.sql returns one string per table, "<rows>|<digest>". Single-quoted
+  # JSON with the digest spliced in: _STUB is not a raw string, so a backslash
+  # here reaches the shell as a bare quote and the pipe becomes a pipeline.
+  *verify*|*"SELECT"*"count(*)"*)
+    d="${STUB_DIGEST:-0}"
+    printf '%s\n' '[{"results":[{"t0_music":"1|'"$d"'","t1_notes":"1|'"$d"'"}]}]' ;;
 esac
 exit 0
 """
 
 
-def _runnable_bundle(tmp_path, scope, tables):
-    out = _bundle(tmp_path, scope, tables)
+def _runnable_bundle(tmp_path, scope, tables, digest=0):
+    out = _bundle(tmp_path, scope, tables, digest)
     (out / "schema.sql").write_text("-- schema\n", encoding="utf-8")
     for t in tables:
         (out / "data" / f"{t}.sql").write_text(f'DELETE FROM "{t}";\n', encoding="utf-8")
@@ -240,3 +249,50 @@ def test_a_full_run_still_skips_a_kind_that_was_never_built(tmp_path, monkeypatc
     info = publish_cf._emit_vectors(con, out, partial=False)
     assert info["complete"] is True
     assert (out / "vectors.f32").exists()
+
+
+# ───────────────────── the load says what it cost, and what it wrote ─────────────────────
+#
+# Both facts are new (ADR-0026 phases 0 and 1) and both are about the same
+# blind spot: a load that reports success is not evidence of what reached D1,
+# and a load that reports nothing is not evidence of what it spent to get there.
+
+
+def test_the_import_reports_the_rows_it_wrote(tmp_path):
+    # D1 bills rows written and wrangler reports them per call; this script used
+    # to throw that number away on success, so the cost of a night was knowable
+    # only by arithmetic. Three writes at 7 each: schema, then one batch, and
+    # the reconcile's DROP is a --command and not counted.
+    out, log = _runnable_bundle(tmp_path, "full", ["t0_music", "t1_notes"])
+    proc = _run_import(out, log)
+    assert proc.returncode == 0, proc.stderr
+    assert "14 rows written" in proc.stdout, proc.stdout
+
+
+def test_a_digest_mismatch_is_caught_when_the_count_is_right(tmp_path):
+    # THE point of the digest. The stub reports the expected ROW COUNT and a
+    # different digest — a table holding the right number of wrong rows, which
+    # is what a batch that loaded yesterday's file looks like and what the count
+    # alone cannot see.
+    out, log = _runnable_bundle(tmp_path, "full", ["t0_music"], digest=4242)
+    proc = _run_import(out, log, {"STUB_DIGEST": "9999", "D1_REPAIR_PAUSE": "1"})
+    assert proc.returncode == 1
+    assert "digest 4242" in (proc.stdout + proc.stderr)
+    assert "reapplying" in proc.stdout, "a mismatch must try the repair first"
+
+
+def test_a_matching_digest_passes_without_repair(tmp_path):
+    out, log = _runnable_bundle(tmp_path, "full", ["t0_music"], digest=4242)
+    proc = _run_import(out, log, {"STUB_DIGEST": "4242", "D1_REPAIR_PAUSE": "1"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "every table matches the bundle" in proc.stdout
+    assert "reapplying" not in proc.stdout
+
+
+def test_the_schema_goes_through_the_busy_queue_handler(tmp_path):
+    # It used to be a bare wrangler call: no retry when D1 was still draining
+    # the previous import, and no place in the meter. The count above is the
+    # proof it is metered; this is the proof it is not skipped.
+    out, log = _runnable_bundle(tmp_path, "full", ["t0_music"])
+    _run_import(out, log)
+    assert "schema.sql" in log.read_text()
