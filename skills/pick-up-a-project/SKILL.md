@@ -21,7 +21,8 @@ state. `project_open` is `kind: pointer`, and pointers go stale silently.
 | `project_activity` | the dated work log is gone — do not guess when something died |
 | `project_open` | you can still say what a project is; not what is left in it |
 | `project_docs` | you lose the reasoning; report state without the why |
-| `open_threads`, `drafts` | skip the section joining repos to what they were thinking |
+| `drafts` | skip the half-written prose behind a repo |
+| `open_threads` | skip the unclosed questions; it takes no filter, so it is all or nothing |
 | `notes_on`, `whats_relevant` | skip the notes join |
 
 ## Read status as heat, not as judgement
@@ -59,8 +60,10 @@ stalled, dormant. That is a measurement of heat and nothing else.
    `project_activity` around and after its neighbourhood, and say when you
    cannot tell whether it still stands. An uncommitted file is the exception —
    that is live state, and it is usually the single most useful thing to report.
-4. **`open_threads` and `drafts`, filtered to the project.** The questions and
-   the half-written prose that the repo itself does not carry.
+4. **`drafts(topic:)` and `open_threads`.** The half-written prose and the
+   unclosed questions the repo itself does not carry. `drafts` takes a topic;
+   `open_threads` takes no arguments at all, so it returns the whole list and
+   you filter it by reading. Do not claim you queried it for this project.
 
 A marker is a note written to oneself at the moment of choosing not to do
 something. That makes it excellent evidence of *intent* and poor evidence of

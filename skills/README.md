@@ -11,8 +11,9 @@ ADR-0015 predicts from the facets:
 | the lie | the facet that predicts it | the skill that answers it |
 |---|---|---|
 | a machine's conclusion quoted as the owner's sentence | `class: derived`, `class: dialogue` | [trace-an-idea](trace-an-idea/) |
-| a saved link read as something they consumed | `class: intent` | [what-to-watch-next](what-to-watch-next/) |
-| a rating reported without its scale | `kind: judgement` | [what-to-watch-next](what-to-watch-next/) |
+| a saved link read as something they consumed | `class: intent` | [recommend-media](recommend-media/) |
+| a rating reported without its scale | `kind: judgement` | [recommend-media](recommend-media/) |
+| a title absent from the record read as one they have not seen | `kind: event` | [recommend-media](recommend-media/) |
 | a stale pointer read as current state | `kind: pointer` | [pick-up-a-project](pick-up-a-project/) |
 
 ## A skill, and not a procedure
@@ -80,3 +81,27 @@ way `trigger` decides it for a procedure. Write the moment, not the subject.
 
 `tests/test_no_personal_strings.py` runs over this tree, so a home directory, a
 name or a cloud id in a `SKILL.md` fails CI the same way it does in the package.
+
+## Validate it against the surface before you ship it
+
+A skill is instructions an assistant will follow literally, so a tool that does
+not exist and a parameter that is not in the schema are the same class of bug —
+both send it down a path with no floor. `worker/src/tools.js` is the authority.
+Before opening a pull request, check every call in the file against it:
+
+- **The tool exists.** An invented one is the worst failure here, because the
+  step that names it is usually the one the skill leans on.
+- **Every parameter is in that tool's `schema.properties`.** An unknown key is
+  dropped in silence, which is worse than an error: the answer comes back and
+  reads as though the filter applied.
+- **You have not assumed paging.** There is no cursor and no caller-set limit
+  anywhere on this surface (ADR-0007). The row cap follows how public the answer
+  is (ADR-0019). A skill that pages is a skill that quietly reads a truncation
+  as a complete set.
+- **You have not restated something the tool already returns.** Several tools
+  carry their own caveat notes and their own scales. Tell the reader to quote
+  what came back — a copy in a skill file drifts from the source and there is
+  nothing to catch it.
+- **You have not named a capability the surface lacks.** Coverage checks in
+  particular are uneven per medium, and "screen the candidates" is not a step if
+  nothing screens them.
