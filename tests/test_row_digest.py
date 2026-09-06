@@ -96,6 +96,38 @@ def test_the_row_count_alone_cannot_tell_two_tables_apart(tmp_path, con):
     assert before["digest"] != after["digest"]
 
 
+def test_the_digest_carries_the_tables_shape_as_well_as_its_rows(tmp_path, con,
+                                                                  monkeypatch):
+    """Because the load skips a table whose digest matches (ADR-0026 phase 2),
+    and an index is not a row. Nothing in a sum over rows can see an index appear
+    or vanish, so a table that skipped would keep whichever indexes some earlier
+    run left it — and a74d25d, the commit that removed the `t0_music` artist
+    index and bought the headroom phase 2 spends, is exactly that change.
+
+    So the DDL is fingerprinted and folded into every row's hash. `import.sh`
+    handles the one case this cannot reach: a table with no rows has no hashes,
+    so it is never skipped."""
+    rows = [("a", "ref/1", "one"), ("b", "ref/2", "two")]
+    monkeypatch.setitem(publish_cf._INDEXES, "t0_thing", [])
+    _, plain, _ = _emit(tmp_path, con, rows)
+    monkeypatch.setitem(publish_cf._INDEXES, "t0_thing", ["origin_ref"])
+    _, indexed, _ = _emit(tmp_path, con, rows)
+
+    assert plain["rows"] == indexed["rows"]
+    assert plain["shape"] != indexed["shape"]
+    assert plain["digest"] != indexed["digest"], (
+        "same rows, different indexes — if the digest cannot tell these apart, "
+        "an index change never reaches a table the load skips")
+
+
+def test_two_tables_of_the_same_rows_digest_differently(tmp_path, con):
+    """The shape includes the table's NAME, so a data file loaded into the wrong
+    table cannot satisfy the digest of the one it was meant for."""
+    _, here, _ = _emit(tmp_path, con, [("a", "ref/1", "one")], table="t0_thing")
+    _, there, _ = _emit(tmp_path, con, [("a", "ref/1", "one")], table="t0_other")
+    assert here["digest"] != there["digest"]
+
+
 # ───────────────────────── the key, recorded not enforced ─────────────────────────
 
 

@@ -1,6 +1,6 @@
 # ADR-0026 — The bundle stays authoritative; the load becomes a diff
 
-Status: proposed · 2026-09-01
+Status: accepted · 2026-09-01 · phases 0–2 shipped 2026-09-06
 
 Extends [ADR-0005](0005-split-the-etl-laptop-ingests-cloud-rebuilds.md). It
 changes how "the bundle is authoritative over D1" is *enforced*, not whether.
@@ -92,10 +92,34 @@ line repeated inside one note collides with itself.
 
 So the key is `(id, origin_ref)`, which is what `publish` already treats as the
 join key throughout for exactly this reason. And it is **verified at publish
-time, per table**: the emitter asserts the key is unique over the rows it is
-about to write, and any table that fails takes the full-reload path instead. A
-key assumed to be unique is the kind of default that is eventually wrong in
-production and silent about it.
+time, per table**: the emitter counts the rows that share a key and records the
+answer in `MANIFEST.json`. A key assumed to be unique is the kind of default that
+is eventually wrong in production and silent about it.
+
+*Answered by production 2026-09-03, and the answer is not the one above.* The
+first nightly carrying the check reported:
+
+| table | rows | share a key |
+|---|---|---|
+| `t1_notes` | 1,454 | **none** |
+| `t0_film` | 609 | 1 |
+| `t0_music` | 41,601 | **32,544** |
+
+So the inference in the paragraph above is wrong where it is specific.
+`publish.py`'s 3,444 rows against 1,984 distinct ids describes the whole record;
+the *served* notes slice is a different, smaller set of rows and its key is
+unique. The collision is `t0_music`, at 78% of the table, and the cause is not a
+defect: `Row.__post_init__` hashes the sorted PAYLOAD values
+(`provenance.py:60`), a scrobble's payload is artist/album/track, and the play
+time lives in the envelope as `created`. Every repeat play of one track therefore
+lands on one id — and `origin_ref` is the export filename, shared by the lot.
+`csv_sources.py:100` records why the zone was built that way: keying the merge
+doubled the corpus once (38,554 → 78,257), so the stream splices on time instead.
+
+**What that changes.** Nothing in phases 0–2 — a skip never uses a key. Phase 3
+cannot key `t0_music` on `(id, origin_ref)`, which is a real narrowing, because
+`t0_music` is the table phase 3 exists for. Its options are a bucketed digest
+with a whole-bucket rewrite, or `created` in the key. Neither is decided here.
 
 The vector tables are not affected. They do not reach D1 at all
 (`publish_cf.py:598`).
@@ -152,6 +176,44 @@ patching on top of an unknown.
 This is per table, not per run. One new column on one zone must not cost the
 other thirty-three a full rewrite.
 
+*Corrected 2026-09-06, by building it.* Comparing live columns against the DDL is
+the wrong mechanism, in two directions.
+
+It is too weak, because it says nothing about **indexes** — and an index is not a
+column, so a table whose columns match keeps whatever indexes an earlier run left
+it. That is not hypothetical: a74d25d removed the `t0_music` artist index and is
+the entire reason there was headroom to spend on this work. Against a load that
+skips matching tables, that commit would have changed nothing in production and
+said nothing about it.
+
+It is also more machinery than the digest needs. `row_hash` already covers every
+value in the row, so the fix is to **fold a fingerprint of the table's DDL into
+every row's hash**. A changed column, a changed affinity or a changed index list
+all become a changed digest, and a changed digest is already a full reload with
+its own `DROP`/`CREATE`. No sqlite_master parsing, no DDL text compared across
+two systems, and no new query shape against D1 — which matters, because the one
+new query shape this file tried before was rejected outright.
+
+One case that cannot reach: a table with **no rows** has no hashes to carry the
+fingerprint, so its digest is 0 whatever shape it has. `import.sh` handles that
+directly — it never skips a table the bundle says is empty. The cost is nil,
+because re-creating an empty table writes no rows.
+
+And two limits worth stating rather than discovering.
+
+The digest proves the rows this bundle wrote are the rows that are there. It
+cannot see an edit made to a data column that leaves `row_hash` alone, because
+`row_hash` is stored. That is acceptable for a stated reason — the only other
+writer to this database is the worker, and the worker writes `wh_*` and nothing
+else.
+
+And a sum is not a hash of the table. It is deliberately blind to ORDER, which is
+right: a SQLite table is an unordered set of rows, and two loads of the same rows
+must compare equal. It is also, in principle, forgeable — some other multiset of
+31-bit hashes sums the same. For a change nobody is choosing, the chance of
+landing back on the old sum is about 2⁻³¹, and the read-back's job is to catch
+accident rather than intent.
+
 ### 4. Revocation still has to be provable
 
 This is the part that deserves the caution, because it is a privacy property and
@@ -172,16 +234,28 @@ that instead, so the guarantees do not move:
 
 ## Consequences
 
-- A normal night writes hundreds of rows instead of ~128,275. The nightly sits
-  two orders of magnitude inside the free tier, and the caller log keeps
-  recording.
+- A normal night writes far less than ~128,275. Phase 2's unit is the TABLE, so
+  the size of the saving is the size of the tables that did not move — and that
+  varies more than "hundreds of rows" suggests. A night with no new scrobbles is
+  ~3,800; an ordinary one is ~54,900, because three new plays reload all 41,601
+  rows of `t0_music`. Both are inside the free tier with room for a lane fire on
+  top, which the old 87,419 was not. Getting from 54,900 to hundreds is phase 3,
+  and the two tables it would have to fix are the two it already names.
 - The notes lane stops costing ~42,000 rows written per fire, so a day of Notion
   edits stops being a budget event. This is the larger win of the two: the
-  nightly is bounded at one run, and the notes lane is not.
-- The D1 tables gain a unique key, and a unique index is itself an index — one
-  more write per inserted row. That is nothing on a 200-row night and it makes
-  the full reload dearer (~+74,000). The full reload is now the exception, so
-  this is the right way round.
+  nightly is bounded at one run, and the notes lane is not. It needs no code of
+  its own: a partial bundle takes the same path.
+- **Phase 2 adds no index and no key to D1.** The saving comes from not writing
+  tables that already agree, which needs neither. The unique index this ADR
+  costed below belongs to phase 3, and phase 3 is optional.
+- The bundle grows a `ddl/` directory — the same DDL as `schema.sql`, split per
+  table, because applying `schema.sql` drops all thirty-four and a load that
+  rewrites three must not. `schema.sql` stays whole: the worker's test harnesses
+  read it, and it is the readable record of the shape. The import no longer does.
+- The DDL now travels immediately in front of its own table's data rather than in
+  a pass of its own, which is better than what it replaces: a batch that fails
+  leaves the tables it did not reach untouched, where a separate schema pass had
+  already dropped every one of them.
 - The loader gets harder to write and much harder to test, and the failure it
   can produce is a D1 that quietly disagrees with the bundle. That is the
   2026-08-19 failure, and the defence against it is already built. Do not ship
@@ -196,10 +270,12 @@ that instead, so the guarantees do not move:
 - **Whether scrobbles belong in D1 row by row.** 41,294 of the 73,844 rows are
   one table, and the tools mostly aggregate it. That is a bigger question than
   the load mechanism and it is not answered here.
-- **The `t0_music.artist` index.** It buys 41,294 writes a night and cannot
-  serve the queries that exist: `music` filters on `lower(artist) LIKE '%…%'`
-  (`tools.js:635`) and `releases` groups on `lower(artist)` (`tools.js:1352`),
-  neither of which an index on `artist` can answer. Removing it is a one-line
-  change to `_INDEXES` and needs no ADR — but until the load is a diff, it is
-  also the difference between ~128k and ~87k writes a night, which is the
-  difference between over the free limit and under it.
+- **The `t0_music.artist` index.** ~~It buys 41,294 writes a night~~ *Done in
+  a74d25d, before any of the phases: removing it took the nightly from ~128,275
+  to 87,419 measured, which is under the free limit and was the point.* One
+  correction to how it was argued here, because the original claim was too
+  strong: five of the seven query sites can never use that index, but `music`'s
+  `GROUP BY artist` and `around_the_time`'s could have used it to avoid a sort.
+  It was removed for the meter and not because it served nothing — it bought at
+  most a sort, inside a scan those queries do anyway, for a third of the daily
+  write budget.
