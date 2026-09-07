@@ -21,7 +21,11 @@ similarity IS the dot product. The Worker must normalize the *query* embedding
 it gets back from Workers AI, and nothing else.
 
 Bundle layout under zones/_serve/cf/:
-    schema.sql        CREATE TABLE + indexes
+    schema.sql        CREATE TABLE + indexes, whole. The worker's test harnesses
+                      read this; import.sh does not — applying it would DROP all
+                      thirty-four tables and the load rewrites only what moved.
+    ddl/<table>.sql   the same DDL, one table at a time, which is what the import
+                      applies in front of that table's own data (ADR-0026)
     data/<table>.sql  batched INSERTs, one file per table
     vectors.f32       row-major float32, atom vectors then note vectors
     vectors.json      index sidecar — row i of the blob is rows[i]
@@ -121,7 +125,28 @@ def _sql_literal(v) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
-def _row_hash(rendered: str) -> int:
+def _shape_hash(ddl: str) -> str:
+    """A short fingerprint of a table's SHAPE — its columns, their affinities and
+    its indexes — taken from the DDL that declares all three.
+
+    It exists because a sum over rows cannot see any of that, and phase 2 skips a
+    table whose digest matches. Two changes would otherwise never reach a skipped
+    table. An index added to or removed from `_INDEXES` is the first, and it is
+    not hypothetical: a74d25d removed the `t0_music` artist index and bought the
+    headroom this work spends, and nothing in a row digest would have carried it
+    to a table that skipped. A column change on a table that happens to be empty
+    is the second.
+
+    So the fingerprint is folded into every row's hash below. A shape change
+    becomes a digest change, and a digest change is already a reload. The empty
+    case cannot be fixed that way — no rows, no hashes — so the import handles it
+    directly: it never skips a table the bundle says has no rows, which costs
+    nothing because an empty table's reload writes nothing.
+    """
+    return hashlib.sha1(ddl.encode()).hexdigest()[:12]
+
+
+def _row_hash(shape: str, rendered: str) -> int:
     """A 31-bit digest of one row, from the literals about to be written.
 
     Hashing the RENDERED tuple rather than the parquet values is deliberate: it
@@ -132,11 +157,16 @@ def _row_hash(rendered: str) -> int:
     31 bits, not 64, so `sum(row_hash)` stays exact in SQLite's int64 no matter
     how big a table gets: 41,294 scrobbles x 2^31 is 2^46, and ten million rows
     would still be 2^54.
+
+    `shape` is the table's DDL fingerprint, mixed in so that the sum answers
+    "are the right rows here, in the right table" and not merely "are the right
+    rows here". See `_shape_hash` for why that has to be one question.
     """
-    return int(hashlib.sha1(rendered.encode()).hexdigest()[:8], 16) & 0x7FFFFFFF
+    return int(hashlib.sha1(f"{shape}\x1f{rendered}".encode()).hexdigest()[:8],
+               16) & 0x7FFFFFFF
 
 
-def _emit_table(con, parquet, table, out_dir) -> tuple[str, dict]:
+def _emit_table(con, parquet, table, out_dir, ddl_dir=None) -> tuple[str, dict]:
     cols = con.execute(f"DESCRIBE SELECT * FROM read_parquet('{parquet}')").fetchall()
     names = [c[0] for c in cols]
     if ROW_HASH in names:
@@ -163,16 +193,39 @@ def _emit_table(con, parquet, table, out_dir) -> tuple[str, dict]:
                 f'CREATE INDEX IF NOT EXISTS "idx_{table}_{c}" ON "{table}" ("{c}");'
             )
 
+    # The shape, as one short string. Every row's hash carries it, so a column
+    # or index change on this table makes its digest differ from whatever D1
+    # holds — which is how a load that SKIPS matching tables still applies a
+    # shape change. See `_shape_hash`.
+    ddl_text = "\n".join(ddl)
+    shape = _shape_hash(ddl_text)
+
+    # The same DDL again, as its own file. `schema.sql` stays whole because the
+    # worker's test harnesses load it (`worker/test/harness.mjs`) and because a
+    # full reload wants one file; the import needs it PER TABLE so it can
+    # re-create the three tables that changed without dropping the thirty-one
+    # that did not.
+    if ddl_dir is not None:
+        (ddl_dir / f"{table}.sql").write_text(ddl_text + "\n", encoding="utf-8")
+
     rows = con.execute(f"SELECT * FROM read_parquet('{parquet}')").fetchall()
     collist = ", ".join(f'"{n}"' for n in names) + f', "{ROW_HASH}"'
     header = f'INSERT INTO "{table}" ({collist}) VALUES\n'
     lines = [f'DELETE FROM "{table}";']  # re-import is idempotent
 
-    # The key a diff would use, checked rather than assumed (ADR-0026 §1). It is
-    # only RECORDED here — nothing keys off it yet — because the answer for the
-    # served slice is not the answer publish.py reports for the whole record:
-    # t1_notes is 3,444 rows and 1,984 distinct ids there, and the published
-    # table is a different, smaller set of rows.
+    # The key a diff would use, checked rather than assumed (ADR-0026 §1). Still
+    # only RECORDED — phase 2 skips whole tables and never needs a key — but the
+    # answer is in now, from the 2026-09-03 nightly, and it is not the one the ADR
+    # inferred. The served `t1_notes` key IS unique: publish.py's 3,444 rows
+    # against 1,984 distinct ids describes the whole record, and the published
+    # slice is a different, smaller set of rows. `t0_music` is the collision —
+    # 32,544 of 41,601 rows share a key — because the id hashes the sorted PAYLOAD
+    # (`provenance.py:60`) and a scrobble's payload is artist/album/track, while
+    # the play time lives in the envelope as `created`. Every repeat play of one
+    # track therefore lands on one (id, origin_ref). That is by design, not a
+    # defect: `csv_sources.py:100` explains why the scrobble stream splices on
+    # time instead of merging on a key. It does mean phase 3 cannot key that
+    # table this way.
     key_at = [names.index(c) for c in ("id", "origin_ref") if c in names]
     seen: set[tuple] = set()
     duplicate_keys = 0
@@ -184,7 +237,7 @@ def _emit_table(con, parquet, table, out_dir) -> tuple[str, dict]:
         # The hash covers the row's own values and not itself, so it is stable
         # under re-publish. The rendered text is reused for both, never rebuilt.
         body = ", ".join(_sql_literal(v) for v in r)
-        h = _row_hash(body)
+        h = _row_hash(shape, body)
         digest += h
         tup = f"({body}, {h})"
         if key_at:
@@ -204,9 +257,10 @@ def _emit_table(con, parquet, table, out_dir) -> tuple[str, dict]:
         lines.append(header + ",\n".join(batch) + ";")
 
     (out_dir / f"{table}.sql").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return "\n".join(ddl), {
+    return ddl_text, {
         "rows": len(rows),
         "digest": digest,
+        "shape": shape,
         "key": [names[i] for i in key_at],
         "duplicate_keys": duplicate_keys,
     }
@@ -315,7 +369,11 @@ def _emit_vectors(con, out, *, partial: bool) -> dict:
 IMPORT_SH = r"""#!/bin/sh
 # Load this bundle into D1, making the database MATCH it exactly.
 #
-# Usage: [WRANGLER="npx wrangler"] ./import.sh <d1-database-name>
+# Usage: [WRANGLER="npx wrangler"] [EXO_D1_LOAD=full] ./import.sh <d1-database-name>
+#
+# It asks D1 what it already holds and rewrites only the tables that differ
+# (ADR-0026 phase 2). `EXO_D1_LOAD=full` turns that off and rewrites everything,
+# which is the rollback: no revert, no deploy, one environment variable.
 #
 # A full bundle reconciles first: any table in D1 not in served-tables.txt is
 # dropped. A partial one drops nothing — see bundle-scope.txt.
@@ -351,8 +409,93 @@ case "$SCOPE" in
 esac
 
 LIVE="$(mktemp)"
-ACTUAL=""; MISMATCH=""
-trap 'rm -f "$LIVE" "$ACTUAL" "$MISMATCH"' EXIT
+PROBE="$(mktemp)"
+RELOAD="$(mktemp)"
+ACTUAL=""; MISMATCH=""; REPAIR="$(mktemp)"
+trap 'rm -f "$LIVE" "$PROBE" "$RELOAD" "$REPAIR" "$ACTUAL" "$MISMATCH"' EXIT
+
+# ── what D1 already matches ────────────────────────────────────────────────────
+# The load's entire cost is re-inserting rows that did not move. On 2026-09-01 a
+# nightly wrote 128,275 rows to change about sixty, against a free budget of
+# 100,000 a day. So before writing anything, ask D1 what it holds and leave the
+# tables that already agree alone (ADR-0026 phase 2).
+#
+# This is a SKIP, not a merge. A table is either rewritten exactly as it always
+# was — DROP, CREATE, DELETE, INSERT, the same files byte for byte — or not
+# touched at all. Nothing is patched onto anything, which is why the revocation
+# guarantee does not move: a held row changes its table's digest, the table stops
+# matching, and it is rewritten without that row.
+#
+# It reads BEFORE it writes, and that is not a preference. D1 reads back stale
+# for seconds after a bulk load — on 2026-08-19 six tables verified as EMPTY and
+# five had been full the whole time — so a read taken between two writes cannot
+# be trusted to decide anything. This one is taken before the run has written a
+# single byte, including before the reconcile's DROPs.
+LOAD="${EXO_D1_LOAD:-diff}"
+case "$LOAD" in
+  diff|full) ;;
+  *) echo "import.sh: EXO_D1_LOAD='$LOAD' is neither 'diff' nor 'full' — refusing." >&2
+     exit 1 ;;
+esac
+
+echo "== asking $DB what it already matches =="
+SKIPPED=0
+PROBED=no
+if [ "$LOAD" = "full" ]; then
+  echo "  EXO_D1_LOAD=full — rewriting every table without asking"
+elif $WRANGLER d1 execute "$DB" --remote --json \
+       --command "$(cat "$HERE/verify.sql")" > "$PROBE" 2>&1; then
+  PROBED=yes
+else
+  # Fail closed. An unreadable base is not a matching base, so every table
+  # reloads and the run costs what it always did. A brand new database lands
+  # here by design: verify.sql names every served table, and a scalar subquery
+  # over a table that does not exist fails the whole query.
+  echo "  could not read the current state — rewriting every table. wrangler said:"
+  sed 's/^/    /' "$PROBE"
+fi
+
+: > "$RELOAD"
+# expected-counts.txt is `table|rows|digest`; the probe returns
+# "<table>": "<rows>|<digest>". Same two files the verify step reads, asked
+# before the load instead of after it.
+while IFS="|" read -r t want_n want_h; do
+  [ -n "$t" ] || continue
+  # A table the bundle says is EMPTY is never skipped. Its digest is 0 whatever
+  # shape it has, so a column or index change on an empty table would otherwise
+  # survive forever — the `first_seen` scar arriving from the other direction.
+  # It costs nothing to be strict here: re-creating an empty table writes a
+  # handful of rows (the whole 34-table DROP/CREATE pass bills 120).
+  if [ "$PROBED" = yes ] && [ "$want_n" -gt 0 ]; then
+    got=$(sed -n "s/.*\"$t\" *: *\"\([0-9|]*\)\".*/\1/p" "$PROBE" | head -1)
+    got_n=${got%%|*}
+    got_h=${got##*|}
+    if [ -z "$got" ]; then
+      why="absent"
+    elif [ "$got_n" != "$want_n" ]; then
+      why="has $got_n rows, bundle has $want_n"
+    elif [ "$got_h" != "$want_h" ]; then
+      # Same count, different content. The digest is the only thing that can see
+      # this, and it also carries the table's SHAPE — so a changed column or a
+      # changed index lands here too, and gets its DROP/CREATE.
+      why="same row count, different content"
+    else
+      SKIPPED=$(( SKIPPED + 1 ))
+      continue
+    fi
+    echo "  reload $t  ($why)"
+  fi
+  echo "$t" >> "$RELOAD"
+done < "$HERE/expected-counts.txt"
+
+# `|| true`: grep -c exits 1 on no match, and under `set -e` that ends the run.
+TO_LOAD=$(grep -c . "$RELOAD" || true)
+if [ "$SKIPPED" -gt 0 ]; then
+  echo "  $SKIPPED table(s) already match this bundle — not writing them"
+fi
+if [ "$TO_LOAD" -eq 0 ]; then
+  echo "  nothing to load: every served table already matches"
+fi
 
 if [ "$SCOPE" = "partial" ]; then
   # A scoped run recomputed some zones and knows nothing about the rest. Its
@@ -452,14 +595,19 @@ apply_file() {
   WRITTEN=$(( WRITTEN + ${n:-0} ))
 }
 
-echo "== schema =="
-# Through apply_file like every other write. It used to be a bare wrangler call,
-# which meant the one statement that must land before any data had no busy-queue
-# handling and no place in the meter — a D1 still draining the previous import
-# failed the whole run here rather than waiting the five seconds it needed.
-apply_file "$HERE/schema.sql"
-
-echo "== data =="
+echo "== loading $TO_LOAD table(s) =="
+# Each table brings its own DDL. `schema.sql` is the whole bundle's schema in one
+# file and applying it would DROP all thirty-four, which is exactly what a load
+# that skips most of them must not do — so the DDL ships per table in ddl/ and
+# each one is concatenated in front of its own data. schema.sql stays in the
+# bundle for the worker's test harnesses (worker/test/harness.mjs) and as the
+# readable record of the shape; the import no longer reads it.
+#
+# DDL immediately before its own INSERTs, rather than all the DDL first, and that
+# is better than what it replaces: a batch that fails now leaves the tables it
+# did not reach untouched, where a separate schema pass had already dropped every
+# one of them.
+#
 # Batched, not one call per table. Each `wrangler d1 execute` spawns node and
 # pays a full round trip, so 18 tables meant 18 startups against remote D1 —
 # minutes of the deploy were process launches. Files are concatenated up to a
@@ -470,15 +618,25 @@ BUDGET=4000000
 flush() {
   [ -s "$BATCH" ] || return 0
   echo "  applying batch ($(wc -c < "$BATCH" | tr -d ' ') bytes)"
-  apply_file "$BATCH"
+  # `< /dev/null` because the caller's `while read` is reading $RELOAD on stdin
+  # and wrangler would otherwise eat the rest of the table list.
+  apply_file "$BATCH" < /dev/null
   : > "$BATCH"
 }
-for f in "$HERE"/data/*.sql; do
-  sz=$(wc -c < "$f" | tr -d " ")
+while IFS= read -r t; do
+  [ -n "$t" ] || continue
+  d="$HERE/ddl/$t.sql"
+  f="$HERE/data/$t.sql"
+  [ -f "$d" ] && [ -f "$f" ] || {
+    echo "import.sh: $t is in expected-counts.txt but its ddl/ or data/ file is" >&2
+    echo "  missing from the bundle. That is a broken bundle, not a load to retry." >&2
+    exit 1
+  }
+  sz=$(( $(wc -c < "$d" | tr -d " ") + $(wc -c < "$f" | tr -d " ") ))
   cur=$(wc -c < "$BATCH" | tr -d " ")
   if [ "$cur" -gt 0 ] && [ $((cur + sz)) -gt "$BUDGET" ]; then flush; fi
-  cat "$f" >> "$BATCH"
-done
+  cat "$d" "$f" >> "$BATCH"
+done < "$RELOAD"
 flush
 rm -f "$BATCH"
 
@@ -497,7 +655,7 @@ rm -f "$BATCH"
 echo "== verifying rows and digest =="
 ACTUAL="$(mktemp)"
 MISMATCH="$(mktemp)"
-trap 'rm -f "$LIVE" "$ACTUAL" "$MISMATCH"' EXIT
+trap 'rm -f "$LIVE" "$PROBE" "$RELOAD" "$REPAIR" "$ACTUAL" "$MISMATCH"' EXIT
 
 read_counts() {
   # --command, NOT --file. `--file` is the bulk IMPORT path: it uploads the SQL
@@ -561,8 +719,19 @@ if [ -s "$MISMATCH" ]; then
     echo "  reapplying them one file at a time (attempt $attempt of 3)"
     while IFS="|" read -r t want got; do
       [ -f "$HERE/data/$t.sql" ] || { echo "    $t: no data file in the bundle" >&2; exit 1; }
-      echo "    reapplying data/$t.sql"
-      apply_file "$HERE/data/$t.sql" < /dev/null
+      # DDL as well as data, and it matters more now than it used to. A table
+      # that got here after being SKIPPED was never re-created this run, so its
+      # shape is whatever some earlier run left — and ADR-0026 §3 is explicit
+      # that drifted state is repaired by rewriting, not by patching on top of
+      # something unknown. A DROP/CREATE costs a handful of writes.
+      if [ -f "$HERE/ddl/$t.sql" ]; then
+        echo "    reapplying ddl/$t.sql and data/$t.sql"
+        cat "$HERE/ddl/$t.sql" "$HERE/data/$t.sql" > "$REPAIR"
+        apply_file "$REPAIR" < /dev/null
+      else
+        echo "    reapplying data/$t.sql"
+        apply_file "$HERE/data/$t.sql" < /dev/null
+      fi
     done < "$MISMATCH"
     # Long enough to outlast the stale read, short enough that three rounds
     # still fit inside the job's timeout. Overridable ONLY so this path can be
@@ -587,9 +756,10 @@ else
 fi
 
 # What the load cost at the meter D1 actually bills. Printed always, because a
-# number nobody sees is a number nobody acts on: this load is a full rewrite, so
-# it spends the corpus every night whatever the delta was (ADR-0026).
-echo "== done: $DB now matches this bundle — $WRITTEN rows written =="
+# number nobody sees is a number nobody acts on — and now it is the number that
+# says whether the skip is working: a night whose delta was sixty rows should
+# report hundreds, not 87,419.
+echo "== done: $DB now matches this bundle — $WRITTEN rows written, $SKIPPED table(s) left alone =="
 """
 
 
@@ -704,6 +874,10 @@ def run() -> int:
     if out.exists():
         shutil.rmtree(out)
     (out / "data").mkdir(parents=True)
+    # One DDL file per table, beside the whole-bundle schema.sql. The import
+    # re-creates only the tables it is about to rewrite (ADR-0026 phase 2), and
+    # it cannot do that from a single file that drops all thirty-four.
+    (out / "ddl").mkdir()
 
     con = duckdb.connect(":memory:")
     try:
@@ -718,7 +892,8 @@ def run() -> int:
             # copy from last night over whatever a lane loaded an hour ago.
             if scope == "partial" and p.stem not in rebuilt:
                 continue
-            ddl, info = _emit_table(con, p, p.stem, out / "data")
+            ddl, info = _emit_table(con, p, p.stem, out / "data",
+                                    ddl_dir=out / "ddl")
             schema.append(ddl)
             tables[p.stem] = info
             # The duplicate count is reported, not enforced. ADR-0026 §1 keys a
@@ -786,6 +961,11 @@ def run() -> int:
             # What a diff would key on, and whether it could (ADR-0026 §1).
             "d1_keys": {t: {"key": i["key"], "duplicate_keys": i["duplicate_keys"]}
                         for t, i in tables.items()},
+            # The DDL fingerprint every row's hash carries. Recorded so a run that
+            # reloaded a table can be told apart from one that skipped it: two
+            # bundles with the same shape and the same digest describe the same
+            # table, and that is the whole basis of the skip.
+            "d1_shapes": {t: i["shape"] for t, i in tables.items()},
             "vectors": vinfo,
             "cosine": "vectors are unit-norm; similarity = dot product",
             "scope": scope,

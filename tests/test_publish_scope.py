@@ -134,7 +134,20 @@ done
 case "$*" in
   # Every --file call is a write, and wrangler reports what it cost. 7 is
   # arbitrary; what matters is that the meter sums it rather than losing it.
-  *--file*) printf '%s\n' '{"meta":{"rows_written":7}}' ;;
+  #
+  # The batch is a temp file, so its NAME says nothing about what was in it —
+  # append the contents where a test can read them. This is how the DDL is
+  # checked now that it travels in front of its own data instead of as a file
+  # called schema.sql.
+  *--file*)
+    prev=""
+    for a in "$@"; do
+      if [ "$prev" = "--file" ] && [ -n "${WRANGLER_SQL:-}" ]; then
+        cat "$a" >> "$WRANGLER_SQL"
+      fi
+      prev="$a"
+    done
+    printf '%s\n' '{"meta":{"rows_written":7}}' ;;
   # verify.sql returns one string per table, "<rows>|<digest>". Single-quoted
   # JSON with the digest spliced in: _STUB is not a raw string, so a backslash
   # here reaches the shell as a bare quote and the pipe becomes a pipeline.
@@ -148,9 +161,17 @@ exit 0
 
 def _runnable_bundle(tmp_path, scope, tables, digest=0):
     out = _bundle(tmp_path, scope, tables, digest)
-    (out / "schema.sql").write_text("-- schema\n", encoding="utf-8")
+    (out / "ddl").mkdir(exist_ok=True)
+    ddl = ""
     for t in tables:
+        one = f'DROP TABLE IF EXISTS "{t}";\nCREATE TABLE "{t}" ("id" TEXT);\n'
+        (out / "ddl" / f"{t}.sql").write_text(one, encoding="utf-8")
         (out / "data" / f"{t}.sql").write_text(f'DELETE FROM "{t}";\n', encoding="utf-8")
+        ddl += one
+    # Still whole, still shipped: the worker's test harnesses load it. The import
+    # reads ddl/<table>.sql instead, because applying this file would DROP every
+    # table and a load that skips most of them must not.
+    (out / "schema.sql").write_text(ddl, encoding="utf-8")
     stub = tmp_path / "wrangler"
     stub.write_text(_STUB, encoding="utf-8")
     stub.chmod(0o755)
@@ -158,13 +179,31 @@ def _runnable_bundle(tmp_path, scope, tables, digest=0):
 
 
 def _run_import(out, log, extra_env=None):
+    """Run the bundle's own import.sh against the stub.
+
+    `EXO_D1_LOAD=full` by default, and deliberately. These tests are about scope,
+    the reconcile and the refusals — none of which phase 2 changes — and a stub
+    that answers the pre-load probe and the post-load read-back with the same
+    canned string cannot model a load that changed anything. Phase 2's own tests
+    run the real script against a real SQLite database instead
+    (`tests/test_load_is_a_diff.py`); pass EXO_D1_LOAD through extra_env to reach
+    the skip path from here.
+    """
     import os
     import subprocess
     env = {**os.environ, "WRANGLER": str(out.parent / "wrangler"),
-           "WRANGLER_LOG": str(log), "PATH": f"{out.parent}:{os.environ['PATH']}"}
+           "WRANGLER_LOG": str(log), "WRANGLER_SQL": str(out.parent / "applied.sql"),
+           "EXO_D1_LOAD": "full",
+           "PATH": f"{out.parent}:{os.environ['PATH']}"}
     env.update(extra_env or {})
     return subprocess.run(["sh", str(out / "import.sh"), "warehouse"],
                           capture_output=True, text=True, env=env, timeout=120)
+
+
+def _applied(out):
+    """Every statement the stub was handed, in order."""
+    f = out.parent / "applied.sql"
+    return f.read_text(encoding="utf-8") if f.exists() else ""
 
 
 def test_a_partial_import_drops_nothing(tmp_path):
@@ -180,7 +219,8 @@ def test_a_partial_import_drops_nothing(tmp_path):
 def test_a_partial_import_still_loads_its_own_table(tmp_path):
     out, log = _runnable_bundle(tmp_path, "partial", ["t0_music"])
     _run_import(out, log)
-    assert "schema.sql" in log.read_text()
+    assert 'CREATE TABLE "t0_music"' in _applied(out)
+    assert 'DELETE FROM "t0_music"' in _applied(out)
 
 
 def test_a_full_import_does_reach_the_drop(tmp_path):
@@ -261,12 +301,14 @@ def test_a_full_run_still_skips_a_kind_that_was_never_built(tmp_path, monkeypatc
 def test_the_import_reports_the_rows_it_wrote(tmp_path):
     # D1 bills rows written and wrangler reports them per call; this script used
     # to throw that number away on success, so the cost of a night was knowable
-    # only by arithmetic. Three writes at 7 each: schema, then one batch, and
-    # the reconcile's DROP is a --command and not counted.
+    # only by arithmetic. One write at 7: both tables fit in one batch, the DDL
+    # now travels inside it rather than as a call of its own, and the reconcile's
+    # DROP is a --command and not counted. That the meter SUMS across batches is
+    # proved against a real database in tests/test_load_is_a_diff.py.
     out, log = _runnable_bundle(tmp_path, "full", ["t0_music", "t1_notes"])
     proc = _run_import(out, log)
     assert proc.returncode == 0, proc.stderr
-    assert "14 rows written" in proc.stdout, proc.stdout
+    assert "7 rows written" in proc.stdout, proc.stdout
 
 
 def test_a_digest_mismatch_is_caught_when_the_count_is_right(tmp_path):
@@ -289,10 +331,16 @@ def test_a_matching_digest_passes_without_repair(tmp_path):
     assert "reapplying" not in proc.stdout
 
 
-def test_the_schema_goes_through_the_busy_queue_handler(tmp_path):
+def test_the_ddl_goes_through_the_busy_queue_handler(tmp_path):
     # It used to be a bare wrangler call: no retry when D1 was still draining
     # the previous import, and no place in the meter. The count above is the
     # proof it is metered; this is the proof it is not skipped.
+    #
+    # It now rides in the same batch as its own table's data, so "it went through
+    # apply_file" and "the CREATE reached D1" are the same assertion — there is
+    # only one path to D1 left, and the DDL is on it.
     out, log = _runnable_bundle(tmp_path, "full", ["t0_music"])
-    _run_import(out, log)
-    assert "schema.sql" in log.read_text()
+    proc = _run_import(out, log)
+    assert 'CREATE TABLE "t0_music"' in _applied(out)
+    assert "applying batch" in proc.stdout
+    assert "rows written" in proc.stdout, "and it is counted"
