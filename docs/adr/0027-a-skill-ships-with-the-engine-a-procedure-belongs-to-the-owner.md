@@ -113,6 +113,9 @@ encode how to *read* this surface, and nothing about who is behind it.
   this is the imperative kind of text (ADR-0007). A file copied into a client
   takes no argument at all.
 
+  *Amended 2026-09-09 (ADR-0028).* The injection threat is accepted; the
+  rejection stands on the simpler ground that a file needs no tool to fetch it.
+
 - **Leave it in the tool descriptions.** They carry the one-sentence version
   already. Sequence, dating and what-to-say-when-empty do not fit in a
   description, and a description that grew to hold them would be read on every

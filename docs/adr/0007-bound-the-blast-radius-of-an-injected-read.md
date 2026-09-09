@@ -1,6 +1,14 @@
 # ADR-0007 — Bound the blast radius of an injected read
 
-Status: accepted · 2026-08-18
+Status: superseded by [ADR-0028](0028-the-caller-is-trusted-with-what-is-served.md) · 2026-08-18
+
+*Superseded 2026-09-09 (ADR-0028).* The threat model this record designed
+against — an injected instruction exfiltrating the served corpus — was retired
+by the owner's decision that the caller is trusted with everything the serve
+projection releases. The row caps, the cursor ban and the absence of an `id`
+lookup are gone. What survives: the byte cap, as a context budget rather than a
+control; the token in a header and never the URL; and the call log, as
+telemetry rather than detection. The text below is left as it was argued.
 
 ## Context
 

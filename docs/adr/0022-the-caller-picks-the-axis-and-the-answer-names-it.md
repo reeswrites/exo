@@ -27,6 +27,10 @@ sorted by recency are the *last* twenty. ADR-0007's caps guarantee that
 truncation is frequent, and ADR-0013 §2 makes conveying our own shape to the
 agent our job — this is exactly that, and it was missing.
 
+*Amended 2026-09-09 (ADR-0028).* The caps are gone but the byte budget and the
+page size still bound every answer, so `order` is as necessary on a page as it
+was on a capped list.
+
 **Two sorts were not over a measured fact after all.** `verdicts` ordered by
 `created DESC`; nothing sets `created` on that zone, so every row was NULL, the
 sort fell through to `id` — a content hash — and ten opinions came back in hash

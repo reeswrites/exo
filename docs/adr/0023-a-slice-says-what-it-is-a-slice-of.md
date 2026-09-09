@@ -105,6 +105,9 @@ goal; ADR-0007's caps are untouched and there is still no cursor. A hundred
 rows off two thousand artists is just as much a slice as twenty was. The fix is
 that it now says so.
 
+*Amended 2026-09-09 (ADR-0028).* The caps are gone and `offset` exists; a page
+is still a slice, and `scope` still says of what.
+
 It also does not fix the genre buckets. Six coarse values is a fact about a
 spreadsheet in an instance, and the engine has no business inventing a taxonomy
 over someone's record (ADR-0014). What the engine owes is that the coarseness be

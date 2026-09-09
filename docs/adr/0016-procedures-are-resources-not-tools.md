@@ -28,6 +28,10 @@ instruction choosing what to ask for. A resource read takes a URI and nothing
 else. For the one zone whose output is imperative, that difference is the whole
 budget.
 
+*Amended 2026-09-09 (ADR-0028).* The injection threat is accepted rather than
+designed against; procedures stay resources because a document with a stable
+identity is a resource, which was the first argument and is sufficient alone.
+
 ## Decision
 
 **Procedures live in `t1_procedure` and are published as MCP resources at

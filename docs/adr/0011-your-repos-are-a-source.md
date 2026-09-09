@@ -82,6 +82,9 @@ would have traded a stated limit for a hidden one.
 The four new tools are the fourth cluster on the read surface after notes,
 consumption and events. They inherit ADR-0007's caps unchanged.
 
+*Amended 2026-09-09 (ADR-0028).* The row caps are gone; the four tools now
+take `limit` and `offset` like every other list tool, under the byte budget.
+
 Staleness is now two-legged. The laptop rescans nightly before the rebuild, so
 the laptop-published copy is a day old at worst. The cloud leg sees only what
 `push-raw.sh` last uploaded, so a stale tarball means the cloud publishes stale —

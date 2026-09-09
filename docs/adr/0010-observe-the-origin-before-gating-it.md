@@ -1,6 +1,6 @@
 # ADR-0010 — Observe the origin before gating it
 
-Status: accepted · 2026-08-19
+Status: accepted · 2026-08-19 · phase 2 retired 2026-09-09 (ADR-0028)
 
 ## Context
 
@@ -42,6 +42,12 @@ asked" without "by whom" cannot distinguish a normal week from a compromise.
 *Phase 2 — gate, deferred.* An allowlist, in whatever form the observed data
 supports, checked before the token compare so that a leaked token from off-net is
 dead. Not written until the data exists to write it from.
+
+*Retired 2026-09-09 (ADR-0028).* Phase 2 will not be written. It was defence
+in depth for a threat model the owner has since decided to accept, and the
+data phase 1 collects now sizes nothing. Phase 1 stays, as telemetry: the
+tables answer which places call and how often, not whether one of them is an
+attacker.
 
 Two properties of phase 1 are load-bearing rather than incidental:
 

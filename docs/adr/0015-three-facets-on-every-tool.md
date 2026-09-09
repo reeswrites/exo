@@ -122,6 +122,10 @@ and it is the same trade as ADR-0007: a tool is an exposure decision, and being
 made to say what class of evidence it exposes is the cheapest possible version
 of that.
 
+*Amended 2026-09-09 (ADR-0028).* A tool is no longer an exposure decision in
+ADR-0007's sense; the three declarations stand on ADR-0013's grounds, as an
+honest account of what a tool answers, not as a gate on what it reveals.
+
 What this does NOT settle: whether the facets should reach clients — the brief
 is a plausible home for the class vocabulary, since ADR-0013 makes an honest
 account of our own shape a standing duty, and a caller that knew `derived` from

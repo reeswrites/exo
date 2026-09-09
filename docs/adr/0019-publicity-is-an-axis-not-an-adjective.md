@@ -177,6 +177,11 @@ window, which does not care who may read the rows.
 
 **Raised, never removed, and never unaudited** — see the first consequence.
 
+*Retired 2026-09-09 (ADR-0028).* The row cap no longer exists at any grade,
+and `offset` is accepted everywhere. The grade now stamps an answer and sizes
+nothing. `MAX_BYTES` stays, for the reason the paragraph above gives. §1–§4
+and §7 stand.
+
 ### 6. ADR-0007 §3 is amended, not loosened
 
 It currently reads:
@@ -187,6 +192,9 @@ It currently reads:
 Amended: *…no pagination cursor that can walk the full set **of material that is
 not already public**.* The threat model is unchanged; it is stated precisely
 about the material it was always about.
+
+*Retired 2026-09-09 (ADR-0028).* ADR-0007 is superseded and the cursor ban is
+gone for every grade, so there is nothing left for this clause to amend.
 
 ### 7. The grade reaches the answer
 

@@ -109,6 +109,12 @@ One addition: `wh_audit` and `wh_callers` record **which door** — header or
 grant, and which client id for a grant. ADR-0010 extended the log to answer *by
 whom*; two doors make that answer ambiguous unless the log says which one opened.
 
+*Amended 2026-09-09 (ADR-0028).* The caps are gone and the grades size
+nothing; what remains identical across both doors is the byte budget and the
+stamp. The door column stays, as telemetry — the log records which door opened
+so the owner can see which clients they actually use, not so a compromise can
+be told from a normal week.
+
 ### 5. Fail closed on the credential, open on the feature
 
 ADR-0020 drew this distinction for the tool list and it applies here with the
