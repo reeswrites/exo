@@ -118,7 +118,8 @@ the restore path that gets tested is git.
 The filtered copy of the record that is allowed to leave this machine — and the
 only thing a remote reader ever sees. Not a view or a permission: a physically
 separate set of files containing only publishable rows. What is held is *absent*,
-not merely unreturned, so no bug or injected instruction downstream can reach it.
+not merely unreturned, so nothing downstream — no tool, no bug, no question — can
+reach it.
 
 ### serve / hold
 The two decisions available for anything publishable. **Serve** means a remote
@@ -137,20 +138,22 @@ frontmatter slug the site actually resolves permalinks with, never from a filena
 ### publicity
 How public a served zone already is, independent of whether it may be served at
 all (ADR-0019). `serve` answers *may a reader see this row*; publicity answers
-*does a reader seeing all of them cost anything*, and for a blog the answer is
-no. Three grades — **published** (a URL you own, intending readers), **profile**
-(readable by anyone who visits an account you own; nobody has), **private** —
-declared by the instance, absent meaning private.
+*is this row already somewhere a reader could be sent*, and for a blog the answer
+is yes. Three grades — **published** (a URL you own, intending readers),
+**profile** (readable by anyone who visits an account you own; nobody has),
+**private** — declared by the instance, absent meaning private.
 
-It sizes the row cap, and more usefully it tells a reader which answers are
-quotable: a published row can be linked, a private one is the owner's own
-material handed back to them. A zone is as public as its least public row, a tool
-as its least public zone.
+It stamps every answer, and that is its whole job: it tells a reader which
+answers are quotable — a published row can be linked, a private one is the
+owner's own material handed back to them. It sizes nothing (ADR-0028); the one
+ceiling on an answer is a byte budget for the reader's context, the same at
+every grade. A zone is as public as its least public row, a tool as its least
+public zone.
 
 The caveat it turns on: **already-public is not already-collected.** A public
 Letterboxd is public one film at a time; nobody has joined a year of it to a
-Goodreads shelf and a commit history. Publicity lowers the blast radius of a row
-and not of the join, so grades raise a ceiling rather than remove one.
+Goodreads shelf and a commit history. The grade is a claim about a row, and a
+reader quoting a join onward should know the join is not what was published.
 
 ### the two axes
 Publication requires **both** an organisational and a semantic yes.
@@ -171,10 +174,12 @@ also compares text against everything held, and drops what reproduces it.
 Filing is not containment.
 
 ### read surface
-The remote end of publication: a fixed set of named questions an assistant may
-ask of the serve projection, and nothing else. Read-only by construction, not by
-permission — there is no write path to be revoked. Its shape is the boundary:
-what it cannot ask, it cannot reach.
+The remote end of publication: a vocabulary of named questions an assistant may
+ask of the serve projection (ADR-0013) — each one a fact about the record, none
+of them a query language. Read-only by construction, not by permission — there
+is no write path to be revoked. It is bounded by the serve projection, not by
+its own shape: a question, however phrased, sees only what was published
+(ADR-0028).
 
 ### the brief
 The standing context a reader is handed before it asks anything — who you are,

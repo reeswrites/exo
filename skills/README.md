@@ -94,10 +94,10 @@ Before opening a pull request, check every call in the file against it:
 - **Every parameter is in that tool's `schema.properties`.** An unknown key is
   dropped in silence, which is worse than an error: the answer comes back and
   reads as though the filter applied.
-- **You have not assumed paging.** There is no cursor and no caller-set limit
-  anywhere on this surface (ADR-0007). The row cap follows how public the answer
-  is (ADR-0019). A skill that pages is a skill that quietly reads a truncation
-  as a complete set.
+- **You have paged honestly.** Every list tool takes `limit` and `offset` and
+  answers with `returned_count`, `offset` and `has_more` (ADR-0028). A skill may
+  page; it must read `has_more`, and it must never treat one page as the whole
+  set — a truncation read as a complete set is the quiet failure here.
 - **You have not restated something the tool already returns.** Several tools
   carry their own caveat notes and their own scales. Tell the reader to quote
   what came back — a copy in a skill file drifts from the source and there is

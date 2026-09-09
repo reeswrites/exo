@@ -70,8 +70,10 @@
   "zone_exposure": {
     "_doc": [
       "The publicity axis (ADR-0019). INDEPENDENT of serve/hold above: this",
-      "says nothing about whether a row may leave, only about whether a",
-      "stranger holding ALL of them costs anything.",
+      "says nothing about whether a row may leave, only about whether it is",
+      "already somewhere a reader could be sent. It STAMPS every answer — a",
+      "published row is quotable with its URL, a private one is your own",
+      "material handed back — and sizes nothing (ADR-0028).",
       "",
       "  published  a URL you own, intending readers — a post, a review",
       "  profile    readable by anyone who visits an account you own; nobody has",
@@ -82,8 +84,8 @@
       "",
       "A grade is a claim about the outside world, and the outside world does",
       "not notify this file. Setting an account private is a line to change",
-      "here. When unsure, leave it out: the cost of `private` is twenty rows,",
-      "and the cost of the other error is the corpus.",
+      "here. When unsure, leave it out: `private` costs only a stamp that tells",
+      "a reader not to quote onward; the other error tells it to.",
       "",
       "Two rules bite more often than they look. A zone holding rows of",
       "different grades takes the LEAST public of them — your public repos and",

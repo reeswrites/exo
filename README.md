@@ -78,9 +78,9 @@ Machine output never becomes machine input.
 
 **The surface** publishes a *physically separate* copy containing only rows you
 declared publishable. Held material is absent from the published files, not
-filtered at read time, so no bug downstream and no injected instruction can
-reach it. The policy is fail-closed: an undeclared zone fails the build rather
-than defaulting either way.
+filtered at read time, so nothing downstream — no tool, no bug, no question
+however phrased — can reach it. The policy is fail-closed: an undeclared zone
+fails the build rather than defaulting either way.
 
 **The surface is also modular.** An instance offers a subset of the engine's
 tools, resolved when you publish (ADR-0020). A tool whose zones you hold retires
@@ -210,7 +210,7 @@ ones:
 | [0001](docs/adr/0001-duckdb-catalog-over-tier-native-files.md) | a DuckDB catalog over tier-native files, and the wall |
 | [0005](docs/adr/0005-split-the-etl-laptop-ingests-cloud-rebuilds.md) | split the ETL: the laptop ingests, the cloud rebuilds |
 | [0006](docs/adr/0006-the-remote-read-surface-is-permanently-read-only.md) | the remote read surface is permanently read-only |
-| [0007](docs/adr/0007-bound-the-blast-radius-of-an-injected-read.md) | bound the blast radius of an injected read |
+| [0007](docs/adr/0007-bound-the-blast-radius-of-an-injected-read.md) | bound the blast radius of an injected read — *superseded by 0028* |
 | [0014](docs/adr/0014-the-code-is-public-the-instance-is-private.md) | the code is public, the instance is private |
 | [0016](docs/adr/0016-procedures-are-resources-not-tools.md) | a procedure is a resource, not a tool |
 | [0017](docs/adr/0017-a-note-source-is-an-adapter.md) | a note source is an adapter, and the note file is the contract |
@@ -219,6 +219,7 @@ ones:
 | [0020](docs/adr/0020-the-surface-is-modular-and-a-peer-is-not-a-competitor.md) | the surface is modular, and a peer is not a competitor |
 | [0024](docs/adr/0024-a-denominator-is-a-source.md) | a denominator is a source, not a calculation |
 | [0027](docs/adr/0027-a-skill-ships-with-the-engine-a-procedure-belongs-to-the-owner.md) | a skill ships with the engine; a procedure belongs to the owner |
+| [0028](docs/adr/0028-the-caller-is-trusted-with-what-is-served.md) | the caller is trusted with what is served |
 
 ## Contributing
 

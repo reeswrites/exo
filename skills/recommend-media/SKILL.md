@@ -45,15 +45,16 @@ call to check.
 Two traps in step 2.
 
 **The default order is not a sample.** `ratings` sorts by rating, highest first,
-so a truncated default answer is the **top** of the list. Building a
-recommendation from it and describing it as "recently" is a false statement made
-of true rows. Pass `order:'recent'` and say which you asked for.
+so a default page is the **top** of the list. Building a recommendation from it
+and describing it as "recently" is a false statement made of true rows. Pass
+`order:'recent'` and say which you asked for.
 
-**There is no `limit`, and there is no cursor** (ADR-0007). The row cap is set by
-how public the answer is, not by what you ask for. A `limit:` you pass is
-silently dropped, and you are left believing you saw more than you saw. When an
-answer is too coarse, **ask a narrower question** — a medium, a `min_rating`, a
-`topic` — rather than trying to page.
+**A page is not the set.** `limit` is a page size (default 20, raisable) and
+`offset` starts the next one; every answer says `returned_count`, `offset` and
+`has_more` (ADR-0028). Read `has_more` before you say anything about the whole.
+When an answer is too coarse, **ask a narrower question** — a medium, a
+`min_rating`, a `topic` — before asking for a longer page: the 16KB ceiling
+binds before a long page does, and the narrower question is the one you meant.
 
 ## Route A — from the pile
 
@@ -86,7 +87,7 @@ medium, and it is uneven:
 | music | `releases` already removes what they scrobbled or own and reports how many it removed; `include_heard:true` keeps them. `taste(artist:'X')` asks whether one act is in the record at all | neither answers a specific *track* |
 | tv, anime | `watching` per show, with status and how far through | says nothing about shows never started |
 | books | `backlog(kind:'read'\|'resume')` and `ratings(medium:'books')` | no per-title check outside those |
-| film | **nothing** | `ratings(medium:'films')` is capped and ordered, `reviews` searches by topic. You cannot check whether they saw a given film |
+| film | **nothing** | `ratings(medium:'films')` is a paged list, `reviews` searches by topic; neither takes a title. Walking every page to find one film is possible and not worth it — say you could not check |
 
 So for film especially: propose, and say plainly that you could not check. Do
 not phrase a proposal as though it were screened.
@@ -119,7 +120,7 @@ There is no calibration document for film, books or anime. For those, report the
 number with its scale and do not characterise it as high or low.
 
 `facets` is the rollup that answers "which kinds do they rate highest" where a
-capped page of rows cannot — and it currently covers **beer only**. A mean over
+page of rows cannot — and it currently covers **beer only**. A mean over
 two data points is not a preference; read the count before you report the mean.
 
 ## Do not
@@ -128,7 +129,8 @@ two data points is not a preference; read the count before you report the mean.
   decide what to do about it (ADR-0013). Every ordering it offers is over a
   measured fact — plays, rating, date, count. Attach those facts and leave the
   judgement to the agent, which is exactly what `releases` says of itself.
-- **Do not page.** There is no cursor. Narrow the question.
+- **Do not read one page as the set.** Page with `offset` if you must, read
+  `has_more`, and prefer a narrower question.
 - **Do not substitute general opinion silently.** If the record cannot answer,
   say so, then say you are switching to what you know from outside it.
 

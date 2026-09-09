@@ -3,8 +3,8 @@
 The remote read surface (ADR-0005) runs somewhere on the public internet. What
 it can expose is decided HERE, by physical omission, not by a WHERE clause in a
 tool. A filter applied at query time is a promise; a filter applied at publish
-time means the held rows are simply not on the box, so no injected prompt and no
-tool bug can reach them.
+time means the held rows are simply not on the box, so no question, however
+phrased, and no tool bug can reach them.
 
 Two properties do the work:
 
@@ -34,9 +34,10 @@ from .. import catalog, config, surface, toolzones
 _NOTE_DERIVED = {"t1_notes", "t2_atom", "t2_atom_vec", "t2_note_vec"}
 
 # The publicity axis (ADR-0019). Independent of serve/hold: this says nothing
-# about whether a row may leave, only about whether a stranger holding ALL of
-# them costs anything. Closed vocabulary, ordered least public first, because
-# "least public wins" is the rule at every level.
+# about whether a row may leave, only how public the rows already are, so the
+# stamp on every answer tells a reader what it may do with them (ADR-0028).
+# Closed vocabulary, ordered least public first, because "least public wins"
+# is the rule at every level.
 EXPOSURE_GRADES = ("private", "profile", "published")
 DEFAULT_EXPOSURE = "private"
 
@@ -727,7 +728,9 @@ def run(dry_run: bool = False, only: list[str] | None = None) -> int:
             json.dump({
                 "_doc": "Resolved publicity per served zone (ADR-0019). Absence is "
                         "already applied — every served zone is listed explicitly, so "
-                        "no reader downstream chooses a default of its own.",
+                        "no reader downstream chooses a default of its own. A grade "
+                        "stamps an answer for the reader (linkable, or the owner's own "
+                        "material handed back); it sizes nothing (ADR-0028).",
                 "grades": list(EXPOSURE_GRADES),
                 "zones": exposure,
             }, f, indent=2)

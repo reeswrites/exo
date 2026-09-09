@@ -1,68 +1,65 @@
 /**
- * The tool surface — which is the security boundary (ADR-0007).
+ * The tool surface — fixed, named questions with bounded answers.
  *
- * There is no general-purpose tool here, and there must never be: no raw SQL, no
- * id-lookup loop, no cursor that can walk the full set. Every tool is a fixed,
- * named question with a bounded answer, so adding one is a decision about
- * exposure rather than a feature increment.
+ * There is no general-purpose tool here: no raw SQL, no free-form query. Every
+ * tool is a named question whose answer has a known shape, so a caller learns
+ * the vocabulary once and an answer never needs parsing to be trusted. What is
+ * reachable at all was decided upstream by `exo publish` (ADR-0005): held
+ * material is absent from this database, not filtered here.
  *
- * Caps: at most MAX_ROWS rows AND MAX_BYTES of payload, whichever binds first.
- * The point is not to make exfiltration impossible — an authenticated caller is
- * indistinguishable from an injected one, and a patient one simply loops. The
- * point is to convert "one quiet call takes everything" into "hundreds of calls,
- * visibly", which is only worth anything if wh_audit is actually read.
+ * Every list answer is a PAGE: `limit` rows (DEFAULT_ROWS unless the caller
+ * says otherwise, never more than MAX_ROWS) starting `offset` rows in, and
+ * never more than MAX_BYTES of payload. The byte cap is a context budget — it
+ * bounds how much of the caller's window one answer consumes — and it usually
+ * binds first on wide rows. Every answer says whether there is more
+ * (`has_more`) and where it started (`offset`), so a caller can page or narrow
+ * and never has to guess whether it saw everything (ADR-0028).
  *
  * 16KB, not the 4KB this started at: that number was sized to what a chat turn
- * could hold, and this is a context layer for assistants generally. 16KB returns
- * ~99% of notes whole and still makes a full-corpus pull ~250 logged calls.
+ * could hold, and this is a context layer for assistants generally. 16KB
+ * returns ~99% of notes whole.
  */
 import { search } from "./search.js";
 import { peerFor } from "./surface.js";
 
 /**
- * The row cap follows the publicity axis; the byte cap does not (ADR-0019 §5).
+ * The page. DEFAULT_ROWS is what a caller gets when it says nothing about
+ * size — enough to answer most questions and small enough not to crowd the
+ * context that asked. MAX_ROWS is a sanity bound on `limit`, not a policy:
+ * past it the byte cap is what binds anyway, and a page of five hundred is a
+ * caller that should have narrowed the question or paged with `offset`.
  *
- * They arrived in one sentence and do different jobs. The ROW cap bounds how
- * much of the corpus one call takes — that is ADR-0007's blast radius, and blast
- * radius is what an injected read takes *that it could not otherwise get*. For
- * the blog that quantity is zero: an attacker who wants it fetches the sitemap.
- * The BYTE cap bounds how much of the caller's context one answer eats, which is
- * true regardless of who may read the rows, so it does not move.
- *
- * Raised, never removed, and never unaudited — a public row is not a collected
- * one, and nobody has ever joined a year of public check-ins into a movement
- * pattern before this surface made it one call.
- *
- * In practice MAX_BYTES usually binds first anyway; these ceilings matter for
- * narrow rows — titles, artists, slugs — which is exactly where twenty was most
- * obviously too few.
+ * The BYTE cap does not move for anything. It bounds how much of the caller's
+ * context one answer eats, which is true whatever the rows are and whoever may
+ * read them.
  */
-export const ROW_CAP = { private: 20, profile: 100, published: 200 };
-
-// The floor, and the default for anything ungraded. Kept under its old name
-// because it is load-bearing in tests and in ADR-0007's text.
-export const MAX_ROWS = ROW_CAP.private;
+export const DEFAULT_ROWS = 20;
+export const MAX_ROWS = 500;
 export const MAX_BYTES = 16384;
 
 /**
- * How many rows this call may return: the grade's ceiling, lowered by whatever
- * the caller asked for and by whatever the tool caps itself at.
+ * How many rows this call may return: what the caller asked for, or the
+ * default page, lowered by whatever the tool caps itself at and by MAX_ROWS.
  *
- * `limit` only ever narrows. A caller asking for 500 rows of private material
- * gets twenty, and one asking for five gets five — the parameter exists so an
- * agent can spend less of its context, never so it can spend more of the corpus.
+ * `limit` can raise the page above the default as well as lower it — the
+ * parameter exists so a caller can size the answer to the question. A tool's
+ * `own` ceiling is for tools that spread one answer over several piles
+ * (`ratings` shows a few per medium) and detects THEIR overflow.
  */
-export function pageSize(ctx, own = Infinity) {
-  const ceiling = Math.min(own, ROW_CAP[ctx?.exposure] ?? ROW_CAP.private);
-  const asked = Number.isInteger(ctx?.limit) && ctx.limit > 0 ? ctx.limit : ceiling;
-  return Math.max(1, Math.min(asked, ceiling));
+export function pageSize(ctx, own) {
+  const asked = Number.isInteger(ctx?.limit) && ctx.limit > 0 ? ctx.limit : DEFAULT_ROWS;
+  return Math.max(1, Math.min(own ?? MAX_ROWS, asked, MAX_ROWS));
 }
 
+/** Rows to skip before the first returned: the caller's `offset`, or none. */
+export const skip = (ctx) =>
+  Number.isInteger(ctx?.offset) && ctx.offset > 0 ? ctx.offset : 0;
+
 /**
- * Ask a query for one row PAST the cap.
+ * Ask a query for one row PAST the page.
  *
  * Without it a tool cannot tell "that is all of them" from "there are four
- * hundred more": every SQL tool here bound its LIMIT to MAX_ROWS and then handed
+ * hundred more": every SQL tool here bound its LIMIT to the page and then handed
  * the result to `cap`, so `cap` never saw a row it had to drop and the count it
  * reported was the count it was given. `truncated to 20 of 20` is not a fact
  * about the corpus, and an assistant reading it concluded the shelf was twenty
@@ -70,10 +67,13 @@ export function pageSize(ctx, own = Infinity) {
  *
  * One extra row, thrown away after it has been counted. `cap` recognises it by
  * arithmetic — more rows arrived than fit — so nothing has to be flagged.
+ *
+ * Every `LIMIT ?` on this surface is bound to this and followed by `OFFSET ?`
+ * bound to `skip(ctx)`, and every ORDER BY ends on a unique key — the two
+ * facts that make a page neither repeat nor drop a row between calls.
  */
 export const probe = (ctx, own) => pageSize(ctx, own) + 1;
 
-/** Trim to the caps, and say so, so a client never mistakes truncation for exhaustion. */
 /**
  * The live URL of a published post, as a spreadable fragment.
  *
@@ -84,10 +84,12 @@ export const probe = (ctx, own) => pageSize(ctx, own) + 1;
 export const postUrl = (env, slug) =>
   env.BLOG_URL_TEMPLATE ? { url: env.BLOG_URL_TEMPLATE.replace("{slug}", slug) } : {};
 
+/** Trim to the page and the byte budget, and say so, so a client never mistakes truncation for exhaustion. */
 export function cap(rows, ctx, own) {
   // `own` is a tool's private ceiling — ratings shows five per medium — so it
   // detects ITS overflow rather than the global one.
   const limit = pageSize(ctx, own);
+  const offset = skip(ctx);
   const out = [];
   let bytes = 0;
   let byteBound = false;
@@ -101,6 +103,7 @@ export function cap(rows, ctx, own) {
   // More arrived than fit. Whether that is the probe row or the twenty-first of
   // four hundred, the fact a caller needs is the same: this is not all of it.
   const has_more = rows.length > out.length;
+  const next = offset + out.length;
 
   return {
     rows: out,
@@ -109,9 +112,10 @@ export function cap(rows, ctx, own) {
     // seen everything — and parse it correctly, every time, to avoid answering a
     // question about four hundred books from twenty.
     returned_count: out.length,
+    offset,
     has_more,
     // A single row too large to emit is a different fact from a list too long,
-    // and the generic advice is wrong for it: there is nothing to narrow. Say
+    // and the generic advice is wrong for it: there is nothing to page. Say
     // which happened, so the audit log distinguishes a big answer from a bug.
     ...(has_more
       ? {
@@ -119,8 +123,8 @@ export function cap(rows, ctx, own) {
             out.length === 0 && rows.length === 1
               ? `the one row matched exceeded the ${MAX_BYTES}-byte cap and was withheld — the tool that built it did not budget for its own envelope`
               : byteBound
-                ? `${out.length} rows fit the ${MAX_BYTES}-byte budget and more matched — ask a narrower question`
-                : `showing ${out.length}; more matched — ask a narrower question rather than paging`,
+                ? `${out.length} rows fit the ${MAX_BYTES}-byte budget and more matched — pass offset:${next} for the next page, or ask a narrower question`
+                : `showing ${out.length} from offset ${offset}; more matched — pass offset:${next} for the next page, or ask a narrower question`,
         }
       : {}),
   };
@@ -566,8 +570,8 @@ export const TOOLS = {
         env,
         `SELECT question, state FROM t1_open_thread
          WHERE state IS NULL OR lower(state) NOT IN ('closed','done','dismissed')
-         ORDER BY created DESC, id LIMIT ?`,
-        probe(ctx)
+         ORDER BY created DESC, id LIMIT ? OFFSET ?`,
+        probe(ctx), skip(ctx)
       );
       return cap(rows.map((r) => ({ question: r.question })));
     },
@@ -593,9 +597,9 @@ export const TOOLS = {
       const sort = "CAST(nullif(rating,'') AS REAL) DESC, subject";
       const rows = kind
         ? await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts WHERE kind = ?
-            ORDER BY ${sort}, id LIMIT ?`, kind, probe(ctx))
+            ORDER BY ${sort}, id LIMIT ? OFFSET ?`, kind, probe(ctx), skip(ctx))
         : await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts
-            ORDER BY ${sort}, id LIMIT ?`, probe(ctx));
+            ORDER BY ${sort}, id LIMIT ? OFFSET ?`, probe(ctx), skip(ctx));
       return { ...cap(rows, ctx), order: "rated" };
     },
   },
@@ -646,8 +650,8 @@ export const TOOLS = {
          ${where}
          GROUP BY artist
          ORDER BY ${by.sql}, artist
-         LIMIT ?`,
-        ...binds, probe(ctx)
+         LIMIT ? OFFSET ?`,
+        ...binds, probe(ctx), skip(ctx)
       );
 
       // What the rows were drawn FROM, counted rather than implied (ADR-0023
@@ -722,8 +726,8 @@ export const TOOLS = {
          FROM t1_item
          ${where.length ? "WHERE " + where.join(" AND ") : ""}
          ORDER BY family, due IS NULL, due, created DESC, id
-         LIMIT ?`,
-        ...binds, probe(ctx)
+         LIMIT ? OFFSET ?`,
+        ...binds, probe(ctx), skip(ctx)
       );
 
       // Counts alongside, so "3 rows" is never read as "3 items exist".
@@ -770,8 +774,8 @@ export const TOOLS = {
          LEFT JOIN t1_item i ON i.origin_ref = e.item_id OR i.id = e.item_id
          WHERE (? IS NULL OR lower(COALESCE(i.title, e.title)) LIKE ?)
          ORDER BY COALESCE(e.date, e.ts) DESC, e.id
-         LIMIT ?`,
-        like, like, probe(ctx)
+         LIMIT ? OFFSET ?`,
+        like, like, probe(ctx), skip(ctx)
       );
       return cap(rows.map((r) => ({
         item: r.item, event: r.event,
@@ -830,8 +834,8 @@ export const TOOLS = {
         env,
         `SELECT title, cuisine, time_min, effort, yield_servings, source_url,
                 substr(created,1,10) AS published
-         FROM t1_recipe WHERE ${match} ORDER BY ${RECIPE_ORDER}, id LIMIT ?`,
-        ...binds, probe(ctx)
+         FROM t1_recipe WHERE ${match} ORDER BY ${RECIPE_ORDER}, id LIMIT ? OFFSET ?`,
+        ...binds, probe(ctx), skip(ctx)
       );
       return ordered(cap(rows, ctx), { order: "recent" });
     },
@@ -877,8 +881,8 @@ export const TOOLS = {
         env,
         `SELECT title, slug, description, started, modified, words, state,
                 CAST(julianday('now') - julianday(modified) AS INTEGER) AS days_since_touched
-         FROM t1_draft WHERE ${match} AND ${stale} ORDER BY modified DESC, id LIMIT ?`,
-        ...binds, probe(ctx)
+         FROM t1_draft WHERE ${match} AND ${stale} ORDER BY modified DESC, id LIMIT ? OFFSET ?`,
+        ...binds, probe(ctx), skip(ctx)
       );
       if (!rows.length) {
         return {
@@ -1297,9 +1301,9 @@ export const TOOLS = {
                 CASE WHEN free_min <> free_max THEN 1 END AS price_varies
          FROM ranked WHERE rn <= 4
          ORDER BY start, url
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
         from ?? null, to ?? null, to ?? null,
-        like, like, like, like, free ? 1 : null, probe(ctx)
+        like, like, like, like, free ? 1 : null, probe(ctx), skip(ctx)
       );
       return cap(rows, ctx);
     },
@@ -1391,8 +1395,8 @@ export const TOOLS = {
                 CASE WHEN scene_count > 1 THEN scene_count END AS scenes_hit
          FROM ranked WHERE rn <= ?
          ORDER BY ${by.sql}
-         LIMIT ?`,
-        ...binds, include_heard ? 1 : 0, share, probe(ctx)
+         LIMIT ? OFFSET ?`,
+        ...binds, include_heard ? 1 : 0, share, probe(ctx), skip(ctx)
       );
 
       // The exclusion is the point of this tool, so it is stated rather than
@@ -1476,11 +1480,11 @@ export const TOOLS = {
                 CASE WHEN chars > 320 THEN chars END AS blurb_chars
          FROM ranked WHERE rn <= ?
          ORDER BY ${by.sql}
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
         since ?? null, since ?? null,
         who, who, who,
         like, like, like, like, like,
-        share, probe(ctx)
+        share, probe(ctx), skip(ctx)
       );
 
       // An empty answer is explained, and the two reasons are not the same
@@ -1511,7 +1515,7 @@ export const TOOLS = {
       "What the owner SAYS they like — stated preferences: venues and orgs they rate, things they seek out, things they avoid. Distinct from `taste`, which is revealed behaviour (play counts). When the two disagree, that gap is usually the interesting part.",
     schema: { type: "object", properties: {} },
     async run(env, _args, ctx) {
-      const rows = await q(env, `SELECT kind, key, value FROM t1_taste ORDER BY kind, key, id LIMIT ?`, probe(ctx));
+      const rows = await q(env, `SELECT kind, key, value FROM t1_taste ORDER BY kind, key, id LIMIT ? OFFSET ?`, probe(ctx), skip(ctx));
       return cap(rows, ctx);
     },
   },
@@ -1701,8 +1705,8 @@ export const TOOLS = {
            WHERE ${d.col} IS NOT NULL AND CAST(${d.col} AS REAL) > 0
              AND CAST(${d.col} AS REAL) >= ? ${d.where ?? ""}
            ORDER BY ${by.sql}, id
-           LIMIT ?`,
-          floor, medium ? probe(ctx) : probe(ctx, 5)
+           LIMIT ? OFFSET ?`,
+          floor, medium ? probe(ctx) : probe(ctx, 5), skip(ctx)
         );
         for (const r of rows) out.push({ medium: name, scale: d.scale, ...withMeta(r, d.extra) });
       }
@@ -1813,8 +1817,8 @@ export const TOOLS = {
          GROUP BY grp
          HAVING count(*) >= ?
          ORDER BY ${by_.sql}, grp
-         LIMIT ?`,
-        floor, probe(ctx)
+         LIMIT ? OFFSET ?`,
+        floor, probe(ctx), skip(ctx)
       );
 
       // How much of the medium this breakdown actually covers. Without it a
@@ -1883,10 +1887,10 @@ export const TOOLS = {
          WHERE (? IS NULL OR lower(title) LIKE ? OR lower(review) LIKE ?)
            AND (? IS NULL OR CAST(nullif(rating,'') AS REAL) >= ?)
          ORDER BY ${by.sql}, id
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
         like, like, like,
         min_rating ?? null, min_rating ?? 0,
-        probe(ctx)
+        probe(ctx), skip(ctx)
       );
       return ordered(cap(rows, ctx), by);
     },
@@ -1934,10 +1938,10 @@ export const TOOLS = {
            AND (? IS NULL OR lower(c.title) LIKE ? OR lower(COALESCE(c.creator,'')) LIKE ?
                           OR lower(COALESCE(c.genre,'')) LIKE ?)
          ORDER BY ${by.sql}, c.id
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
         kind ?? null, kind ?? null,
         like, like, like, like,
-        probe(ctx)
+        probe(ctx), skip(ctx)
       );
       // Drop the columns a given kind does not use rather than emitting a wall
       // of nulls — a board game has no genre and a DVD has no thoughts.
@@ -2138,14 +2142,14 @@ export const TOOLS = {
             AND (? IS NULL OR (last_watched IS NOT NULL AND last_watched <= ?
                                AND status <> 'completed'))
           ORDER BY ${by.sql}, id
-          LIMIT ?`,
+          LIMIT ? OFFSET ?`,
         today,
         today, STALL_DAYS,
         today, STALL_DAYS,
         wantStatus, wantStatus,
         wantDeclared, wantDeclared,
         stalled_since ?? null, stalled_since ?? null,
-        probe(ctx)
+        probe(ctx), skip(ctx)
       );
 
       // The population, and the part of it this tool cannot measure (ADR-0023).
@@ -2267,7 +2271,7 @@ export const TOOLS = {
            AND (? IS NULL OR substr(created,1,10) >= ?)
            AND (? IS NULL OR note <> '')
          ORDER BY created DESC, id
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
         like, like, like, like,
         platform ?? null, platform ?? "",
         collection ?? null, collection ?? "",
@@ -2275,7 +2279,7 @@ export const TOOLS = {
         tag ?? null, tag ? `%${tag.toLowerCase()}%` : "",
         since ?? null, since ?? "",
         with_note ? 1 : null,
-        probe(ctx)
+        probe(ctx), skip(ctx)
       );
       const [tot] = await q(env,
         `SELECT count(*) AS n, max(substr(created,1,10)) AS newest,
@@ -2382,11 +2386,11 @@ export const TOOLS = {
              AND (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(book_author,'')) LIKE ?)
              AND (? IS NULL OR substr(date_added,1,10) >= ?)
            ORDER BY ${by.sql}, title, id
-           LIMIT ?`,
+           LIMIT ? OFFSET ?`,
           ...shelves,
           like, like, like,
           since ?? null, since ?? "",
-          probe(ctx)
+          probe(ctx), skip(ctx)
         );
         const [tot] = await q(env,
           `SELECT count(*) AS n, min(substr(date_added,1,10)) AS oldest
@@ -2414,11 +2418,11 @@ export const TOOLS = {
              AND (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?)
              AND (? IS NULL OR substr(created,1,10) >= ?)
            ORDER BY ${by.sql}, title, id
-           LIMIT ?`,
+           LIMIT ? OFFSET ?`,
           ...cols,
           like, like, like,
           since ?? null, since ?? "",
-          probe(ctx)
+          probe(ctx), skip(ctx)
         );
         const [tot] = await q(env,
           `SELECT count(*) AS n FROM t0_raindrop WHERE collection IN (${cols.map(() => "?").join(",")})`,
@@ -2478,8 +2482,8 @@ export const TOOLS = {
                           OR lower(COALESCE(landed, '')) LIKE ?)
            AND (? IS NULL OR turns >= ?)
          ORDER BY last_seen DESC, turns DESC, id
-         LIMIT ?`,
-        like, like, like, like, min_turns ?? null, min_turns ?? 0, probe(ctx)
+         LIMIT ? OFFSET ?`,
+        like, like, like, like, min_turns ?? null, min_turns ?? 0, probe(ctx), skip(ctx)
       );
       return cap(rows, ctx);
     },
@@ -2675,8 +2679,8 @@ export const TOOLS = {
          FROM t1_visits
          WHERE (? IS NULL OR lower(city) = lower(?))
            AND (? IS NULL OR lower(cuisine_1) = lower(?))
-         ORDER BY ${by.sql}, id LIMIT ?`,
-        city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, probe(ctx)
+         ORDER BY ${by.sql}, id LIMIT ? OFFSET ?`,
+        city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, probe(ctx), skip(ctx)
       );
       return ordered(cap(rows, ctx), by);
     },
@@ -2755,10 +2759,10 @@ export const TOOLS = {
                             OR lower(p.languages) LIKE ?)
            AND (? IS NULL OR p.status = ?)
            AND (? IS NULL OR lower(p.grouping) = lower(?))
-         ORDER BY ${by.sql}, p.id LIMIT ?`,
+         ORDER BY ${by.sql}, p.id LIMIT ? OFFSET ?`,
         since,
         like, like, like, like, status ?? null, status ?? null,
-        group ?? null, group ?? null, probe(ctx)
+        group ?? null, group ?? null, probe(ctx), skip(ctx)
       );
       return ordered(cap(rows, ctx), by);
     },
@@ -2789,8 +2793,8 @@ export const TOOLS = {
                   max(substr(c.committed_at,1,10)) AS last
            FROM t1_project_commit c
            WHERE substr(c.committed_at,1,10) BETWEEN ? AND ?
-           GROUP BY c.repo ORDER BY commits DESC, c.repo LIMIT ?`,
-          start, end, probe(ctx)
+           GROUP BY c.repo ORDER BY commits DESC, c.repo LIMIT ? OFFSET ?`,
+          start, end, probe(ctx), skip(ctx)
         );
         return {
           ...cap(rows, ctx),
@@ -2806,8 +2810,8 @@ export const TOOLS = {
          FROM t1_project_commit c
          WHERE (lower(c.repo) = lower(?) OR lower(c.repo) LIKE ?)
            AND substr(c.committed_at,1,10) BETWEEN ? AND ?
-         ORDER BY c.committed_at DESC, c.id LIMIT ?`,
-        repo, like, start, end, probe(ctx)
+         ORDER BY c.committed_at DESC, c.id LIMIT ? OFFSET ?`,
+        repo, like, start, end, probe(ctx), skip(ctx)
       );
       return { ...cap(rows, ctx), window: { from: start, to: end } };
     },
@@ -2840,9 +2844,9 @@ export const TOOLS = {
            AND (? IS NULL OR kind = ?)
          ORDER BY CASE kind WHEN 'context' THEN 0 WHEN 'readme' THEN 1
                             WHEN 'adr' THEN 2 ELSE 3 END, repo, path, id
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
         like, like, like, rlike ? repo : null, repo ?? null, rlike,
-        kind ?? null, kind ?? null, full ? 1 : probe(ctx)
+        kind ?? null, kind ?? null, full ? 1 : probe(ctx), full ? 0 : skip(ctx)
       );
 
       if (full) {
@@ -2895,8 +2899,8 @@ export const TOOLS = {
                   sum(CASE WHEN o.kind = 'uncommitted' THEN 1 ELSE 0 END) AS uncommitted
            FROM t1_project_open o
            WHERE (? IS NULL OR o.kind = ?)
-           GROUP BY o.repo ORDER BY open_items DESC, o.repo LIMIT ?`,
-          kind ?? null, kind ?? null, probe(ctx)
+           GROUP BY o.repo ORDER BY open_items DESC, o.repo LIMIT ? OFFSET ?`,
+          kind ?? null, kind ?? null, probe(ctx), skip(ctx)
         );
         return { ...cap(rows, ctx), note: "where unfinished work sits — ask again with a repo for the items" };
       }
@@ -2909,8 +2913,8 @@ export const TOOLS = {
          WHERE (lower(repo) = lower(?) OR lower(repo) LIKE ?)
            AND (? IS NULL OR kind = ?)
          ORDER BY CASE kind WHEN 'unchecked' THEN 0 WHEN 'marker' THEN 1 ELSE 2 END, path, line, id
-         LIMIT ?`,
-        repo, like, kind ?? null, kind ?? null, probe(ctx)
+         LIMIT ? OFFSET ?`,
+        repo, like, kind ?? null, kind ?? null, probe(ctx), skip(ctx)
       );
       return cap(rows, ctx);
     },

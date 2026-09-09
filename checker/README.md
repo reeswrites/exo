@@ -13,9 +13,9 @@ That is the difference between the lane budget fitting and not (ADR-0015 §3).
 which ADR-0015 §4 refuses to put in the read surface. The rule being kept is not
 "no upstream credential may touch Cloudflare" — it is that no upstream
 credential may sit behind a handler an authenticated caller can reach. A Worker
-with no `fetch` export cannot serve a request at all, so there is nothing to
-inject into. Adding one, for a health check or anything else, removes the only
-reason this is a second Worker.
+with no `fetch` export cannot serve a request at all, so there is no path from
+any caller to the credential. Adding one, for a health check or anything else,
+removes the only reason this is a second Worker.
 
 ## Sources
 
