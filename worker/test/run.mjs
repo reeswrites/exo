@@ -229,10 +229,12 @@ ok(oPlacesRecent.order === "recent" && desc(oPlacesRecent.rows, (r) => day(r.vis
    "places order=recent is where they have actually been eating");
 
 const oVerdicts = await TOOLS.verdicts.run(env, {});
-ok(oVerdicts.order === "rated" && desc(oVerdicts.rows, (r) => num(r.rating)),
+ok(desc(oVerdicts.rows, (r) => num(r.rating)),
    "verdicts ranks by rating — its `created` is NULL on every row, so newest-first was hash order");
 ok(!("order" in (TOOLS.verdicts.schema.properties ?? {})),
    "and it offers no axis its rows cannot answer");
+ok(!("order" in oVerdicts),
+   "and stamps no `order` on the answer — one axis is not a choice (ADR-0022)");
 
 const oCol = await TOOLS.collection.run(env, {});
 ok(oCol.order === "recent" && desc(oCol.rows, (r) => day(r.acquired)),
@@ -245,7 +247,8 @@ ok(oColPlayed.order === "played" && desc(oColPlayed.rows, (r) => num(r.plays)),
    "played ranks the shelf by scrobbles — owning a record and wearing it out are different claims");
 
 const oRecipes = await TOOLS.recipes.run(env, {});
-ok(oRecipes.order === "recent", "recipes no longer sort by the alphabet, which was a fact about nothing");
+ok(!("order" in oRecipes) && desc(oRecipes.rows, (r) => r.published ?? ""),
+   "recipes sort newest first and stamp no `order`, since there is no other axis to pick");
 const firstUndated = oRecipes.rows.findIndex((r) => !r.published);
 ok(firstUndated === -1 || oRecipes.rows.slice(firstUndated).every((r) => !r.published),
    "and the undated seed templates sort behind everything actually written");
@@ -602,8 +605,12 @@ console.log("\n── limit is the caller's, in both directions ──");
   ok(advertised.offset.description ===
        "Rows to skip before the first returned. Pair with limit to page; has_more says whether another page exists.",
      "with the description a caller is told to read");
-  ok(list.result.tools.every((t) => t.inputSchema.properties.offset && t.inputSchema.properties.limit),
-     "every offered tool takes limit and offset");
+  const pagers = list.result.tools.filter((t) => TOOLS[t.name].pages !== false);
+  const singles = list.result.tools.filter((t) => TOOLS[t.name].pages === false);
+  ok(pagers.every((t) => t.inputSchema.properties.offset && t.inputSchema.properties.limit),
+     `every list tool takes limit and offset (${pagers.length})`);
+  ok(singles.length > 0 && singles.every((t) => !t.inputSchema.properties.offset && !t.inputSchema.properties.limit),
+     `a tool that answers with one row advertises neither (${singles.map((t) => t.name).join(", ")})`);
   const call = (args) => post({ jsonrpc: "2.0", id: 5, method: "tools/call",
                                 params: { name: "ratings", arguments: { medium: "beer", ...args } } });
   const viaDoor = JSON.parse((await (await call({ limit: 100, offset: 2 })).json()).result.content[0].text);
@@ -646,12 +653,14 @@ console.log("\n── vector search against the real 16.85MB blob ──");
 corpus.setProbe(0);
 const hits = await TOOLS.whats_relevant.run(env, { topic: "anything" });
 ok(hits.rows.length > 0, `whats_relevant -> ${hits.rows.length} hits`);
-ok(Math.abs(hits.rows[0].score - 1.0) < 0.001, `self-match scores 1.0 (got ${hits.rows[0].score}) — blob alignment holds`);
+ok(Math.abs(hits.rows[0].match_score - 1.0) < 0.001, `self-match scores 1.0 (got ${hits.rows[0].match_score}) — blob alignment holds`);
 ok(hits.rows[0].text === corpus.meta.rows[0].label, "top hit is the probed row itself");
-ok(hits.rows.every((h, i, a) => i === 0 || a[i - 1].score >= h.score), "results ordered by score");
+ok(hits.rows.every((h, i, a) => i === 0 || a[i - 1].match_score >= h.match_score), "results ordered by score");
+ok(hits.rows.every((h) => !("score" in h)),
+   "a hit carries `match_score`, never `score` — that word is a rating on `watching`");
 corpus.setProbe(corpus.meta.count - 1);
 const last = await TOOLS.whats_relevant.run(env, { topic: "anything" });
-ok(Math.abs(last.rows[0].score - 1.0) < 0.001, "alignment holds at the far end of the blob too");
+ok(Math.abs(last.rows[0].match_score - 1.0) < 0.001, "alignment holds at the far end of the blob too");
 const notesOnly = await TOOLS.notes_on.run(env, { topic: "anything" });
 ok(notesOnly.rows.length > 0, "notes_on returns note-kind hits only");
 
@@ -662,7 +671,7 @@ ok(rn.rows.length === 1, "returns exactly one note, never a list");
 ok(typeof rn.rows[0].body === "string" && rn.rows[0].body.length > 0, `body returned (${rn.rows[0].body.length} chars)`);
 ok(!!rn.rows[0].title && !!rn.rows[0].folder, "carries title + folder for context");
 ok(JSON.stringify(rn).length <= MAX_BYTES, `within the 16KB cap (${JSON.stringify(rn).length})`);
-ok(rn.note === undefined || rn.note.includes("truncated"), "truncation, if any, is announced");
+ok(rn.note === undefined || rn.note.includes("clipped"), "a clip, if any, is announced");
 
 // The default shape must NOT be the full one — the whole reason this is a flag
 // rather than two tools is that the cheap answer stays the default.
@@ -691,7 +700,8 @@ ok(TOOLS.notes_on.schema.properties.id && !TOOLS.notes_on.schema.required?.inclu
   ok(missing.rows.length === 0 && /no note with id/.test(missing.note ?? ""),
      "an unknown id is a miss, not an error");
   const neither = await TOOLS.notes_on.run(env, {});
-  ok(neither.rows.length === 0 && /topic|id/.test(neither.note ?? ""), "neither topic nor id is a miss that says what to pass");
+  ok(neither.rows.length > 0 && neither.rows.every((r) => r.id && r.title && r.created) && !("body" in neither.rows[0]),
+     "neither topic nor id is a dated listing of titles with ids, not a miss");
 }
 
 
@@ -741,8 +751,8 @@ ok(windowed.rows.length === 0 && !!windowed.note, "an empty window is explained,
 // scope, and the collision was a SyntaxError that took the whole suite out
 // rather than one assertion — every test below it stopped running.
 const winAll = await TOOLS.around_the_time.run(env, { from: "2020-01-01", to: "2026-12-31" });
-ok(!winAll.rows.length || /head of each/.test(winAll.scope ?? ""),
-   `around_the_time says its rows are the head of each source ("${(winAll.scope ?? "").slice(0, 60)}")`);
+ok(!winAll.rows.length || /held .*\(\d+ rows\)/.test(winAll.scope ?? ""),
+   `around_the_time says what the window held and how many rows that is ("${(winAll.scope ?? "").slice(0, 60)}")`);
 ok(!winAll.rows.length || /artists over \d+ plays|nothing/.test(winAll.scope ?? ""),
    "and counts the artists the window actually held");
 
@@ -863,6 +873,345 @@ console.log("\n── beer: a check-in is more than a name (G1-G4) ──");
      `the repeats list is exactly as long as the repeat_count beside it (${repeats.rows.length} = ${b.repeat_count})`);
   ok(!repeats.has_more || repeats.rows.length === DEFAULT_ROWS,
      "a truncated rollup says so rather than reading as the whole list");
+}
+
+console.log("\n── the tool strings speak the surface, not the instance (ADR-0014) ──");
+{
+  // Every description a model reads before choosing a tool, and every param
+  // description beside it. An instance count in one of them ("720 films")
+  // is a fact about one record baked into the engine, drifts the day the
+  // record grows, and reads as a size to a caller told the surface pages.
+  // Instance facts belong in the brief and in `scope`; this is the check
+  // run.mjs already makes of the brief, applied to the tool table.
+  const MEDIUM_NOUN = /\b\d[\d,]*\s+(films?|books?|shows?|beers?|scrobbles?|notes?|posts?|repos?|bookmarks?|visits?|threads?|recipes?)\b/i;
+  const STALE = [
+    [/\btruncated\b/i, "truncated (ROW_CAP is gone; a page is not a truncation)"],
+    [/\bfewer rows\b/i, "fewer rows (the grade sizes nothing since ADR-0028)"],
+    [/\bnarrow(?:er)? (?:the )?question\b/i, "narrow the question (name the page or the param instead)"],
+    [/\b(?:his|he|him)\b/, "his/he (the owner is 'they' everywhere else)"],
+  ];
+  const strings = [];
+  for (const [name, t] of Object.entries(TOOLS)) {
+    strings.push([`${name}.description`, t.description]);
+    for (const [pn, prop] of Object.entries(t.schema.properties ?? {})) {
+      if (prop.description) strings.push([`${name}.${pn}`, prop.description]);
+    }
+  }
+  const counted = strings.filter(([, d]) => MEDIUM_NOUN.test(d)).map(([w, d]) => `${w}: ${d.match(MEDIUM_NOUN)[0]}`);
+  ok(counted.length === 0,
+     `no tool or param description carries an instance count${counted.length ? " — " + counted.join("; ") : ""}`);
+  for (const [re, why] of STALE) {
+    const hit = strings.filter(([, d]) => re.test(d)).map(([w]) => w);
+    ok(hit.length === 0, `no tool string says ${why}${hit.length ? " — " + hit.join(", ") : ""}`);
+  }
+  ok(strings.every(([, d]) => !/\bKairos\b|\bDC\b|eight sources|Bandcamp|digicore|Gift Ideas/.test(d)),
+     "no tool string names this instance's scheduler, city, feeds, crawl or collections");
+  ok(strings.every(([w, d]) => w.endsWith(".description") || d.length > 0),
+     "every param carries a description");
+
+  // The three outright contradictions the review found, pinned so they stay fixed.
+  ok(/already scrobbled or own removed/.test(TOOLS.releases.description),
+     "releases says it removes what HAS been heard, which is what its SQL does");
+  ok(/dialogue/.test(TOOLS.thread.schema.properties.include.description),
+     "thread.include's schema offers the dialogue mode its description recommends");
+  ok(!/a title to read/.test(TOOLS.project_docs.description) && !!TOOLS.project_docs.schema.properties.id,
+     "project_docs no longer promises a `title` param and takes an `id` instead");
+  ok(/\btv\b/.test(TOOLS.consumption.schema.properties.medium.description),
+     "consumption's medium text names tv, which its SQL answers for");
+  ok(/posts?/.test(TOOLS.whats_relevant.description),
+     "whats_relevant admits it searches posts");
+}
+
+console.log("\n── one envelope on every answer (ADR-0028) ──");
+{
+  // Every empty path stamps what cap() stamps, so a client keyed on has_more
+  // never reads undefined, and a page walker can tell "ended" from "never says".
+  const EMPTIES = [
+    ["notes_on", { id: "no-such-note" }],
+    ["notes_on", { folder: "no-such-folder-anywhere" }],
+    ["posts", {}],
+    ["posts", { id: "no-such-slug" }],
+    ["recipes", { topic: "zzzznothingzzzz", full: true }],
+    ["drafts", { id: "no-such-draft" }],
+    ["drafts", { topic: "zzzznothingzzzz" }],
+    ["facets", {}],
+    ["facets", { medium: "opera" }],
+    ["consumption", { medium: "opera" }],
+    ["ratings", { medium: "opera" }],
+    ["verdicts", { kind: "opera" }],
+    ["taste_summary", { kind: "no-such-kind" }],
+    ["thread", {}],
+    ["thread", { id: "no-such-thread", include: "conclusion" }],
+    ["project_docs", { id: "no-such/doc" }],
+    ["project_docs", { topic: "zzzznothingzzzz", full: true }],
+    ["saves", {}],
+    ["backlog", {}],
+    ["backlog", { kind: "watch" }],
+    ["backlog", { kind: "make" }],
+    ["collection", { topic: "zzzznotagenrezzzz" }],
+    ["taste", { artist: "zzzznotanartistzzzz" }],
+    ["around_the_time", { from: "1900-01-01", to: "1900-01-02" }],
+  ];
+  const broken = [];
+  for (const [name, args] of EMPTIES) {
+    const r = await TOOLS[name].run(env, args, { offset: 0 });
+    if (!(Array.isArray(r.rows) && r.rows.length === 0 && r.returned_count === 0
+          && r.has_more === false && r.offset === 0)) {
+      broken.push(`${name} ${JSON.stringify(args)} -> ${JSON.stringify({ n: r.rows?.length, rc: r.returned_count, hm: r.has_more, off: r.offset })}`);
+    }
+  }
+  ok(broken.length === 0, `every empty path stamps returned_count:0, has_more:false and offset${broken.length ? ":\n         " + broken.join("\n         ") : ""}`);
+  const echoed = await TOOLS.taste_summary.run(env, { kind: "no-such-kind" }, { offset: 7 });
+  ok(echoed.offset === 7, "and an empty answer echoes the offset it was asked at");
+
+  // Single-row paths stamp the same keys: nothing was skipped, nothing is left.
+  const one = await TOOLS.medium.run(env, { name: "film" });
+  ok(one.rows.length === 1 && one.returned_count === 1 && one.has_more === false && one.offset === 0,
+     "medium's named path goes through cap() and carries the page keys");
+  const oneDoc = await TOOLS.taste_summary.run(env, { kind: "beer" });
+  ok(oneDoc.returned_count === 1 && oneDoc.has_more === false, "a single document carries them too");
+
+  // One word for an envelope caveat. `notes` was the plural on two tools.
+  const savesAns = await TOOLS.saves.run(env, { since: "1970-01-01" });
+  const bkAns = await TOOLS.backlog.run(env, { kind: "read" });
+  ok(!("notes" in savesAns) && !("notes" in bkAns) && typeof bkAns.note === "string",
+     "saves and backlog fold their second caveat into `note`, never `notes`");
+
+  // `scope` on the tools ADR-0023 left it off.
+  const scoped = {
+    ratings: await TOOLS.ratings.run(env, { medium: "films" }),
+    collection: await TOOLS.collection.run(env, {}),
+    reviews: await TOOLS.reviews.run(env, {}),
+    places: await TOOLS.places.run(env, {}),
+    recent_topics: await TOOLS.recent_topics.run(env, {}),
+    facets: await TOOLS.facets.run(env, { medium: "beer" }),
+    verdicts: await TOOLS.verdicts.run(env, {}),
+  };
+  for (const [name, r] of Object.entries(scoped)) {
+    ok(typeof r.scope === "string" && /\d+/.test(r.scope), `${name} states its scope ("${r.scope}")`);
+  }
+  // events, releases and criticism state theirs the same way; the fixture
+  // carries none of those zones, so their SQL is proven by sqlcheck and their
+  // scope by reading the source.
+  for (const name of ["events", "releases", "criticism"]) {
+    ok(/\bscope\b/.test(TOOLS[name].run.toString()) && /per (feed|scene|outlet)/.test(TOOLS[name].run.toString()),
+       `${name} builds a scope that states the per-source spread`);
+  }
+  // And `scope` counts the FILTERED set, never the zone.
+  const ytCount = (await env.DB.prepare(
+    "SELECT count(*) AS n FROM t0_raindrop WHERE lower(platform) = ?").bind(savesAns.rows[0]?.platform ?? "youtube").all()).results[0].n;
+  const ytAns = await TOOLS.saves.run(env, { platform: savesAns.rows[0]?.platform ?? "youtube" });
+  ok(new RegExp(`^${ytCount} saves matched`).test(ytAns.scope ?? ""),
+     `saves.scope counts the filtered set (${ytAns.scope})`);
+  const allSaves = (await env.DB.prepare("SELECT count(*) AS n FROM t0_raindrop").bind().all()).results[0].n;
+  ok(allSaves === ytCount || !new RegExp(`^${allSaves} `).test(ytAns.scope ?? ""),
+     "and not the whole zone");
+
+  // The rating on `places` is a number with a scale, like every judgement row.
+  const pl = await TOOLS.places.run(env, {});
+  ok(pl.rows.every((r) => typeof r.rating === "number" && r.scale === "0-10"),
+     "places returns rating as a number on a stated scale, as ratings(restaurants) does");
+  const rv = await TOOLS.reviews.run(env, {});
+  ok(rv.rows.every((r) => r.scale === "0-5"), "reviews rows carry their scale");
+}
+
+console.log("\n── the new params, and tools/list advertises them ──");
+{
+  const advertised = Object.fromEntries(list.result.tools.map((t) => [t.name, t.inputSchema.properties]));
+  const NEW = [
+    ["whats_relevant", "kind"], ["ratings", "topic"], ["places", "topic"],
+    ["releases", "until"], ["criticism", "until"], ["saves", "until"], ["backlog", "until"],
+    ["notes_on", "until"], ["notes_on", "since"], ["notes_on", "folder"], ["notes_on", "order"],
+    ["saves", "order"], ["recent_topics", "order"], ["drafts", "order"],
+    ["taste_profile", "kind"], ["thread", "id"], ["thread", "from_turn"], ["project_docs", "id"],
+  ];
+  const missing = NEW.filter(([t, p]) => !TOOLS[t].schema.properties[p]?.description);
+  ok(missing.length === 0, `every new param exists with a description${missing.length ? " — missing: " + missing.map((m) => m.join(".")).join(", ") : ""}`);
+  const unlisted = NEW.filter(([t, p]) => advertised[t] && !advertised[t][p]);
+  ok(unlisted.length === 0, `and tools/list carries each one${unlisted.length ? " — unlisted: " + unlisted.map((m) => m.join(".")).join(", ") : ""}`);
+  // `until` beside every `since`, on every tool.
+  const lonely = Object.entries(TOOLS).filter(([, t]) => t.schema.properties?.since && !t.schema.properties?.until).map(([n]) => n);
+  ok(lonely.length === 0, `every since has an until beside it${lonely.length ? " — " + lonely.join(", ") : ""}`);
+
+  // whats_relevant.kind narrows to one corpus.
+  corpus.setProbe(0);
+  const onlyNotes = await TOOLS.whats_relevant.run(env, { topic: "anything", kind: "note" });
+  ok(onlyNotes.rows.length > 0 && onlyNotes.rows.every((r) => r.kind === "note"), "whats_relevant kind:'note' returns note hits only");
+  const badKind = await TOOLS.whats_relevant.run(env, { topic: "anything", kind: "sonnet" });
+  ok(/no corpus called 'sonnet'/.test(badKind.note ?? "") && badKind.rows.length > 0,
+     "an unknown kind searches everything and says so");
+
+  // notes_on lists without a topic: by folder, by date, on either axis.
+  const folders = (await env.DB.prepare("SELECT folder, count(*) AS n FROM t1_notes GROUP BY folder ORDER BY n DESC").bind().all()).results;
+  const byFolder = await TOOLS.notes_on.run(env, { folder: folders[0].folder });
+  ok(byFolder.rows.length === Math.min(folders[0].n, DEFAULT_ROWS) && byFolder.rows.every((r) => r.folder === folders[0].folder && r.id),
+     `notes_on(folder) lists that folder with ids (${byFolder.rows.length} of ${folders[0].n})`);
+  ok(byFolder.order === "recent" && byFolder.rows.every((r, i, a) => i === 0 || a[i - 1].created >= r.created),
+     "newest first by default");
+  const oldestNotes = await TOOLS.notes_on.run(env, { order: "oldest" });
+  ok(oldestNotes.order === "oldest" && oldestNotes.rows.every((r, i, a) => i === 0 || a[i - 1].created <= r.created),
+     "order:'oldest' climbs");
+  const allNotes = await TOOLS.notes_on.run(env, {});
+  ok(/\d+ notes across \d+ folders/.test(allNotes.scope ?? ""), `and the listing states its scope (${allNotes.scope})`);
+  const span = (await env.DB.prepare("SELECT min(substr(created,1,10)) AS a, max(substr(created,1,10)) AS b FROM t1_notes").bind().all()).results[0];
+  const windowed = await TOOLS.notes_on.run(env, { since: span.a, until: span.a });
+  ok(windowed.rows.length > 0 && windowed.rows.every((r) => r.created === span.a), "since/until bound the listing to a day");
+  const topicWindowed = await TOOLS.notes_on.run(env, { topic: "anything", since: span.b, until: span.b });
+  ok(topicWindowed.rows.every((r) => r.created === span.b), "and bound a topic search too, after the match");
+
+  // topic on ratings and places.
+  const someFilm = (await env.DB.prepare("SELECT title FROM t0_film WHERE CAST(rating AS REAL) > 0 LIMIT 1").bind().all()).results[0]?.title;
+  const byTitle = await TOOLS.ratings.run(env, { medium: "films", topic: someFilm.slice(0, 6) });
+  ok(byTitle.rows.length > 0 && byTitle.rows.every((r) => r.label.toLowerCase().includes(someFilm.slice(0, 6).toLowerCase())),
+     `ratings(topic) finds a title by name (${byTitle.rows.length})`);
+  const somePlace = (await env.DB.prepare("SELECT restaurant FROM t1_visits LIMIT 1").bind().all()).results[0]?.restaurant;
+  const byName = await TOOLS.places.run(env, { topic: somePlace.slice(0, 5) });
+  ok(byName.rows.length > 0 && byName.rows.every((r) => `${r.restaurant} ${r.notes ?? ""}`.toLowerCase().includes(somePlace.slice(0, 5).toLowerCase())),
+     `places(topic) finds a restaurant by name or note (${byName.rows.length})`);
+
+  // until beside since, checked on the tools whose zones the fixture holds.
+  const savedDay = (await env.DB.prepare("SELECT substr(created,1,10) AS d FROM t0_raindrop ORDER BY created LIMIT 1").bind().all()).results[0].d;
+  const untilSaves = await TOOLS.saves.run(env, { until: savedDay });
+  ok(untilSaves.rows.length > 0 && untilSaves.rows.every((r) => r.saved <= savedDay), "saves.until bounds the top of the window");
+  const queuedDay = (await env.DB.prepare("SELECT substr(date_added,1,10) AS d FROM t0_book WHERE lower(shelf)='to-read' ORDER BY d LIMIT 1").bind().all()).results[0]?.d;
+  const untilBk = await TOOLS.backlog.run(env, { kind: "read", until: queuedDay });
+  ok(untilBk.rows.length > 0 && untilBk.rows.every((r) => r.queued <= queuedDay), "backlog.until bounds the top of the window");
+
+  // order:'oldest' on saves, recent_topics, drafts.
+  const oldSaves = await TOOLS.saves.run(env, { since: "1970-01-01", order: "oldest" });
+  ok(oldSaves.order === "oldest" && oldSaves.rows.every((r, i, a) => i === 0 || a[i - 1].saved <= r.saved), "saves order:'oldest' climbs");
+  const oldTopics = await TOOLS.recent_topics.run(env, { order: "oldest" });
+  const newTopics = await TOOLS.recent_topics.run(env, {});
+  ok(oldTopics.order === "oldest" && newTopics.order === "recent"
+     && oldTopics.rows.every((r, i, a) => i === 0 || a[i - 1].last_seen <= r.last_seen),
+     "recent_topics offers both ends of its date axis");
+  ok(newTopics.rows.every((r) => typeof r.id === "string" && r.id), "and every conversation carries the id thread reads by");
+  const oldDrafts = await TOOLS.drafts.run(env, { order: "oldest" });
+  ok(oldDrafts.order === "oldest" && oldDrafts.rows.every((r, i, a) => i === 0 || a[i - 1].modified <= r.modified), "drafts order:'oldest' climbs");
+
+  // thread by id, without matching. conclusion mode reads no turns, so this
+  // holds on a bundle that carries the topics and not the transcripts.
+  const byId = await TOOLS.thread.run(env, { id: newTopics.rows[0].id, include: "conclusion" });
+  ok(byId.rows.length === 1 && byId.rows[0].id === newTopics.rows[0].id && byId.rows[0].title === newTopics.rows[0].title,
+     `thread(id) returns that exact conversation (${byId.rows[0]?.title})`);
+  ok(byId.returned_count === 1 && byId.has_more === false, "and carries the page keys");
+  ok(!TOOLS.thread.schema.required?.includes("topic"), "topic is no longer required when an id is given");
+
+  // project_docs by id, clipped through its own budget.
+  const docs = await TOOLS.project_docs.run(env, {});
+  ok(docs.rows.length > 0 && docs.rows.every((r) => r.id === `${r.repo}/${r.path}`), "every excerpt carries an id of repo/path");
+  ok(/\d+ documents/.test(docs.scope ?? "") && /full:true/.test(docs.note ?? ""), "and the listing states its scope and the way to read one");
+  const docById = await TOOLS.project_docs.run(env, { id: docs.rows[0].id });
+  ok(docById.rows.length === 1 && docById.rows[0].id === docs.rows[0].id && typeof docById.rows[0].body === "string",
+     "project_docs(id) returns that document whole");
+  const longest = (await env.DB.prepare("SELECT repo, path FROM t1_project_doc ORDER BY length(body) DESC LIMIT 1").bind().all()).results[0];
+  const big = await TOOLS.project_docs.run(env, { id: `${longest.repo}/${longest.path}` });
+  ok(big.rows.length === 1 && JSON.stringify(big).length <= MAX_BYTES,
+     `the largest document is clipped to the budget rather than withheld (${JSON.stringify(big).length} bytes)`);
+
+  // One medium vocabulary, accepted everywhere.
+  const mFilms = await TOOLS.medium.run(env, { name: "films" });
+  ok(mFilms.rows.length === 1 && mFilms.rows[0].medium === "film", "medium(name:'films') resolves to film");
+  const cFilm = await TOOLS.consumption.run(env, { medium: "film" });
+  ok(cFilm.rows.length === 1 && cFilm.rows[0].medium === "films", "consumption(medium:'film') resolves to films");
+  const rFilm = await TOOLS.ratings.run(env, { medium: "film" });
+  ok(rFilm.rows.length > 0 && rFilm.rows.every((r) => r.medium === "films"), "ratings(medium:'film') resolves to films");
+  ok(TOOLS.ratings.readsFor({ medium: "movie" }).join() === "t0_film", "and readsFor grades the alias on the zone it resolves to");
+  const fBeers = await TOOLS.facets.run(env, { medium: "beers" });
+  ok(fBeers.rows.length > 0 && fBeers.rows[0].medium === "beer", "facets(medium:'beers') resolves to beer");
+  const vFilm = await TOOLS.verdicts.run(env, { kind: "film" });
+  ok(vFilm.rows.every((r) => r.kind === "films"), "verdicts(kind:'film') resolves to films");
+  const cTv = await TOOLS.consumption.run(env, { medium: "tv" });
+  ok(cTv.rows.length === 1 && cTv.rows[0].medium === "tv", "consumption answers for tv, as its param text now says");
+  const noMed = await TOOLS.ratings.run(env, { medium: "opera" });
+  ok(/no medium called 'opera'/.test(noMed.note ?? ""), "an unknown medium names the ones this tool knows");
+}
+
+console.log("\n── paging honesty (ADR-0028 §7.5) ──");
+{
+  // around_the_time: limit widens the interleave, offset walks it, has_more
+  // comes from what the window held.
+  const wide = await TOOLS.around_the_time.run(env, { from: "1970-01-01", to: "2100-12-31" }, { limit: MAX_ROWS });
+  const total = Number((wide.scope.match(/\((\d+) rows\)/) ?? [])[1]);
+  ok(total > 0, `the scope states the window's row count (${total})`);
+  ok(wide.has_more || wide.rows.length === total,
+     `limit reaches the whole window when the budget allows (${wide.rows.length} of ${total})`);
+  ok(wide.rows.length > 25 || total <= 25, "and is no longer stuck at the old 25-row interleave");
+  const pages = [];
+  let off = 0, more = true, guard = 0;
+  while (more && guard++ < 500) {
+    const pg = await TOOLS.around_the_time.run(env, { from: "1970-01-01", to: "2100-12-31" }, { limit: 7, offset: off });
+    pages.push(...pg.rows.map((r) => JSON.stringify(r)));
+    more = pg.has_more; off += pg.rows.length;
+    if (!pg.rows.length) break;
+  }
+  const whole = wide.rows.map((r) => JSON.stringify(r));
+  ok(new Set(pages).size === pages.length, "pages of 7 share no row");
+  ok(pages.length === (wide.has_more ? pages.length : whole.length) && whole.every((k, i) => pages[i] === k),
+     `and the walk is the ${whole.length}-row list in order`);
+  const pastEnd = await TOOLS.around_the_time.run(env, { from: "1970-01-01", to: "2100-12-31" }, { limit: 5, offset: total + 10 });
+  ok(pastEnd.rows.length === 0 && pastEnd.has_more === false, "an offset past the window returns nothing and has_more:false");
+
+  // ratings unfiltered: limit is a share per medium, offset applies once.
+  const ten = await TOOLS.ratings.run(env, {}, { limit: 10 });
+  ok(ten.rows.length === 10 && new Set(ten.rows.map((r) => r.medium)).size > 1,
+     `ratings with no medium honours limit:10 across media (${[...new Set(ten.rows.map((r) => r.medium))].join(", ")})`);
+  const five = await TOOLS.ratings.run(env, {}, { limit: 5, offset: 5 });
+  ok(five.rows.length === 5 && five.rows.every((r, i) => JSON.stringify(r) === JSON.stringify(ten.rows[i + 5])),
+     "and offset:5 is rows 5..9 of the same interleave, applied once");
+  ok(/rated across \d+ media/.test(ten.scope ?? ""), `with a scope per medium (${ten.scope})`);
+
+  // thread.from_turn names a real move. Needs transcripts.
+  const biggest = await env.DB.prepare(
+    `SELECT title, sum(length(COALESCE(text,''))) AS chars FROM t0_chat GROUP BY title ORDER BY chars DESC LIMIT 1`)
+    .bind().all().then((r) => r.results[0]).catch(() => undefined);
+  if (!biggest) {
+    console.log("   (no transcripts in this bundle — from_turn checked by sqlcheck only)");
+  } else {
+    const first = await TOOLS.thread.run(env, { topic: biggest.title, include: "dialogue" });
+    const m = (first.rows[0].note ?? "").match(/pass from_turn:(\d+)/);
+    if (biggest.chars <= MAX_BYTES) {
+      ok(!first.rows[0].note, "the largest thread fits, so nothing is clipped and no turn is named");
+    } else {
+      ok(!!m, `a clipped thread names the turn to continue from (${first.rows[0].note})`);
+    }
+    if (m) {
+      const rest = await TOOLS.thread.run(env, { topic: biggest.title, include: "dialogue", from_turn: Number(m[1]) });
+      ok(rest.rows.length === 1 && rest.rows[0].dialogue.length > 0 && rest.rows[0].dialogue[0] !== first.rows[0].dialogue[0],
+         "and from_turn continues from there rather than repeating the head");
+    }
+  }
+}
+
+console.log("\n── instance facts ride in surface.json, not in the engine (ADR-0014) ──");
+{
+  const { loadSurface, TTL_MS: SURFACE_TTL } = await import("../src/surface.js");
+  const stub = (body) => ({ VECTORS: {
+    head: async () => ({ etag: `inst-${Math.random()}` }),
+    get: async () => ({ text: async () => JSON.stringify(body) }),
+  } });
+  const cols = (await env.DB.prepare("SELECT collection, count(*) AS n FROM t0_raindrop WHERE collection <> '' GROUP BY 1 ORDER BY n DESC").bind().all()).results;
+  const surface = await loadSurface(stub({ tools: [], instance: {
+    backlog_make: [cols[0].collection.toUpperCase()], backlog_buy: [cols[1].collection],
+    release_pool: "The crawl reads one kind of source.",
+  } }), Date.now() + SURFACE_TTL * 300);
+  ok(surface.instance.backlog_make.length === 1, "surface.js reads the instance table");
+  const bare = await TOOLS.backlog.run(env, { kind: "make" });
+  ok(bare.rows.length === 0 && /no collection is named for the 'make' pile/.test(bare.note ?? ""),
+     "with no instance config the make pile says it is unnamed rather than guessing a collection");
+  const piles = await TOOLS.backlog.run(env, {}, { surface });
+  const makePile = piles.kinds.find((k) => k.kind === "make");
+  ok(makePile.n === cols[0].n, `configured, the make pile counts its collection case-insensitively (${makePile.n})`);
+  const made = await TOOLS.backlog.run(env, { kind: "make" }, { surface });
+  ok(made.rows.length > 0 && made.rows.every((r) => r.collection === cols[0].collection), "and lists it");
+  const bought = await TOOLS.backlog.run(env, { kind: "buy" }, { surface });
+  ok(bought.rows.every((r) => r.collection === cols[1].collection), "buy reads its own collection");
+  ok(!/Gift Ideas|want-to-make|2023-08-31|seven Bandcamp|digicore/.test(toolsSrc),
+     "tools.js names no shelf, collection, crawl size or freeze date of its own");
+  ok(/poolGap\(ctx\)/.test(TOOLS.releases.run.toString()),
+     "releases builds its pool sentence from the engine's neutral one plus whatever the instance adds");
+  // Re-warm the real surface so nothing below inherits the stub.
+  await loadSurface(env, Date.now() + SURFACE_TTL * 600);
 }
 
 console.log("\n── new zones + join ──");
@@ -1254,12 +1603,13 @@ ok(topicBk.rows.every((r) => /the/i.test(`${r.title} ${r.author ?? ""}`)), "topi
 
 const make = await TOOLS.backlog.run(env, { kind: "make" });
 ok(make.rows.length > 0 && make.rows.every((r) => r.collection === "want-to-make"), `make -> ${make.rows.length} from want-to-make`);
-ok(/unfiled/.test(make.notes || ""), "make admits it undercounts rather than reporting 9 as the whole truth");
+ok(/unfiled|no collection is named/.test(make.note || ""),
+   "make admits it undercounts the filed few, or that no collection is named for it at all");
 const buy = await TOOLS.backlog.run(env, { kind: "buy" });
 ok(buy.rows.every((r) => ["Gift Ideas", "Shopping"].includes(r.collection)), "buy spans both purchase collections");
 
 const bogus = await TOOLS.backlog.run(env, { kind: "watch" });
-ok(bogus.rows.length === 0 && !!bogus.error, "an unknown kind errors rather than returning a wrong pile");
+ok(bogus.rows.length === 0 && /no pile called/.test(bogus.note ?? ""), "an unknown kind is a note, like every other bad argument, rather than a wrong pile");
 ok(JSON.stringify(await TOOLS.backlog.run(env, { kind: "read" })).length <= MAX_BYTES + 400, "backlog within cap");
 
 console.log("\n── summaries are reachable, not just present ──");
@@ -1536,8 +1886,8 @@ if (postIdx >= 0) {
   corpus.setProbe(postIdx);
   const pr = await TOOLS.posts.run(env, { topic: "anything" });
   ok(pr.rows.length > 0, `posts -> ${pr.rows.length} hits`);
-  ok(Math.abs(pr.rows[0].score - 1.0) < 0.001,
-     `post self-match scores 1.0 (got ${pr.rows[0].score}) — post block is aligned`);
+  ok(Math.abs(pr.rows[0].match_score - 1.0) < 0.001,
+     `post self-match scores 1.0 (got ${pr.rows[0].match_score}) — post block is aligned`);
   const known = new Map(allPosts.map((r) => [r.url, r.title]));
   ok(pr.rows.every((r) => known.get(r.url) === r.title),
      "every returned link resolves to the published post it is labelled with");
@@ -1657,8 +2007,10 @@ if (!(await hasZone("t0_anime"))) {
   // and not the 243 that happen to be on a list abandoned in 2023.
   ok(/every status here is derived from Trakt activity/.test(w.note ?? ""),
      "and says which source the status came from");
-  ok(w.rows.every((r) => !r.declared || r.declared_on === "2023-08-31"),
-     "a declared word is always stamped with the day the list stopped");
+  const froze = (await env.DB.prepare(
+    "SELECT max(substr(last_updated,1,10)) AS d FROM t0_anime WHERE last_updated <> ''").bind().all()).results[0]?.d;
+  ok(w.rows.every((r) => !r.declared || r.declared_on === froze),
+     `a declared word is always stamped with the day the list was last updated, read off the list (${froze})`);
 
   // `stalled` is derived and `dropped` is declared, and a caller must be able
   // to tell them apart — abandoning something on purpose and drifting away

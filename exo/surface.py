@@ -81,6 +81,44 @@ def peers() -> dict[str, str]:
     return {str(k): str(v) for k, v in (config.setting("peers", "sources", {}) or {}).items()}
 
 
+# The `[surface]` keys the worker reads, with the shape each must have. A key
+# outside this list is dropped rather than shipped: the file that reaches the
+# worker is a contract, and an unknown key in it is a typo nobody would notice.
+INSTANCE_KEYS: dict[str, type] = {
+    "backlog_read": list,     # Goodreads shelves that are the to-read pile
+    "backlog_resume": list,   # shelves that are "started and set down"
+    "backlog_make": list,     # raindrop collections that are the making queue
+    "backlog_buy": list,      # raindrop collections that are the buying queue
+    "release_pool": str,      # one sentence on what the release crawl cannot reach
+    "events_region": str,     # where the event feeds are from; the brief says so
+}
+
+
+def instance() -> dict:
+    """`[surface]` from exo.toml: instance facts a tool answer may carry.
+
+    The engine's tool strings may know the shape of a life and never the
+    contents of one (ADR-0014). The strings that used to name this instance's
+    shelves, collections and crawl inside `tools.js` now come from here,
+    published beside the tool list so the worker reads them as data. Only the
+    keys the worker knows are shipped, each coerced to the shape it expects; a
+    value of the wrong shape is dropped rather than half-read.
+    """
+    raw = config.section("surface")
+    out: dict = {}
+    for key, kind in INSTANCE_KEYS.items():
+        v = raw.get(key)
+        if v is None:
+            continue
+        if kind is list and isinstance(v, (list, tuple)):
+            items = [str(x).strip() for x in v if str(x).strip()]
+            if items:
+                out[key] = items
+        elif kind is str and isinstance(v, str) and v.strip():
+            out[key] = v.strip()
+    return out
+
+
 def resolve(served: set[str] | frozenset[str],
             *, disable: list[str] | None = None,
             domains: list[str] | None = None) -> dict:

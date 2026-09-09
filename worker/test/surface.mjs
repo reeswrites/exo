@@ -53,6 +53,15 @@ ok(peerFor(peered, undefined) === null, "a row with no source resolves to null")
 ok(peerFor(await load(r2({ tools: [] })), "notion") === null, "no peers declared -> null");
 ok(peerFor(null, "notion") === null, "no surface at all -> null, not a throw");
 
+console.log("\n── instance facts (ADR-0014) ──");
+const withInst = await load(r2({ tools: [], instance: { backlog_make: ["Things To Make"], release_pool: "one sentence" } }));
+ok(withInst.instance.backlog_make[0] === "Things To Make" && withInst.instance.release_pool === "one sentence",
+   "the [surface] table publish wrote comes back as `instance`");
+ok(JSON.stringify((await load(r2({ tools: [] }))).instance) === "{}", "no instance table -> {}, not undefined");
+ok(JSON.stringify((await load(r2({ tools: [], instance: ["not", "a", "table"] }))).instance) === "{}",
+   "an instance value that is not a table is read as none");
+ok(JSON.stringify((await load(r2(null))).instance) === "{}", "no surface.json at all -> {} too");
+
 console.log("\n── the lease ──");
 const env1 = r2({ tools: ["notes_on"] }, "etag-1");
 const t = (clock += TTL_MS * 2);

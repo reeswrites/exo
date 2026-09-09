@@ -376,12 +376,15 @@ async function handleRpc(req, env, body, door) {
       const surface = await loadSurface(env);
       // `limit` and `offset` are synthesised here rather than written into
       // thirty schemas, so every list tool pages the same way and the numbers
-      // stated are the ones tools.js enforces.
+      // stated are the ones tools.js enforces. A tool that declares
+      // `pages: false` answers with one row or one document and gets neither:
+      // advertising a page on an answer that cannot page is a parameter the
+      // caller is told to use and that does nothing.
       return rpcResult(id, {
         tools: Object.entries(TOOLS).filter(([name]) => offers(surface, name)).map(([name, t]) => ({
           name,
           description: t.description,
-          inputSchema: {
+          inputSchema: t.pages === false ? t.schema : {
             ...t.schema,
             properties: {
               ...(t.schema.properties ?? {}),

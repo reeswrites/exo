@@ -434,8 +434,13 @@ def build(served_counts: dict[str, int] | None = None,
         A(f"- **saved links** — {saves_n:,} bookmarks, filterable by platform or tag")
     events_n = counts.get("t0_event", 0)
     if events_n:
-        A(f"- **events they could go to** — {events_n:,} upcoming in DC, merged from "
-          f"eight sources. Judge fit against {config.OWNER_POSSESSIVE} taste rather "
+        # Where the feeds are from is an instance fact (ADR-0014): the brief
+        # says it when `[surface] events_region` names it, and says nothing
+        # about place otherwise.
+        region = str(config.setting("surface", "events_region", "") or "").strip()
+        A(f"- **events they could go to** — {events_n:,} upcoming"
+          f"{' in ' + region if region else ''}, merged from the local feeds this "
+          f"record follows. Judge fit against {config.OWNER_POSSESSIVE} taste rather "
           "than listing them.")
     # The two discovery zones. Both are pure gain for an assistant and pure
     # invisibility without this: nothing about a personal-context server suggests

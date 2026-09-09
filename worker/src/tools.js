@@ -131,6 +131,76 @@ export function cap(rows, ctx, own) {
 }
 
 /**
+ * The envelope of an answer with nothing in it.
+ *
+ * Every empty path used to hand back `{ rows: [], note }` and nothing else, so
+ * a client keyed on `has_more` read `undefined` on half the surface and a page
+ * walker could not tell "the list ended" from "this tool never says". The
+ * three fields `cap()` stamps are stamped here too, whatever else the tool
+ * wants to add beside them.
+ */
+export const empty = (ctx, extra = {}) => ({
+  rows: [], returned_count: 0, offset: skip(ctx), has_more: false, ...extra,
+});
+
+/**
+ * The envelope of a single-row answer that was never a page: one note, one
+ * draft, one thread, one document. `offset` is 0 because nothing was skipped,
+ * and `has_more` is false because there is no list to be more of — stamped
+ * anyway, so a client reads the same keys off every answer.
+ */
+export const single = (row, extra = {}) => ({
+  rows: [row], returned_count: 1, offset: 0, has_more: false, ...extra,
+});
+
+/** Instance facts published beside the tool list (ADR-0014), or nothing. */
+export const instanceOf = (ctx) => ctx?.surface?.instance ?? {};
+
+/**
+ * One vocabulary for "which medium", accepted everywhere a tool takes one.
+ *
+ * Three tools spelt the same medium three ways — `medium(name:'film')`,
+ * `ratings(medium:'films')`, `verdicts(kind:'films')` — and a caller that
+ * learned one spelling got an empty answer from the next tool, which read as
+ * "no films". Each tool keeps its own canonical key (the one its SQL is written
+ * against); this map is how a caller's word finds it. Singular, plural and the
+ * common synonyms all resolve; an unknown word resolves to nothing, and the tool
+ * says which words it knows.
+ */
+const MEDIA = {
+  film: ["film", "films", "movie", "movies", "cinema"],
+  book: ["book", "books", "reading"],
+  tv: ["tv", "television", "show", "shows", "series"],
+  anime: ["anime"],
+  music: ["music", "scrobbles", "listening", "records"],
+  beer: ["beer", "beers"],
+  restaurant: ["restaurant", "restaurants", "dining", "places", "meals"],
+};
+
+const conceptOf = (word) => {
+  const w = typeof word === "string" ? word.trim().toLowerCase() : "";
+  if (!w) return null;
+  for (const [concept, spellings] of Object.entries(MEDIA)) {
+    if (spellings.includes(w)) return concept;
+  }
+  return null;
+};
+
+/**
+ * The key of `table` that names the medium `asked` refers to, or undefined.
+ * `table` is any object keyed by a tool's own medium spellings.
+ */
+export function mediumKey(asked, table) {
+  if (asked === undefined || asked === null || asked === "") return undefined;
+  const keys = Object.keys(table);
+  const w = String(asked).trim().toLowerCase();
+  if (keys.includes(w)) return w;
+  const concept = conceptOf(w);
+  if (!concept) return undefined;
+  return keys.find((k) => conceptOf(k) === concept);
+}
+
+/**
  * Which axis a list came back on — the caller's choice, out of what the tool holds.
  *
  * Every ORDER BY on this surface is over a measured fact and none of them rank
@@ -150,8 +220,8 @@ export function cap(rows, ctx, own) {
  *
  * A tool advertises only the axes its rows can answer, and the FIRST key of the
  * map is its default. The chosen name rides back on the answer, because a
- * truncated list means something different on each axis: a page of films by
- * rating is the best of 720, a page by recency is the latest, and `has_more`
+ * page means something different on each axis: a page of films by rating is
+ * the best of the whole shelf, a page by recency is the latest, and `has_more`
  * cannot tell those apart. An assistant should not have to infer it
  * from the shape of the rows.
  *
@@ -191,7 +261,7 @@ export const ordered = (out, by) => ({
  * an empty answer advising them to narrow a question that was already one
  * thread. Budget against the real envelope and the row always fits.
  */
-const TURN_NOTE_SAMPLE = "999 of 999 of the owner's turns shown — ask about a narrower part";
+const TURN_NOTE_SAMPLE = "999 of 999 of the owner's turns shown, from turn 999 — pass from_turn:999 for the rest";
 
 function fitInto(row, field, items, notePlaceholder) {
   const envelope = JSON.stringify({ ...row, [field]: [], note: notePlaceholder }).length;
@@ -225,9 +295,17 @@ function fitInto(row, field, items, notePlaceholder) {
  * How MANY scenes is deliberately not stated. Which ones are crawled is an
  * instance fact (ADR-0014) and the engine does not get to know it; the answer
  * carries the scenes it actually matched, which is the part a caller can use.
+ * What the crawl structurally cannot reach is an instance fact too, so the
+ * instance may append a sentence of its own through `[surface] release_pool`
+ * in exo.toml; the engine's sentence says only what is true of any crawl.
  */
 const POOL_GAP =
-  "this pool is a crawl of seven Bandcamp label rosters, not a survey of everything released \u2014 a record absent from it was not judged and not rejected. It reaches music that has a publisher and structurally cannot reach music that publishes itself: the rage and digicore end, which is the larger half of the listening record, is not on Bandcamp as label rosters at all. Ask `criticism` for that half";
+  "this pool is a crawl of the scene sources this instance follows, not a survey of everything released \u2014 a record absent from it was not judged and not rejected, it was never looked at. Ask `criticism` for what is being written about outside those sources";
+
+const poolGap = (ctx) => {
+  const own = instanceOf(ctx).release_pool;
+  return typeof own === "string" && own.trim() ? `${POOL_GAP}. ${own.trim()}` : POOL_GAP;
+};
 
 const WATCH_GAP =
   "watching is not covered: the Letterboxd watchlist was never exported, so absence of films here is a gap in the data, not an empty queue";
@@ -237,11 +315,11 @@ const WATCH_GAP =
  * measured.
  *
  * Trakt records episodes watched and nothing about how many there were, so
- * "did he finish it" is not a hard question over t0_tv, it is an unanswerable
+ * "did they finish it" is not a hard question over t0_tv, it is an unanswerable
  * one. MAL carries a total per entry, which is what makes a fraction possible —
  * and MAL only covers anime. Every answer that reports on progress says so,
- * because a reader who sees 40 anime measured and no drama measured will read
- * the silence as "he finishes everything else".
+ * because a reader who sees the anime measured and no drama measured will read
+ * the silence as "they finish everything else".
  */
 const COUNT_GAP =
   "only the anime shelf carries episode totals \u2014 the rest of the television record is Trakt, which counts what was watched and never how much there was to watch, so no other show here can be called finished or unfinished";
@@ -259,6 +337,19 @@ const COUNT_GAP =
  * `abv` is CAST because the column is TEXT off a CSV, like every other number in
  * this store; the rest are names and stay text.
  */
+/**
+ * How many of an unfiltered page one source may take. `events` spreads by
+ * feed, `releases` by scene and `criticism` by outlet, and the cut runs before
+ * the page, so every one of them states it in `scope` rather than letting an
+ * offset walk pretend it reached the pool.
+ */
+const FEED_SHARE = 4;
+const SCENE_SHARE = 3;
+
+/** The media `consumption` and `ratings` answer for, keyed as their SQL spells them. */
+const CONSUMPTION_MEDIA = { music: 1, books: 1, films: 1, tv: 1, beer: 1 };
+const RATINGS_MEDIA = { films: 1, books: 1, beer: 1, restaurants: 1, anime: 1 };
+
 const BEER_META = [
   ["brewery", "brewery_name"],
   ["style", "beer_type"],
@@ -440,25 +531,24 @@ const q = (env, sql, ...binds) =>
  * can pick a document off it without a second guess at wording. Either way
  * the shape is one row, budgeted against its own envelope.
  */
-async function readOne(env, { topic, id, kind, table, key, select, missing, onClip }) {
+async function readOne(env, { topic, id, kind, table, key, select, missing, onClip }, ctx) {
   let ref = id;
   let score = null;
   if (ref === undefined || ref === null || ref === "") {
-    if (!topic) return { rows: [], note: `pass a topic to search for a ${missing}, or the id a listing returned` };
+    if (!topic) return empty(ctx, { note: `pass a topic to search for a ${missing}, or the id a listing returned` });
     const [hit] = await search(env, topic, { k: 1, kind });
-    if (!hit) return { rows: [], note: `no ${missing} matched` };
+    if (!hit) return empty(ctx, { note: `no ${missing} matched` });
     ref = hit.ref;
     score = hit.score;
   }
 
   const rows = await q(env, `SELECT ${select} FROM ${table} WHERE ${key} = ? LIMIT 1`, String(ref));
   if (!rows.length) {
-    return {
-      rows: [],
+    return empty(ctx, {
       note: score === null
         ? `no ${missing} with id '${ref}' — ids come from this tool's own listing, and a held one is absent rather than hidden`
         : `matched a ${missing} that is not published`,
-    };
+    });
   }
 
   const row = rows[0];
@@ -470,15 +560,12 @@ async function readOne(env, { topic, id, kind, table, key, select, missing, onCl
   const budget = MAX_BYTES - envelope - 200;
   const clipped = full.length > budget;
 
-  return {
-    rows: [{
-      id: ref,
-      ...row,
-      ...(score === null ? {} : { match_score: score }),
-      body: clipped ? full.slice(0, budget) : full,
-    }],
-    ...(clipped ? { note: onClip(row, budget, full.length) } : {}),
-  };
+  return single({
+    id: ref,
+    ...row,
+    ...(score === null ? {} : { match_score: score }),
+    body: clipped ? full.slice(0, budget) : full,
+  }, clipped ? { note: onClip(row, budget, full.length) } : {});
 }
 
 /**
@@ -514,29 +601,39 @@ export const TOOLS = {
     class: "derived", domain: "mind", kind: "vector",
     reads: ["t2_atom", "t1_notes", "t1_post"],
     description:
-      "What has the owner written that bears on a topic? Searches their notes and the verbatim spans lifted from them, by meaning. Use this first when you want to know their thinking on something.",
+      "What has the owner written that bears on a topic? One semantic search over three corpora at once: quotable spans lifted from their notes, the notes themselves, and their published posts. Each hit says which it is — a post hit carries its live URL, a note hit carries the `id` that `notes_on` reads by. The selection is a machine's; the text inside a span is theirs. Use this first for their thinking on something; use `notes_on` or `posts` to read a whole document once you have its key. Does not search conversations, drafts or repo documents — those match on words, not meaning, through `recent_topics`, `drafts` and `project_docs`.",
     schema: {
       type: "object",
-      properties: { topic: { type: "string", description: "A topic, question, or phrase." } },
+      properties: {
+        topic: { type: "string", description: "A topic, question, or phrase. Matched by meaning, so a sentence works better than a keyword." },
+        kind: { type: "string", description: "note | post | atom — search one corpus instead of all three." },
+      },
       required: ["topic"],
     },
-    async run(env, { topic }, ctx) {
-      const hits = await search(env, topic, { k: probe(ctx) + skip(ctx) });
+    async run(env, { topic, kind }, ctx) {
+      const KINDS = ["note", "post", "atom"];
+      const want = typeof kind === "string" ? kind.trim().toLowerCase() : "";
+      const only = KINDS.includes(want) ? want : null;
+      const hits = await search(env, topic, { k: probe(ctx) + skip(ctx), kind: only });
       // A post hit is the one kind that has somewhere to send a reader. Its ref is
       // the slug, and the permalink is a pure function of it, so the link costs
       // no round trip — and an answer with a link beats one that paraphrases
       // an essay back at its own author. A note hit carries its id, so
       // `notes_on` can be asked for it directly.
-      return cap(
+      const out = cap(
         hits.slice(skip(ctx)).map((h) => ({
           kind: h.kind,
           text: h.label,
-          score: h.score,
+          match_score: h.score,
           ...(h.kind === "post" ? postUrl(env, h.ref) : {}),
           ...(h.kind === "note" ? { id: h.ref } : {}),
         })),
         ctx
       );
+      const complaint = want && !only
+        ? `no corpus called '${want}' — searched all three; this tool knows ${KINDS.join(", ")}`
+        : null;
+      return complaint ? { ...out, note: [out.note, complaint].filter(Boolean).join(" · ") } : out;
     },
   },
 
@@ -544,16 +641,20 @@ export const TOOLS = {
     class: "authored", domain: "mind", kind: "text",
     reads: ["t1_notes"],
     description:
-      "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents, each with the `id` to ask for it by. Pass full:true for the entire text of the single best match, or `id` from a listing to read that exact note without searching again.",
+      "The owner's private notes on a topic, found by meaning. Returns titles by default — a map of what exists, each with the `id` to read it by — and one whole note with `full:true` (the best match) or `id` (that exact note, no search). With no `topic`, a dated listing instead: every note, newest first, narrowed by `folder`, `since` and `until`, which is how to ask what they wrote last week or what a folder holds. Notes are draft thinking, not finished positions; `posts` holds what was argued into shape and published, and `whats_relevant` searches both at once. A note also live in a peer system is said so on the row.",
     schema: {
       type: "object",
       properties: {
-        topic: { type: "string", description: "A topic, question, or phrase. The default way in." },
-        id: { type: "string", description: "The `id` a title listing returned. Fetches that one note whole, no search — the follow-up to a listing." },
+        topic: { type: "string", description: "What the note is about — a phrase, a question, a claim. Matched by meaning, so a sentence works better than a keyword. Omit to list notes by date instead." },
+        id: { type: "string", description: "The `id` a listing returned. Fetches that one note whole, no search — the follow-up to a listing." },
         full: { type: "boolean", description: "Return one whole note instead of a list of titles." },
+        folder: { type: "string", description: "Only notes filed in this folder, by name." },
+        since: { type: "string", description: "ISO date; only notes created on or after it." },
+        until: { type: "string", description: "ISO date; only notes created on or before it." },
+        order: { type: "string", description: "recent (default, newest first) | oldest. Applies to a dated listing; a topic search is ranked by match instead." },
       },
     },
-    async run(env, { topic, id, full }, ctx) {
+    async run(env, { topic, id, full, folder, since, until, order }, ctx) {
       if (full || id) {
         const one = await readOne(env, {
           topic, id, kind: "note", table: "t1_notes", key: "origin_ref", missing: "note",
@@ -564,8 +665,8 @@ export const TOOLS = {
           // second copy.
           select: "title, folder, created, source, uuid, body",
           onClip: (_r, kept, total) =>
-            `body truncated to ${kept} of ${total} chars — this is one of the owner's longer notes; ask about a specific part of it rather than requesting it again`,
-        });
+            `body clipped to ${kept} of ${total} chars — one answer holds this much of the note, and the rest is not reachable by asking again`,
+        }, ctx);
         const peer = peerFor(ctx?.surface, one.rows?.[0]?.source);
         if (!peer) return one;
         // Stated once, on the row it applies to, and it is a fact rather than an
@@ -577,11 +678,78 @@ export const TOOLS = {
           + `and indexed one, that copy is the current one`;
         return { ...one, peer, note: [one.note, said].filter(Boolean).join("; ") };
       }
-      if (!topic) return { rows: [], note: "pass a topic to search by, or an id from an earlier listing" };
+
+      const narrowed = folder || since || until;
+      const folderLike = folder ? folder.trim().toLowerCase() : null;
+      const inWindow = (r) =>
+        (!folderLike || (r.folder ?? "").toLowerCase() === folderLike)
+        && (!since || (r.created ?? "").slice(0, 10) >= since)
+        && (!until || (r.created ?? "").slice(0, 10) <= until);
+
+      if (!topic) {
+        // No topic: a listing by date, off the folder index rather than the
+        // vector index. "What did I write last week" and "what is in the
+        // reading folder" are questions about the record, not about meaning,
+        // and a search cannot answer them without a subject to search for.
+        const by = ordering(order, {
+          recent: "created DESC",
+          oldest: "created ASC",
+        });
+        const rows = await q(
+          env,
+          `SELECT origin_ref AS id, title, folder, substr(created,1,10) AS created
+           FROM t1_notes
+           WHERE (? IS NULL OR lower(COALESCE(folder,'')) = ?)
+             AND (? IS NULL OR substr(created,1,10) >= ?)
+             AND (? IS NULL OR substr(created,1,10) <= ?)
+           ORDER BY ${by.sql}, id
+           LIMIT ? OFFSET ?`,
+          folderLike, folderLike, since ?? null, since ?? null, until ?? null, until ?? null,
+          probe(ctx), skip(ctx)
+        );
+        const [held] = await q(
+          env,
+          `SELECT count(*) AS n, count(DISTINCT folder) AS folders FROM t1_notes
+           WHERE (? IS NULL OR lower(COALESCE(folder,'')) = ?)
+             AND (? IS NULL OR substr(created,1,10) >= ?)
+             AND (? IS NULL OR substr(created,1,10) <= ?)`,
+          folderLike, folderLike, since ?? null, since ?? null, until ?? null, until ?? null
+        );
+        const scope = `${held?.n ?? 0} notes${narrowed ? " matched" : ""}` +
+          (folderLike ? "" : ` across ${held?.folders ?? 0} folders`);
+        if (!rows.length) {
+          return empty(ctx, {
+            scope,
+            note: narrowed
+              ? "no notes in that folder or window — pass a topic to search by meaning instead, or widen the dates"
+              : "no notes are published here",
+          });
+        }
+        return ordered({ ...cap(rows, ctx), scope }, by);
+      }
+
       // The index is ranked, so a page of it is the next `limit` hits past the
-      // ones already shown: ask for that many and drop the head.
-      const hits = await search(env, topic, { k: probe(ctx) + skip(ctx), kind: "note" });
-      return cap(hits.slice(skip(ctx)).map((h) => ({ id: h.ref, title: h.label, score: h.score })), ctx);
+      // ones already shown: ask for that many and drop the head. A folder or
+      // a window on top of a topic filters the hits afterwards, over-fetching
+      // the way `posts` does for `kind`, because the vector index carries no
+      // folder and no date.
+      const want = probe(ctx) + skip(ctx);
+      const hits = await search(env, topic, { k: narrowed ? Math.max(60, want * 3) : want, kind: "note" });
+      let rows = hits.map((h) => ({ id: h.ref, title: h.label, match_score: h.score }));
+      if (narrowed && rows.length) {
+        const refs = rows.map((r) => r.id);
+        const meta = new Map();
+        for (const r of await q(
+          env,
+          `SELECT origin_ref, folder, created FROM t1_notes
+           WHERE origin_ref IN (${refs.map(() => "?").join(",")})`,
+          ...refs
+        )) meta.set(r.origin_ref, r);
+        rows = rows.filter((r) => meta.has(r.id) && inWindow(meta.get(r.id)))
+          .map((r) => ({ ...r, folder: meta.get(r.id).folder, created: (meta.get(r.id).created ?? "").slice(0, 10) }));
+      }
+      if (!rows.length) return empty(ctx, { note: narrowed ? "nothing matched inside that folder or window" : "no note matched" });
+      return cap(rows.slice(skip(ctx)), ctx);
     },
   },
 
@@ -589,7 +757,7 @@ export const TOOLS = {
     class: "intent", domain: "mind", kind: "pointer",
     reads: ["t1_open_thread"],
     description:
-      "Questions the owner has asked themselves and not closed. The best single source of what they are currently chewing on.",
+      "Questions the owner has asked themselves in writing and not closed — the best single source of what they are currently chewing on. Newest first. Each row is an unfinished question, not a position: do not read one as something they concluded. Takes no filter; the whole list pages. For conversations rather than written questions, see `recent_topics`.",
     schema: { type: "object", properties: {} },
     async run(env, _args, ctx) {
       const rows = await q(
@@ -607,26 +775,39 @@ export const TOOLS = {
     class: "authored", domain: "culture", kind: "text",
     reads: ["t1_verdicts"],
     description:
-      "The owner's written opinions on books, films, tv and music — in their own words, with reasoning. The highest-signal material here for judging how they think. Ordered by the rating they gave, highest first: this is the one authored zone carrying no date at all, so recency is not a question these rows can answer.",
+      "The owner's written opinions on books, films, television and music — their own words, with the reasoning, and the rating they gave. Highest-rated first, and that is the only axis: this zone carries no date, so it cannot say what they judged lately. For dated film writing see `reviews`; for the numbers without prose see `ratings`; for what the press thinks see `criticism`.",
     schema: {
       type: "object",
-      properties: { kind: { type: "string", description: "books | films | tv | music" } },
+      properties: { kind: { type: "string", description: "books | films | tv | music — one medium, or all. Singular spellings are accepted." } },
     },
     async run(env, { kind }, ctx) {
       // `ORDER BY created DESC` here was a no-op that read like a promise.
       // media-verdicts.json carries no date and the loader never invents one, so
       // every row's `created` is NULL, the sort fell straight through to `id` —
-      // a content hash — and ten opinions came back in hash order under a
+      // a content hash — and the opinions came back in hash order under a
       // heading that said newest first. The rating is the fact these rows do
       // hold, and it arrives as TEXT off a JSON file, so it is cast rather than
       // compared as a string ('9.5' sorts above '10').
+      //
+      // No `order` on the answer: one axis is not a choice (ADR-0022), and a
+      // stamped axis reads as one the caller could have picked otherwise.
+      const KINDS = { books: 1, films: 1, tv: 1, music: 1 };
+      const picked = mediumKey(kind, KINDS);
+      if (kind && !picked) {
+        return empty(ctx, { note: `no medium called '${kind}' here — this tool knows ${Object.keys(KINDS).join(", ")}` });
+      }
       const sort = "CAST(nullif(rating,'') AS REAL) DESC, subject";
-      const rows = kind
+      const rows = picked
         ? await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts WHERE kind = ?
-            ORDER BY ${sort}, id LIMIT ? OFFSET ?`, kind, probe(ctx), skip(ctx))
+            ORDER BY ${sort}, id LIMIT ? OFFSET ?`, picked, probe(ctx), skip(ctx))
         : await q(env, `SELECT subject, kind, rating, note FROM t1_verdicts
             ORDER BY ${sort}, id LIMIT ? OFFSET ?`, probe(ctx), skip(ctx));
-      return { ...cap(rows, ctx), order: "rated" };
+      const [held] = await q(
+        env,
+        `SELECT count(*) AS n FROM t1_verdicts WHERE (? IS NULL OR kind = ?)`,
+        picked ?? null, picked ?? null
+      );
+      return { ...cap(rows, ctx), scope: `${held?.n ?? 0} verdicts${picked ? ` on ${picked}` : ""}, undated` };
     },
   },
 
@@ -641,7 +822,7 @@ export const TOOLS = {
     readsFor: ({ with_mentions }) =>
       with_mentions ? ["t0_music", "t2_affinity"] : ["t0_music"],
     description:
-      "What the owner actually listens to, straight off the scrobble stream \u2014 revealed preference, as distinct from what they say. The tail is long and quiet: this counts every artist the record has ever heard, most of them played a handful of times, and a truncated answer is the TOP of that list rather than the whole of it. Do not read a short answer as a narrow taste \u2014 `scope` says how many artists it was drawn from, and the ones you did not get are the quiet ones. Pass `artist` to ask whether one act is in there at all, `since`/`until` for a period instead of a lifetime, and order='recent' for what they have been reaching for lately, which is a different list from the all-time count.",
+      "What the owner actually listens to, straight off the scrobble stream — revealed preference, as distinct from what they say they like (`taste_profile`). One row per artist with plays and first/last play dates. The tail is long and quiet: every artist ever scrobbled is counted and most were played a handful of times, so a page is the head of a list whose size `scope` states — never read a short page as a narrow taste. `artist` asks whether one act is in the record at all; `since`/`until` make \"lately\" a different question from \"ever\"; `order:'recent'` is what they have been reaching for, which is not the all-time list. `with_mentions` adds how many of their notes name each artist, which reads the notes and grades the answer accordingly.",
     schema: {
       type: "object",
       properties: {
@@ -649,7 +830,7 @@ export const TOOLS = {
         since: { type: "string", description: "ISO date; only plays on or after it." },
         until: { type: "string", description: "ISO date; only plays on or before it." },
         order: { type: "string", description: "played (default, most plays first) | recent (last reached for) | oldest (fell out of rotation longest ago)" },
-        with_mentions: { type: "boolean", description: "Also say how many of the owner's notes name each artist. Reads their notes, so the call is graded private and returns fewer rows." },
+        with_mentions: { type: "boolean", description: "Also count how many of the owner's notes name each artist. Reads their notes, so the answer is graded as the notes are." },
       },
     },
     async run(env, { artist, since, until, order, with_mentions }, ctx) {
@@ -692,12 +873,12 @@ export const TOOLS = {
       );
 
       if (!scope?.plays) {
-        return {
-          rows: [], returned_count: 0, has_more: false, scope: "0 plays matched",
+        return empty(ctx, {
+          scope: "0 plays matched",
           note: artist
             ? `nothing scrobbled by anything matching '${artist}' \u2014 this record is one service's stream, so absence means it was never scrobbled, not that they have never heard it`
             : "nothing scrobbled in that window \u2014 check last_logged from consumption, the exports lag",
-        };
+        });
       }
 
       const out = rows.map((r) => ({ ...r }));
@@ -728,7 +909,7 @@ export const TOOLS = {
     class: "intent", domain: "commitments", kind: "pointer",
     reads: ["t1_item"],
     description:
-      "What the owner has committed to and where it stands \u2014 the item spine Kairos schedules from. Four families with different lifecycles: tasks are todo/done, habits carry a streak and a cadence, slots are open or filled, constraints are standing rules. Ask with no arguments for what is live right now.",
+      "What the owner has committed to and where it stands \u2014 the item spine their scheduler reads from. Four families with different lifecycles: tasks are todo/done, habits carry a streak and a cadence, slots are open or filled, constraints are standing rules. Ask with no arguments for what is live right now.",
     schema: {
       type: "object",
       properties: {
@@ -819,7 +1000,7 @@ export const TOOLS = {
     class: "authored", domain: "table", kind: "text",
     reads: ["t1_recipe"],
     description:
-      "What the owner actually cooks \u2014 recipes they wrote up and published, with their source links. Small and real: these are ones they made and posted, not a recipe database. Newest publication first \u2014 the undated seed templates sort last, behind everything actually written. Pass full:true for the ingredients and steps of the best match.",
+      "Recipes the owner wrote up and published, with the post each came from. Small and real — what they cooked and posted, not a database. Newest publication first; undated seed templates sort last. `full:true` returns ingredients and steps for the best match. For what they eat out, see `places`.",
     schema: {
       type: "object",
       properties: {
@@ -848,12 +1029,12 @@ export const TOOLS = {
            FROM t1_recipe WHERE ${match} ORDER BY ${RECIPE_ORDER} LIMIT 1`,
           ...binds
         );
-        if (!rows.length) return { rows: [], note: "no recipe matched" };
+        if (!rows.length) return empty(ctx, { note: "no recipe matched" });
         const r = rows[0];
         // Both columns are JSON on the wire \u2014 D1 has no list type \u2014 so parse
         // here rather than handing a reader a string that only looks like data.
         const parse = (v) => { try { return JSON.parse(v || "[]"); } catch { return []; } };
-        return cap([{ ...r, ingredients: parse(r.ingredients), steps: parse(r.steps) }], ctx);
+        return single({ ...r, ingredients: parse(r.ingredients), steps: parse(r.steps) });
       }
 
       const rows = await q(
@@ -863,24 +1044,33 @@ export const TOOLS = {
          FROM t1_recipe WHERE ${match} ORDER BY ${RECIPE_ORDER}, id LIMIT ? OFFSET ?`,
         ...binds, probe(ctx), skip(ctx)
       );
-      return ordered(cap(rows, ctx), { order: "recent" });
+      // One axis, so no `order` on the answer (ADR-0022): newest publication
+      // first is what the description says, and stamping it would read as a
+      // choice the caller could have made otherwise.
+      const [held] = await q(env, `SELECT count(*) AS n FROM t1_recipe WHERE ${match}`, ...binds);
+      return { ...cap(rows, ctx), scope: `${held?.n ?? 0} recipes${like ? " matched" : ""}` };
     },
   },
   drafts: {
     class: "authored", domain: "mind", kind: "text",
     reads: ["t1_draft"],
     description:
-      "Longform pieces the owner is in the middle of writing \u2014 the state between a private note and a published post. Ask with no arguments for everything open, oldest-touched last. `stale_days` finds the ones that have gone cold, which is the question a writer cannot answer about themselves. Pass full:true for the whole text of one, or `id` (a slug from a listing) for that exact draft.",
+      "Longform pieces the owner is in the middle of writing — between a private note and a published post. With no arguments, everything open, most recently touched first, each with its word count and days since touched. `stale_days` finds what has gone cold, which is the question a writer cannot answer about themselves; `order:'oldest'` is the same question as a sort. `full:true` returns the whole text of the best match; `id` is a draft's `slug` as a listing returned it. A draft absent here was never started or is already published (`posts`); it is not evidence the idea does not exist in `notes_on`.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against title or text." },
-        id: { type: "string", description: "A draft's `slug`, as a listing returned it. Fetches that one draft whole." },
+        id: { type: "string", description: "A draft's `slug`, exactly as the listing returned it. Returns that draft whole." },
         stale_days: { type: "number", description: "Only drafts untouched for at least this many days." },
         full: { type: "boolean", description: "Return the entire text of the best match." },
+        order: { type: "string", description: "recent (default, last touched first) | oldest (longest untouched first)" },
       },
     },
-    async run(env, { topic, id, stale_days, full }, ctx) {
+    async run(env, { topic, id, stale_days, full, order }, ctx) {
+      const by = ordering(order, {
+        recent: "modified DESC",
+        oldest: "modified ASC",
+      });
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const match = "(? IS NULL OR lower(title) LIKE ? OR lower(body) LIKE ?)";
       const stale = "(? IS NULL OR julianday('now') - julianday(modified) >= ?)";
@@ -896,39 +1086,41 @@ export const TOOLS = {
           : await q(env, `SELECT title, slug, description, started, modified, words, state, body
                           FROM t1_draft WHERE ${match} AND ${stale} ORDER BY modified DESC, id LIMIT 1`,
                     ...binds);
-        if (!rows.length) return { rows: [], note: id ? `no draft with slug '${id}'` : "no draft matched" };
+        if (!rows.length) return empty(ctx, { note: id ? `no draft with slug '${id}'` : "no draft matched" });
         const d = rows[0];
         const envelope = JSON.stringify({ ...d, body: "", note: "" }).length;
         const budget = MAX_BYTES - envelope - 200;
         const clipped = (d.body ?? "").length > budget;
-        return {
-          rows: [{ ...d, body: clipped ? d.body.slice(0, budget) : d.body }],
-          ...(clipped ? { note: `body truncated to ${budget} of ${d.body.length} chars` } : {}),
-        };
+        return single(
+          { ...d, body: clipped ? d.body.slice(0, budget) : d.body },
+          clipped ? { note: `body clipped to ${budget} of ${d.body.length} chars — one answer holds this much of the draft` } : {}
+        );
       }
 
       const rows = await q(
         env,
         `SELECT title, slug, description, started, modified, words, state,
                 CAST(julianday('now') - julianday(modified) AS INTEGER) AS days_since_touched
-         FROM t1_draft WHERE ${match} AND ${stale} ORDER BY modified DESC, id LIMIT ? OFFSET ?`,
+         FROM t1_draft WHERE ${match} AND ${stale} ORDER BY ${by.sql}, id LIMIT ? OFFSET ?`,
         ...binds, probe(ctx), skip(ctx)
       );
       if (!rows.length) {
-        return {
-          rows: [],
+        return empty(ctx, {
           // An empty answer here has two very different meanings and the caller
           // cannot tell them apart, so say which one it is.
           note: topic || stale_days
             ? "nothing matched — there may still be other drafts open"
             : "no drafts are in progress right now",
-        };
+        });
       }
-      return cap(rows, ctx);
+      return ordered(cap(rows, ctx), by);
     },
   },
   medium: {
     class: "lens", domain: "*", kind: "mixed",
+    // One row, or a directory of at most a handful: nothing here is a list a
+    // caller could page, so tools/list does not advertise limit/offset on it.
+    pages: false,
     reads: [
       "t0_anime",
       "t0_beer",
@@ -942,17 +1134,17 @@ export const TOOLS = {
       "t1_visits",
     ],
     description:
-      "Everything about one medium in a single call: how much of it the owner consumes, how they rate it ON ITS OWN SCALE, what they own, and what they have written about it. Answering 'what are they like about film' otherwise takes four calls to four tools, and an assistant has to know all four exist.",
+      "Everything about one medium in a single call: how much of it the owner has consumed and how current that record is, how they rate it on its own scale with the top few, what they own of it, and how much they have written about it. With no `name`, a directory of the media this record holds with a count for each. One row, not a list — `ratings`, `collection`, `verdicts` and `consumption` page the same facts separately. A medium not in the directory is not held here, which says nothing about whether the owner consumes it.",
     schema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "film | book | tv | anime | music | beer | restaurant" },
+        name: { type: "string", description: "film | book | tv | anime | music | beer | restaurant. Singular; plurals are accepted. Omit for the directory." },
       },
     },
-    async run(env, { name }, ctx) {
+    async run(env, { name: asked }, ctx) {
       // Shelf-aware, like `consumption`: t0_book is the whole Goodreads library
-      // and 436 of its rows are to-read, so an unfiltered count reports 920
-      // books read when the number is 443.
+      // and a shelved book has been read exactly as much as a queued one, so an
+      // unfiltered count reports the library as the reading.
       const M = {
         film:  { table: "t0_film",   unit: "films",      verdicts: "films",
                  rate: { col: "rating",       scale: "0-5",  label: "title",      url: "origin_ref" },
@@ -1004,7 +1196,8 @@ export const TOOLS = {
 
       // No name: the directory, so an assistant can pick one rather than guess a
       // label. Cheaper than returning six full profiles and blowing the cap.
-      if (!name || !M[name]) return directory(name);
+      const name = mediumKey(asked, M);
+      if (!name) return directory(asked);
 
       const d = M[name];
       const base = await countOf(d);
@@ -1108,8 +1301,8 @@ export const TOOLS = {
       if (name === "anime") notes.push(COUNT_GAP);
       if (!d.rate) {
         // The one place this sentence was wrong. Trakt carries no ratings, so
-        // "he does not rate television" was true of the SOURCE and false of
-        // him — the anime half of the same medium is rated item by item, and an
+        // "they do not rate television" was true of the SOURCE and false of
+        // them — the anime half of the same medium is rated item by item, and an
         // assistant told otherwise stopped looking.
         const rated = name === "tv" ? await countOf(M.anime) : null;
         notes.push(
@@ -1118,7 +1311,11 @@ export const TOOLS = {
             : `the owner does not rate ${name} item by item — the counts are the record`);
       }
 
-      return { rows: [rec], ...(notes.length ? { note: notes.join(" · ") } : {}) };
+      // Through cap() like every other answer, so the one row carries the same
+      // envelope a page does and a client keyed on has_more reads false, not
+      // undefined.
+      const out = cap([rec], ctx);
+      return { ...out, ...(notes.length ? { note: [out.note, ...notes].filter(Boolean).join(" · ") } : {}) };
     },
   },
 
@@ -1131,18 +1328,18 @@ export const TOOLS = {
     readsFor: ({ medium }) => ({
       music: ["t0_music"], books: ["t0_book"], films: ["t0_film"],
       beer: ["t0_beer"], tv: ["t0_tv"],
-    })[medium] ?? ["t0_beer", "t0_book", "t0_film", "t0_music", "t0_tv"],
+    })[mediumKey(medium, CONSUMPTION_MEDIA)] ?? ["t0_beer", "t0_book", "t0_film", "t0_music", "t0_tv"],
     description:
-      "Shape and recency of what the owner consumes, per medium: how much, and how current the record is. Returns aggregates, not a list of titles.",
+      "How much of each medium the owner has consumed and how current each record is — totals and `last_logged` per medium, never titles. Read `last_logged` before trusting any answer about \"lately\": the exports lag by months and a stale source reads as someone who stopped. `medium` returns the same numbers for one medium with its ratings and ownership beside them.",
     schema: {
       type: "object",
-      properties: { medium: { type: "string", description: "music | books | films | beer" } },
+      properties: { medium: { type: "string", description: "music | books | films | tv | beer. Plural; singular spellings are accepted. Omit for all." } },
     },
     async run(env, { medium }, ctx) {
-      // t0_book is the whole Goodreads library, not a reading log: 436 of its
-      // rows are to-read and 38 partly-read, and `created` falls back to
-      // date_added, so a shelved book looks consumed. Reporting one total said
-      // 920 books were read when the number is 443.
+      // t0_book is the whole Goodreads library, not a reading log: most of
+      // its rows are shelved rather than read, and `created` falls back to
+      // date_added, so a shelved book looks consumed. One total over the
+      // library reports the queue as the reading.
       const T = {
         music: { table: "t0_music", where: "" },
         books: { table: "t0_book",  where: "WHERE shelf = 'read'" },
@@ -1150,7 +1347,11 @@ export const TOOLS = {
         tv:    { table: "t0_tv",    where: "" },
         beer:  { table: "t0_beer",  where: "" },
       };
-      const picked = medium ? { [medium]: T[medium] } : T;
+      const key = mediumKey(medium, T);
+      if (medium && !key) {
+        return empty(ctx, { note: `no medium called '${medium}' here — this tool knows ${Object.keys(T).join(", ")}` });
+      }
+      const picked = key ? { [key]: T[key] } : T;
       const out = [];
       for (const [name, d] of Object.entries(picked)) {
         if (!d) continue;
@@ -1162,8 +1363,8 @@ export const TOOLS = {
         const rec = { medium: name, total: row?.n ?? 0, last_logged: row?.last_logged ?? null };
         // Beer rows are check-ins, not distinct beers.
         if (name === "tv") {
-          // Shows and episodes are different questions: 358 shows is what is
-          // watched, 7,719 episodes is how much.
+          // Shows and episodes are different questions: the show count is what
+          // is watched, the episode count is how much.
           const [e] = await q(env, `SELECT sum(episodes_watched) AS n FROM t0_tv`);
           rec.total_label = "shows";
           rec.episodes_watched = e?.n ?? null;
@@ -1196,7 +1397,7 @@ export const TOOLS = {
     class: "authored", domain: "mind", kind: "text",
     reads: ["t1_post"],
     description:
-      "The owner's published blog — articles, essays, lists, project write-ups — as opposed to the private notes behind them. Searches by meaning and returns each post's live URL and its `slug`. Pass full:true for the entire text of the best match, or `id` (a slug from a listing) to read that exact post.",
+      "The owner's published blog — essays, articles, lists, project write-ups — found by meaning, as opposed to the private notes behind them. Each hit carries its live URL, its `slug`, and a one-line description. `full:true` returns the whole text of the best match; `id` is a slug from a listing. These are public and finished; the same idea may exist earlier and rougher in `notes_on` or `drafts`. `kind` narrows to one post type after the search.",
     schema: {
       type: "object",
       properties: {
@@ -1215,19 +1416,19 @@ export const TOOLS = {
           topic, id, kind: "post", table: "t1_post", key: "slug", missing: "post",
           select: "title, url, published, kind, words, body",
           onClip: (r, kept, total) =>
-            `body truncated to ${kept} of ${total} chars — the whole post is public at ${r.url}`,
-        });
+            `body clipped to ${kept} of ${total} chars — the whole post is public at ${r.url}`,
+        }, ctx);
       }
       // Over-fetch, then filter: the vector index carries no post kind, so a
-      // kind filter applied after the search would return 3 rows out of 20 and
-      // look like the blog is empty on that kind.
-      if (!topic) return { rows: [], note: "pass a topic to search by, or an id (slug) from an earlier listing" };
+      // kind filter applied after the search would return a few rows out of a
+      // page and look like the blog is empty on that kind.
+      if (!topic) return empty(ctx, { note: "pass a topic to search by, or an id (slug) from an earlier listing" });
       const want = probe(ctx) + skip(ctx);
       const hits = await search(env, topic, { k: kind ? Math.max(60, want * 3) : want, kind: "post" });
-      if (!hits.length) return { rows: [], note: "nothing on the blog matched" };
+      if (!hits.length) return empty(ctx, { note: "nothing on the blog matched" });
 
       const slugs = hits.map((h) => h.ref).filter(Boolean);
-      if (!slugs.length) return { rows: [], note: "nothing on the blog matched" };
+      if (!slugs.length) return empty(ctx, { note: "nothing on the blog matched" });
 
       const meta = new Map();
       for (const r of await q(
@@ -1244,10 +1445,10 @@ export const TOOLS = {
         if (kind && (m.kind || "").toLowerCase() !== kind.toLowerCase()) continue;
         rows.push({
           slug: m.slug, title: m.title, url: m.url, published: m.published,
-          kind: m.kind, words: m.words, description: m.description, score: h.score,
+          kind: m.kind, words: m.words, description: m.description, match_score: h.score,
         });
       }
-      if (!rows.length) return { rows: [], note: `matched posts, but none of kind '${kind}'` };
+      if (!rows.length) return empty(ctx, { note: `matched posts, but none of kind '${kind}'` });
       return cap(rows.slice(skip(ctx)), ctx);
     },
   },
@@ -1256,7 +1457,7 @@ export const TOOLS = {
     class: "world", domain: "world", kind: "entity",
     reads: ["t0_event"],
     description:
-      "Upcoming DC events the owner could actually go to \u2014 a live pool merged from eight sources (library, theatre, improv, cinema, parties, music venues). Recurring series are collapsed to their next date, and no single source is allowed to dominate the answer. Filter by a topic word or free-only; pair with `taste_profile` for the venues and orgs they rate.",
+      "Upcoming events the owner could go to — a pool merged from the local feeds this instance follows, soonest first, from today unless `from` says otherwise. Recurring programmes are collapsed to their next date with an occurrence count, and no single feed may fill the answer, so a page is a spread across sources rather than a slice of one — `scope` states the spread. `topic` matches title, venue or description; `free` keeps only free ones; `from`/`to` bound the window and a past window returns the past. This is a candidate pool, not a recommendation: pair with `taste_profile` for the venues and organisers they say they rate.",
     schema: {
       type: "object",
       properties: {
@@ -1331,15 +1532,37 @@ export const TOOLS = {
                 -- the series disagrees rather than reporting max(free) and
                 -- sending the reader to a paid night expecting a free one.
                 CASE WHEN free_min <> free_max THEN 1 END AS price_varies
-         FROM ranked WHERE rn <= 4
+         FROM ranked WHERE rn <= ?
          -- One row per (title, feed) after the collapse, so those two make the
          -- order total; url last so the lint that reads this clause can see it.
          ORDER BY start, title, feed, url
          LIMIT ? OFFSET ?`,
         from ?? null, to ?? null, to ?? null,
-        like, like, like, like, free ? 1 : null, probe(ctx), skip(ctx)
+        like, like, like, like, free ? 1 : null, FEED_SHARE, probe(ctx), skip(ctx)
       );
-      return cap(rows, ctx);
+      // The population, and the shape of the cut (ADR-0023). The round-robin
+      // runs BEFORE the page, so `offset` walks the spread of FEED_SHARE per
+      // feed and never the whole pool — stated here rather than lifted, because
+      // lifting it past page one would make page two a slice of a different
+      // list from page one, which is the one thing a page walk must not be.
+      const [held] = await q(
+        env,
+        `SELECT count(*) AS programmes, count(DISTINCT feed) AS feeds
+         FROM (SELECT title, feed FROM t0_event
+               WHERE substr(start, 1, 10) >= COALESCE(?, date('now'))
+                 AND (? IS NULL OR substr(start, 1, 10) <= ?)
+                 AND (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(venue,'')) LIKE ?
+                                OR lower(COALESCE(description,'')) LIKE ?)
+                 AND (? IS NULL OR free = 1)
+               GROUP BY title, feed)`,
+        from ?? null, to ?? null, to ?? null, like, like, like, like, free ? 1 : null
+      );
+      return {
+        ...cap(rows, ctx),
+        scope: `${held?.programmes ?? 0} upcoming programmes across ${held?.feeds ?? 0} feeds` +
+          `${from ? ` from ${from}` : ""}${to ? ` to ${to}` : ""}; a page holds at most ${FEED_SHARE} per feed, ` +
+          "so offset walks that spread rather than the pool — narrow with topic or from/to to reach the rest",
+      };
     },
   },
 
@@ -1347,13 +1570,14 @@ export const TOOLS = {
     class: "world", domain: "culture", kind: "entity",
     reads: ["t0_release", "t0_music", "t1_collection"],
     description:
-      "Records that came out lately in the scenes the owner listens to, with what they have NOT already heard removed. This is the one tool that can surface an artist with no listeners yet: the pool is crawled by SCENE — a tag, a label roster, a critic's byline, whichever the instance uses — rather than by similarity to what they already play, so it reaches releases a `getSimilar` recommendation structurally cannot. It does NOT rank by preference and will not tell you what they would like \u2014 it attaches the measured facts (their lifetime plays of that artist, whether they own anything by it, how many scenes surfaced it) and leaves the judgement to you. order='unfamiliar' is the discovery axis; order='familiar' is new work by artists already in heavy rotation.",
+      "Records that came out recently in the scenes the owner follows, with anything they have already scrobbled or own removed — the count removed is stated. The pool is crawled by scene, not by similarity to what they play, so it can surface an artist with no listeners yet; a record absent from it was never looked at, not rejected. Each row carries the measured facts — lifetime plays of that artist, whether anything by them is owned, how many scenes surfaced it — and no judgement. `order:'unfamiliar'` is the discovery axis; `'familiar'` is new work by artists already in rotation; `'spread'` is what the most scenes agree on. `include_heard:true` keeps the removed ones. An unfiltered page is spread across scenes, which `scope` states.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against artist, title or label." },
-        scene: { type: "string", description: "One scene tag, e.g. 'digicore' or 'post-hardcore'." },
+        scene: { type: "string", description: "One scene tag, as the crawl labels them — every row carries its `scenes`, so an unfiltered call shows the vocabulary." },
         since: { type: "string", description: "ISO date. Only records released on or after it." },
+        until: { type: "string", description: "ISO date. Only records released on or before it." },
         include_heard: {
           type: "boolean",
           description: "Keep records they have already scrobbled or own. Off by default; the count removed is reported either way.",
@@ -1364,7 +1588,7 @@ export const TOOLS = {
         },
       },
     },
-    async run(env, { topic, scene, since, include_heard, order }, ctx) {
+    async run(env, { topic, scene, since, until, include_heard, order }, ctx) {
       const by = ordering(order, {
         // Every axis ends on `url`, which is the only unique column in the
         // pool: two labels can announce the same artist and title on the same
@@ -1380,7 +1604,7 @@ export const TOOLS = {
       });
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const inScene = scene ? `%${scene.toLowerCase()}%` : null;
-      const share = topic || scene ? 1000 : 3;
+      const share = topic || scene ? 1000 : SCENE_SHARE;
 
       // Aggregated once and joined, never correlated per row: t0_music is 40k
       // scrobbles and the pool is thousands of releases, so a subquery per
@@ -1403,11 +1627,12 @@ export const TOOLS = {
           LEFT JOIN heard h ON h.a = lower(r.artist) AND h.t = lower(r.title)
           LEFT JOIN owns  o ON o.a = lower(r.artist) AND o.t = lower(r.title)
           WHERE (? IS NULL OR r.release_date >= ?)
+            AND (? IS NULL OR r.release_date <= ?)
             AND (? IS NULL OR lower(r.scenes) LIKE ?)
             AND (? IS NULL OR lower(r.artist) LIKE ? OR lower(r.title) LIKE ?
                            OR lower(COALESCE(r.label,'')) LIKE ?)
         )`;
-      const binds = [since ?? null, since ?? null, inScene, inScene, like, like, like, like];
+      const binds = [since ?? null, since ?? null, until ?? null, until ?? null, inScene, inScene, like, like, like, like];
 
       const rows = await q(
         env,
@@ -1434,44 +1659,58 @@ export const TOOLS = {
       );
 
       // The exclusion is the point of this tool, so it is stated rather than
-      // performed silently: an answer that dropped forty records he has already
-      // worn out is a different answer from one that had forty fewer candidates.
-      const [{ n: removed }] = await q(
-        env, `${POOL} SELECT count(*) AS n FROM pool WHERE scrobbled = 1 OR owned = 1`, ...binds);
+      // performed silently: an answer that dropped forty records they have
+      // already worn out is a different answer from one that had forty fewer
+      // candidates. Counted with the population it was cut from (ADR-0023).
+      const [held] = await q(
+        env,
+        `${POOL} SELECT count(*) AS matched,
+                        sum(CASE WHEN scrobbled = 1 OR owned = 1 THEN 1 ELSE 0 END) AS heard
+                 FROM pool`,
+        ...binds);
+      const matched = held?.matched ?? 0;
+      const removed = held?.heard ?? 0;
+      const kept = include_heard ? matched : matched - removed;
 
-      const notes = [POOL_GAP];
+      const notes = [poolGap(ctx)];
       if (!include_heard && removed) notes.push(`${removed} already heard or owned, removed`);
+      const scope = `${kept} candidates${topic || scene || since || until ? " matched" : ""}` +
+        (share === SCENE_SHARE
+          ? `; an unfiltered page holds at most ${SCENE_SHARE} per scene, so offset walks that spread rather than the pool — narrow with topic or scene to reach the rest`
+          : "");
       if (!rows.length) {
         const [{ n }] = await q(env, `SELECT count(*) AS n FROM t0_release`);
-        return {
-          rows: [], returned_count: 0, has_more: false, order: by.order,
+        return empty(ctx, {
+          order: by.order,
+          scope,
           note: [n ? `nothing in ${n} candidates matched` : "the release pool is empty — no crawl has landed yet",
                  ...notes].join(" \u00b7 "),
-        };
+        });
       }
-      const out = ordered(cap(rows, ctx), by);
+      const out = ordered({ ...cap(rows, ctx), scope }, by);
       return { ...out, note: [out.note, ...notes].filter(Boolean).join(" \u00b7 ") };
     },
   },
 
   // The empty cell ADR-0015's grid left in `culture`: every culture tool reads
-  // something he did or owns, and nothing said what the world was saying about
-  // any of it. `events` was the only `class: "world"` tool on the surface.
+  // something the owner did or owns, and nothing said what the world was saying
+  // about any of it. `events` was the only `class: "world"` tool on the surface.
   criticism: {
     class: "world", domain: "culture", kind: "text",
     reads: ["t0_criticism"],
     description:
-      "What the music press is publishing \u2014 titles, bylines, dates and the outlet's own blurb, from the underground outlets the owner follows, with the link to the piece. SOMEBODY ELSE'S WRITING, never his: quote it as the outlet's, and answer with the link rather than a paraphrase. Use it for what is being said about a scene or an artist right now, which is the one thing this record cannot answer from his own consumption. Pair with `taste` for whether he already plays what is being written about.",
+      "What the music press is publishing — headline, byline, date, the outlet's own blurb and the link — from the outlets this record follows. Somebody else's writing, never the owner's: attribute it to the outlet. Use it for what is being said about a scene or an artist now, which nothing in the owner's own record can answer. No outlet may fill an unfiltered page, which `scope` states; a `topic` or `outlet` search returns every match. Pair with `taste` for whether they already play what is being written about.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against the headline, blurb, tags or byline." },
         outlet: { type: "string", description: "One outlet, by name or slug (e.g. 'no-bells')." },
         since: { type: "string", description: "ISO date. Only pieces published on or after it." },
+        until: { type: "string", description: "ISO date. Only pieces published on or before it." },
         order: { type: "string", description: "recent (default) | oldest." },
       },
     },
-    async run(env, { topic, outlet, since, order }, ctx) {
+    async run(env, { topic, outlet, since, until, order }, ctx) {
       const by = ordering(order, {
         recent: "published DESC, url",
         oldest: "published ASC, url",
@@ -1487,7 +1726,7 @@ export const TOOLS = {
       // browse; on a topic search the caller wants the matches, and capping
       // them per outlet would hide four of five pieces about one record because
       // they ran in the same place.
-      const share = topic || who ? 1000 : 3;
+      const share = topic || who ? 1000 : SCENE_SHARE;
 
       const rows = await q(
         env,
@@ -1495,6 +1734,7 @@ export const TOOLS = {
            SELECT outlet, outlet_slug, byline, title, url, published, summary, chars, tags
            FROM t0_criticism
            WHERE (? IS NULL OR published >= ?)
+             AND (? IS NULL OR published <= ?)
              AND (? IS NULL OR lower(outlet_slug) = ? OR lower(outlet) = ?)
              AND (? IS NULL OR lower(title) LIKE ?
                             OR lower(COALESCE(summary,'')) LIKE ?
@@ -1516,10 +1756,29 @@ export const TOOLS = {
          ORDER BY ${by.sql}
          LIMIT ? OFFSET ?`,
         since ?? null, since ?? null,
+        until ?? null, until ?? null,
         who, who, who,
         like, like, like, like, like,
         share, probe(ctx), skip(ctx)
       );
+
+      const [held] = await q(
+        env,
+        `SELECT count(*) AS n, count(DISTINCT outlet_slug) AS outlets FROM t0_criticism
+         WHERE (? IS NULL OR published >= ?)
+           AND (? IS NULL OR published <= ?)
+           AND (? IS NULL OR lower(outlet_slug) = ? OR lower(outlet) = ?)
+           AND (? IS NULL OR lower(title) LIKE ?
+                          OR lower(COALESCE(summary,'')) LIKE ?
+                          OR lower(COALESCE(tags,'')) LIKE ?
+                          OR lower(COALESCE(byline,'')) LIKE ?)`,
+        since ?? null, since ?? null, until ?? null, until ?? null,
+        who, who, who, like, like, like, like, like
+      );
+      const scope = `${held?.n ?? 0} pieces${topic || who || since || until ? " matched" : ""} across ${held?.outlets ?? 0} outlets` +
+        (share === SCENE_SHARE
+          ? `; an unfiltered page holds at most ${SCENE_SHARE} per outlet, so offset walks that spread rather than the pool — narrow with topic or outlet to reach the rest`
+          : "");
 
       // An empty answer is explained, and the two reasons are not the same
       // answer. "Nothing matched" is a fact about the question; "the press has
@@ -1528,17 +1787,15 @@ export const TOOLS = {
       // an artist all year.
       if (!rows.length) {
         const [{ n }] = await q(env, `SELECT count(*) AS n FROM t0_criticism`);
-        return {
-          rows: [],
-          returned_count: 0,
-          has_more: false,
+        return empty(ctx, {
+          scope,
           note: n
             ? `nothing in ${n} collected pieces matched`
             : "no press has been collected yet — this is an empty zone, not an empty week",
           order: by.order,
-        };
+        });
       }
-      return ordered(cap(rows, ctx), by);
+      return ordered({ ...cap(rows, ctx), scope }, by);
     },
   },
 
@@ -1546,10 +1803,28 @@ export const TOOLS = {
     class: "authored", domain: "world", kind: "judgement",
     reads: ["t1_taste"],
     description:
-      "What the owner SAYS they like — stated preferences: venues and orgs they rate, things they seek out, things they avoid. Distinct from `taste`, which is revealed behaviour (play counts). When the two disagree, that gap is usually the interesting part.",
-    schema: { type: "object", properties: {} },
-    async run(env, _args, ctx) {
-      const rows = await q(env, `SELECT kind, key, value FROM t1_taste ORDER BY kind, key, id LIMIT ? OFFSET ?`, probe(ctx), skip(ctx));
+      "What the owner says they like and will not have — stated preferences and standing constraints, as key/value rows grouped by kind: venues and organisers they rate, things they seek out, things they avoid, allergies and rules. Distinct from `taste`, which is what they measurably play; where the two disagree is usually the interesting part. Constraints are not preferences to weigh — a suggestion that breaks one is not worth making.",
+    schema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", description: "One kind of preference, e.g. constraint, dining, outing, event. Omit for all." },
+      },
+    },
+    async run(env, { kind }, ctx) {
+      const want = typeof kind === "string" && kind.trim() ? kind.trim().toLowerCase() : null;
+      const rows = await q(
+        env,
+        `SELECT kind, key, value FROM t1_taste
+         WHERE (? IS NULL OR lower(kind) = ?)
+         ORDER BY kind, key, id LIMIT ? OFFSET ?`,
+        want, want, probe(ctx), skip(ctx)
+      );
+      if (!rows.length && want) {
+        const kinds = await q(env, `SELECT DISTINCT kind FROM t1_taste ORDER BY kind`);
+        return empty(ctx, {
+          note: `no preferences of kind '${kind}' — this record holds ${kinds.map((r) => r.kind).join(", ") || "none"}`,
+        });
+      }
       return cap(rows, ctx);
     },
   },
@@ -1561,7 +1836,7 @@ export const TOOLS = {
     class: "lens", domain: "*", kind: "mixed",
     reads: ["t0_book", "t0_film", "t0_music", "t0_tv", "t1_notes"],
     description:
-      "What was going on around a period: what the owner wrote, listened to, read or watched. Answers 'what were they thinking about in March' — a window, not a topic. Periods are forgotten more easily than subjects, so this is often the useful lens.",
+      "What was going on in a window of dates: what the owner wrote, played, watched and read between `from` and `to`. A period, not a topic — the lens for \"what was I thinking about in March\". Rows interleave the media so a heavy month in one cannot crowd out the others, and `scope` counts what the window actually held; `limit` and `offset` page through the whole interleave. For one medium in depth over the same window, use that medium's own tool with `since`/`until`.",
     schema: {
       type: "object",
       properties: {
@@ -1571,19 +1846,28 @@ export const TOOLS = {
       required: ["from", "to"],
     },
     async run(env, { from, to }, ctx) {
+      // Each branch fetches as far into its window as the page could reach.
+      // The per-branch head used to be a hand-sized constant (8, 5, 4, 4, 4),
+      // which made `limit` a no-op above the sum and `has_more` false while the
+      // window held hundreds. Fetching `offset + limit` per branch, plus the
+      // probe row, means the interleave is exact for every row the page can
+      // show, and a walk by offset reaches the whole window. OFFSET is bound
+      // to 0 on every branch: the page is over the interleave, not over any
+      // one branch, so the skip happens after the merge.
+      const head = Math.min(skip(ctx) + pageSize(ctx), MAX_ROWS) + 1;
       const notes = await q(
         env,
         `SELECT 'note' AS kind, title AS label, substr(created,1,10) AS when_
          FROM t1_notes WHERE substr(created,1,10) BETWEEN ? AND ?
-         ORDER BY created, id LIMIT 8`,
-        from, to
+         ORDER BY created, id LIMIT ? OFFSET ?`,
+        from, to, head, 0
       );
       const music = await q(
         env,
         `SELECT 'artist' AS kind, artist AS label, count(*) AS plays
          FROM t0_music WHERE substr(created,1,10) BETWEEN ? AND ?
-         GROUP BY artist ORDER BY plays DESC, artist LIMIT 5`,
-        from, to
+         GROUP BY artist ORDER BY plays DESC, artist LIMIT ? OFFSET ?`,
+        from, to, head, 0
       );
       // Ratings ride along: "X was watched" and "X was watched and rated 5"
       // are different facts, and the second is the one worth having. Each
@@ -1594,8 +1878,8 @@ export const TOOLS = {
         `SELECT 'film' AS kind, title AS label, substr(created,1,10) AS when_,
                 nullif(CAST(rating AS TEXT),'') AS rating, '0-5' AS scale
          FROM t0_film WHERE substr(created,1,10) BETWEEN ? AND ?
-         ORDER BY created, id LIMIT 4`,
-        from, to
+         ORDER BY created, id LIMIT ? OFFSET ?`,
+        from, to, head, 0
       );
       const books = await q(
         env,
@@ -1603,8 +1887,8 @@ export const TOOLS = {
                 nullif(CAST(my_rating AS TEXT),'0') AS rating, '0-5' AS scale
          FROM t0_book WHERE substr(created,1,10) BETWEEN ? AND ?
            AND shelf = 'read'
-         ORDER BY created, id LIMIT 4`,
-        from, to
+         ORDER BY created, id LIMIT ? OFFSET ?`,
+        from, to, head, 0
       );
       // The scale string is doing real work on this branch. A show is IN the
       // window because its last episode was, and the number beside it is every
@@ -1618,35 +1902,34 @@ export const TOOLS = {
                 CAST(episodes_watched AS TEXT) AS rating,
                 'episodes watched in total, not in this window' AS scale
          FROM t0_tv WHERE substr(created,1,10) BETWEEN ? AND ?
-         ORDER BY created, id LIMIT 4`,
-        from, to
+         ORDER BY created, id LIMIT ? OFFSET ?`,
+        from, to, head, 0
       );
-      // Interleaved, not concatenated. The per-branch LIMITs above exist so a
-      // heavy film month cannot discard the books — but 8+5+4+4+4 is 25 against
-      // a 20-row cap, so concatenating handed the cap the same starvation from
-      // the other end: in a full month (March 2026 fills every branch) books
-      // lost one row and television lost all four, every time. Round-robin
-      // means the cap trims the tail of each source rather than the last source
-      // whole.
+      // Interleaved, not concatenated. The branches are fetched separately so
+      // a heavy film month cannot discard the books — but concatenating handed
+      // the page the same starvation from the other end: the last branch lost
+      // every row. Round-robin means the page trims the tail of each source
+      // rather than the last source whole, and the order is exact for every
+      // round the branches were fetched deep enough to fill.
       const branches = [notes, music, films, books, tv];
       const all = [];
       for (let i = 0; branches.some((b) => i < b.length); i++) {
         for (const b of branches) if (i < b.length) all.push(b[i]);
       }
       if (!all.length) {
-        return { rows: [], returned_count: 0, has_more: false,
-                 note: `nothing recorded between ${from} and ${to} — check the last_logged dates from consumption, the exports lag` };
+        return empty(ctx, {
+          scope: `${from} → ${to} held nothing`,
+          note: `nothing recorded between ${from} and ${to} — check the last_logged dates from consumption, the exports lag`,
+        });
       }
       // What the window actually held, beside what fit in it (ADR-0023 §1).
-      // The per-branch limits above are small by necessity, and music is the
-      // worst of them: five artists off a month that can hold three hundred.
-      // A reader handed five rows and no denominator concluded the month WAS
-      // five artists, which is the one thing this tool must not let them do.
-      // One statement, six subqueries, and the window bound six times over —
-      // rather than `?1`/`?2` bound once, which SQLite understands and every
-      // other statement in this file does not use. Consistency is worth two
-      // lines here: the binds are generated, so they cannot fall out of step
-      // with the placeholders by hand.
+      // A reader handed five artists and no denominator concluded the month
+      // WAS five artists, which is the one thing this tool must not let them
+      // do. One statement, six subqueries, and the window bound six times
+      // over — rather than `?1`/`?2` bound once, which SQLite understands and
+      // every other statement in this file does not use. Consistency is worth
+      // two lines here: the binds are generated, so they cannot fall out of
+      // step with the placeholders by hand.
       const IN_WINDOW = "substr(created,1,10) BETWEEN ? AND ?";
       const [held] = await q(
         env,
@@ -1665,13 +1948,22 @@ export const TOOLS = {
         held?.books ? `${held.books} books` : null,
         held?.tv ? `${held.tv} shows last watched` : null,
       ].filter(Boolean).join(" · ");
-      // The page is over the interleaved list, since the branches above are
-      // sized by hand rather than by the caller; `offset` walks that list.
+      const total = (held?.notes ?? 0) + (held?.artists ?? 0) + (held?.films ?? 0)
+        + (held?.books ?? 0) + (held?.tv ?? 0);
+      // The page is over the interleaved list; `offset` walks that list, and
+      // `has_more` is read off the window's own count rather than off what
+      // the branches happened to fetch, so it cannot go false with rows left.
       const capped = cap(all.slice(skip(ctx)), ctx);
+      const has_more = capped.has_more || skip(ctx) + capped.rows.length < total;
+      const next = skip(ctx) + capped.rows.length;
       return {
         ...capped,
-        scope: `${from} → ${to} held ${counted || "nothing"}; these rows are the head of each, not the whole`,
-        ...(capped.note ? {} : { note: "each medium is limited separately so a heavy month cannot starve the others — read the rows as a sample of the window and `scope` as its size" }),
+        has_more,
+        scope: `${from} → ${to} held ${counted || "nothing"} (${total} rows); this page interleaves the media from offset ${skip(ctx)}`,
+        note: capped.note
+          ?? (has_more
+            ? `more of the window remains — pass offset:${next} for the next page`
+            : "each medium is fetched separately so a heavy month cannot starve the others — read `scope` for the window's size"),
       };
     },
   },
@@ -1685,18 +1977,19 @@ export const TOOLS = {
     readsFor: ({ medium }) => ({
       films: ["t0_film"], books: ["t0_book"],
       beer: ["t0_beer"], restaurants: ["t1_visits"], anime: ["t0_anime"],
-    })[medium] ?? ["t0_anime", "t0_beer", "t0_book", "t0_film", "t1_visits"],
+    })[mediumKey(medium, RATINGS_MEDIA)] ?? ["t0_anime", "t0_beer", "t0_book", "t0_film", "t1_visits"],
     description:
-      "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the top of the list, not a sample \u2014 pass order='recent' for what they have rated lately, which is a different list entirely.",
+      "What the owner rated and how highly, one medium at a time, from the services that recorded it. Behaviour rather than prose: the numbers behind `verdicts` and `reviews`, and far more of them. Every row carries its `scale` because the media disagree — never compare a number from one medium with a number from another, and read `taste_summary` before calling a dining or beer score high. Highest-rated first by default, so a page is the top of that medium; `order:'recent'` is what they rated lately, a different list. `topic` finds one title by name. With no `medium`, the media are interleaved so each takes a share of the page, and `scope` counts every medium. `min_rating` is on that medium's own scale.",
     schema: {
       type: "object",
       properties: {
-        medium: { type: "string", description: "films | books | beer | restaurants | anime" },
+        medium: { type: "string", description: "films | books | beer | restaurants | anime. Plural; singular spellings are accepted. Omit for a share of each." },
+        topic: { type: "string", description: "Match against the title or name of the thing rated." },
         min_rating: { type: "number", description: "Only at or above this, on that medium's own scale." },
         order: { type: "string", description: "rated (default, highest first) | recent" },
       },
     },
-    async run(env, { medium, min_rating, order }, ctx) {
+    async run(env, { medium, topic, min_rating, order }, ctx) {
       // scale is carried per row because the mediums disagree: Letterboxd and
       // Goodreads are 0-5, the restaurant log is 0-10. Returning a bare 9.5
       // invites an assistant to read it as "off the charts" on a five-point
@@ -1707,14 +2000,27 @@ export const TOOLS = {
         beer:        { table: "t0_beer",   label: "beer_name",  col: "rating_score", scale: "0-5", extra: BEER_META },
         restaurants: { table: "t1_visits", label: "restaurant", col: "rating",       scale: "0-10" },
         // Television's only ratings. Trakt has none, so before the MAL list
-        // landed the honest answer for the whole medium was "he does not rate
-        // it" \u2014 true of Trakt and false of him. MAL's 0 means unrated
+        // landed the honest answer for the whole medium was "they do not rate
+        // it" — true of Trakt and false of them. MAL's 0 means unrated
         // rather than terrible, which the shared `> 0` filter already reads
         // correctly.
         anime:       { table: "t0_anime",  label: "title",      col: "score",        scale: "1-10", url: "url" },
       };
-      const picked = medium ? { [medium]: SRC[medium] } : SRC;
-      const out = [];
+      const key = mediumKey(medium, SRC);
+      if (medium && !key) {
+        return empty(ctx, { note: `no medium called '${medium}' here — this tool knows ${Object.keys(SRC).join(", ")}` });
+      }
+      const picked = key ? { [key]: SRC[key] } : SRC;
+      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const floor = min_rating ?? 0;
+      // One medium: a page straight off its list. Several: every medium is
+      // fetched as deep as the page could reach and the lists are interleaved,
+      // so `limit` is honoured as a share per medium, `offset` is applied once
+      // over the interleave, and `has_more` is exact for the rows the page can
+      // show — the same shape `around_the_time` pages by.
+      const head = key ? probe(ctx) : Math.min(skip(ctx) + pageSize(ctx), MAX_ROWS) + 1;
+      const branches = [];
+      const counts = [];
       // One axis for the whole answer, but its SQL is per medium: each keeps its
       // rating in a different column. The two facts swap places rather than one
       // replacing the other, so whichever leads, ties break on the other one
@@ -1722,7 +2028,6 @@ export const TOOLS = {
       let axis = "rated", complaint = null;
       for (const [name, d] of Object.entries(picked)) {
         if (!d) continue;
-        const floor = min_rating ?? 0;
         const by = ordering(order, {
           rated:  `CAST(${d.col} AS REAL) DESC, created DESC`,
           recent: `created DESC, CAST(${d.col} AS REAL) DESC`,
@@ -1733,29 +2038,49 @@ export const TOOLS = {
         // all along and no tool returned it, so an assistant could name a film
         // but never point at it.
         const urlCol = d.url ? `${d.url} AS url,` : "";
+        const where = `WHERE ${d.col} IS NOT NULL AND CAST(${d.col} AS REAL) > 0
+             AND CAST(${d.col} AS REAL) >= ? ${d.where ?? ""}
+             AND (? IS NULL OR lower(${d.label}) LIKE ?)`;
         const rows = await q(
           env,
           `SELECT ${d.label} AS label, CAST(${d.col} AS REAL) AS rating, ${urlCol}
                   substr(created,1,10) AS when_${selectMeta(d.extra)}
            FROM ${d.table}
-           WHERE ${d.col} IS NOT NULL AND CAST(${d.col} AS REAL) > 0
-             AND CAST(${d.col} AS REAL) >= ? ${d.where ?? ""}
+           ${where}
            ORDER BY ${by.sql}, id
            LIMIT ? OFFSET ?`,
-          floor, medium ? probe(ctx) : probe(ctx, 5), skip(ctx)
+          floor, like, like, head, key ? skip(ctx) : 0
         );
-        for (const r of rows) out.push({ medium: name, scale: d.scale, ...withMeta(r, d.extra) });
+        branches.push(rows.map((r) => ({ medium: name, scale: d.scale, ...withMeta(r, d.extra) })));
+        // The population per medium (ADR-0023): a page of five films and five
+        // books says nothing about which shelf is the deep one.
+        const [held] = await q(env, `SELECT count(*) AS n FROM ${d.table} ${where}`, floor, like, like);
+        counts.push([name, held?.n ?? 0]);
+      }
+      let out;
+      if (key) {
+        out = branches[0] ?? [];
+      } else {
+        out = [];
+        for (let i = 0; branches.some((b) => i < b.length); i++) {
+          for (const b of branches) if (i < b.length) out.push(b[i]);
+        }
+        out = out.slice(skip(ctx));
       }
       const capped = cap(out, ctx);
+      const total = counts.reduce((a, [, n]) => a + n, 0);
+      const scope = key
+        ? `${total} ${key} rated${topic ? ` matching '${topic}'` : ""}${floor ? ` at or above ${floor}` : ""}`
+        : `${total} rated across ${counts.length} media (${counts.map(([n, c]) => `${n} ${c}`).join(" · ")}); the page interleaves them`;
       // Only when a beer row actually survived the cap. An unfiltered call
-      // returns five of each medium, and a calibration note about a medium the
+      // interleaves every medium, and a calibration note about a medium the
       // caller cannot see in the answer is noise they have to rule out.
       const notes = [complaint];
       if (capped.rows.some((r) => r.medium === "beer")) {
         notes.push(BEER_CALIBRATION_POINTER, BEER_META_GAP);
       }
-      const note = notes.filter(Boolean).join(" \u00b7 ");
-      return ordered(capped, { order: axis, ...(note ? { note } : {}) });
+      const note = notes.filter(Boolean).join(" · ");
+      return ordered({ ...capped, scope }, { order: axis, ...(note ? { note } : {}) });
     },
   },
 
@@ -1763,17 +2088,17 @@ export const TOOLS = {
     class: "revealed", domain: "*", kind: "judgement",
     reads: ["t0_beer"],
     description:
-      "How the owner rates a medium BROKEN DOWN by a facet of the thing itself \u2014 for beer: by style family, by full style, by brewery, by venue, or by the beer. One row per group with how many check-ins, how many carried a rating, the mean, the best and the last. `ratings` returns a page of 1,906 rows and so cannot answer 'which styles do they rate highest'; this can, because a rollup is a summary rather than a page of a set. Ordered by how often they reached for it, which is the honest default \u2014 a mean over two check-ins is not a preference. Pass min_n:2 with by:'beer' for the beers they went back to, which is the rarest thing in this record.",
+      "The owner's ratings for one medium rolled up by a property of the thing rated — for beer: style family, full style, brewery, venue, or the beer itself. One row per group with how many, how many were rated, the mean, the best and the most recent. A rollup answers \"which styles do they rate highest\" where a page of individual ratings cannot. Ordered by how often they reached for the group, because a mean over two check-ins is not a preference; `order:'rated'` puts the mean first and says so. `min_n:2` with `by:'beer'` is the list of beers they went back to. Covers beer only; other media carry no facet columns.",
     schema: {
       type: "object",
       properties: {
-        medium: { type: "string", description: "beer" },
+        medium: { type: "string", description: "beer — the one medium whose rows carry facets. Singular or plural." },
         by: { type: "string", description: "family | style | brewery | venue | beer" },
         min_n: { type: "number", description: "Only groups with at least this many check-ins. Default 1." },
         order: { type: "string", description: "played (default, most check-ins first) | rated | recent" },
       },
     },
-    async run(env, { medium, by, min_n, order }, ctx) {
+    async run(env, { medium: asked, by, min_n, order }, ctx) {
       // Beer alone, because beer alone has facets in the store. Film carries a
       // year and books an author, and either could be added here the day
       // somebody checks what the column actually holds \u2014 the registry is the
@@ -1810,14 +2135,14 @@ export const TOOLS = {
           score: "nullif(CAST(nullif(rating_score,'') AS REAL), 0)",
         },
       };
+      const medium = mediumKey(asked, M);
       const d = M[medium];
       if (!d) {
-        return {
-          rows: [],
-          note: medium
-            ? `no facets for '${medium}' \u2014 this tool covers: ${Object.keys(M).join(", ")}`
+        return empty(ctx, {
+          note: asked
+            ? `no facets for '${asked}' \u2014 this tool covers: ${Object.keys(M).join(", ")}`
             : `name a medium \u2014 this tool covers: ${Object.keys(M).join(", ")}`,
-        };
+        });
       }
       const names = Object.keys(d.by);
       const key = names.includes(by) ? by : names[0];
@@ -1859,12 +2184,17 @@ export const TOOLS = {
 
       // How much of the medium this breakdown actually covers. Without it a
       // reader takes the top row as the top of everything, when the facet may
-      // be blank on a fifth of the record.
+      // be blank on a fifth of the record. And how many groups there are at
+      // all (ADR-0023), so a page of twenty families is not read as twenty.
       const [cov] = await q(
         env,
         `SELECT count(*) AS total,
-                sum(CASE WHEN ${group} IS NULL OR trim(${group}) = '' THEN 1 ELSE 0 END) AS blank
-         FROM ${d.table}`
+                sum(CASE WHEN ${group} IS NULL OR trim(${group}) = '' THEN 1 ELSE 0 END) AS blank,
+                (SELECT count(*) FROM (SELECT 1 FROM ${d.table}
+                   WHERE ${group} IS NOT NULL AND trim(${group}) <> ''
+                   GROUP BY ${group} HAVING count(*) >= ?)) AS groups
+         FROM ${d.table}`,
+        floor
       );
 
       const notes = [];
@@ -1887,7 +2217,8 @@ export const TOOLS = {
       // says what it is a row about.
       const shaped = rows.map(({ facet, grp, ...rest }) => ({ medium, [key]: facet, ...rest }));
       return ordered(
-        { ...cap(shaped, ctx), scale: d.scale },
+        { ...cap(shaped, ctx), scale: d.scale,
+          scope: `${cov?.groups ?? 0} ${key} groups over ${(cov?.total ?? 0) - (cov?.blank ?? 0)} of ${cov?.total ?? 0} ${d.unit}` },
         { order: by_.order, note: notes.join(" \u00b7 ") }
       );
     },
@@ -1897,7 +2228,7 @@ export const TOOLS = {
     class: "authored", domain: "culture", kind: "text",
     reads: ["t1_film_review"],
     description:
-      "The owner's written film reviews from Letterboxd \u2014 115 of them, in their own words, each with a link. Far more of their actual criticism than `verdicts` (10). Search by topic or filter to a minimum rating; quote them rather than paraphrasing. Newest watch first by default; pass order='rated' for the films they thought most of.",
+      "The owner's written film reviews, in their own words, each with its rating, its watch date and a link. The larger part of their film criticism; `verdicts` holds the cross-media opinions. `topic` matches the title or the review text; `min_rating` is on the 0-5 scale; newest watch first, or `order:'rated'` for the films they thought most of. Their sentences, not a summary of them.",
     schema: {
       type: "object",
       properties: {
@@ -1928,7 +2259,17 @@ export const TOOLS = {
         min_rating ?? null, min_rating ?? 0,
         probe(ctx), skip(ctx)
       );
-      return ordered(cap(rows, ctx), by);
+      const [held] = await q(
+        env,
+        `SELECT count(*) AS n FROM t1_film_review
+         WHERE (? IS NULL OR lower(title) LIKE ? OR lower(review) LIKE ?)
+           AND (? IS NULL OR CAST(nullif(rating,'') AS REAL) >= ?)`,
+        like, like, like, min_rating ?? null, min_rating ?? 0
+      );
+      return ordered({
+        ...cap(rows.map((r) => ({ ...r, scale: "0-5" })), ctx),
+        scope: `${held?.n ?? 0} reviews${topic || min_rating ? " matched" : ""}`,
+      }, by);
     },
   },
 
@@ -1936,7 +2277,7 @@ export const TOOLS = {
     class: "possession", domain: "culture", kind: "entity",
     reads: ["t0_music", "t1_collection"],
     description:
-      "What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes. Most recently acquired first; order='oldest' reaches what has been on the shelf longest, and order='played' ranks vinyl by scrobbles \u2014 owning a record and wearing it out are different claims. Every answer carries the `genres` vocabulary, which is a few coarse buckets the owner typed into their own inventory rather than a taxonomy: read a genre this shelf has no bucket for as unrecorded, never as absent.",
+      "What the owner owns, which is not what they consumed — vinyl, DVDs, board games, fragrances, whatever the inventory holds, with what they paid and where. Buying and keeping something is a stronger signal than playing it once. Most recently acquired first; `order:'oldest'` reaches what has been on the shelf longest; `order:'played'` ranks vinyl by scrobbles, since owning a record and wearing it out are different claims. `genre` is a few coarse buckets the owner typed into their own inventory, returned as `genres` on every answer — a word outside them cannot match, so a miss is a gap in the vocabulary, not in the shelf.",
     schema: {
       type: "object",
       properties: {
@@ -1958,10 +2299,10 @@ export const TOOLS = {
       const rows = await q(
         env,
         // plays is computed, not stored. The sheet records what is owned and the
-        // store holds 40,561 scrobbles, so the count is a join rather than a
+        // store holds the scrobbles, so the count is a join rather than a
         // field to keep in sync, and fresher than the enrichment it replaces.
-        // Matched on artist AND album (74 of 89): artist alone reported the
-        // total Bladee plays against every Bladee record.
+        // Matched on artist AND album: artist alone reported an artist's total
+        // plays against every one of their records.
         `SELECT c.kind, c.title, c.creator, c.genre, c.form, c.acquired,
                 c.url, c.thoughts, c.cost, c.retailer, p.plays
          FROM t1_collection c
@@ -2001,13 +2342,13 @@ export const TOOLS = {
            GROUP BY 1 ORDER BY n DESC LIMIT 20`,
           kind ?? null, kind ?? null
         );
-        return {
-          rows: [], returned_count: 0, has_more: false,
+        return empty(ctx, {
+          scope: `0 of the shelf matched`,
           ...(vocab.length ? { genres: vocab.map((r) => `${r.name} (${r.n})`) } : {}),
           note: vocab.length
             ? `nothing matched '${topic}'. Genre here is a free-text column on the owner's own inventory, and the genres listed above are the whole of it — a word that is not one of those buckets cannot match, whatever is actually on the shelf. Ask by title or creator instead, or use taste for what they play.`
             : `nothing matched '${topic}', and nothing on this shelf carries a genre at all — so a miss says nothing either way. Ask by title or creator instead, or use taste for what they play.`,
-        };
+        });
       }
 
       // The vocabulary rides along on every genre-bearing answer too, so a
@@ -2020,6 +2361,14 @@ export const TOOLS = {
          GROUP BY 1 ORDER BY n DESC LIMIT 20`,
         kind ?? null, kind ?? null
       );
+      const [held] = await q(
+        env,
+        `SELECT count(*) AS n FROM t1_collection c
+         WHERE (? IS NULL OR c.kind = ?)
+           AND (? IS NULL OR lower(c.title) LIKE ? OR lower(COALESCE(c.creator,'')) LIKE ?
+                          OR lower(COALESCE(c.genre,'')) LIKE ?)`,
+        kind ?? null, kind ?? null, like, like, like, like
+      );
       const capped = cap(out, ctx);
       const note = [
         capped.note,
@@ -2029,6 +2378,7 @@ export const TOOLS = {
       ].filter(Boolean).join(" · ");
       return ordered({
         ...capped,
+        scope: `${held?.n ?? 0} owned${kind ? ` (${kind})` : ""}${topic ? ` matching '${topic}'` : ""}`,
         ...(shelf.length ? { genres: shelf.map((r) => `${r.name} (${r.n})`) } : {}),
         ...(note ? { note } : {}),
       }, by);
@@ -2039,7 +2389,7 @@ export const TOOLS = {
     class: "revealed", domain: "culture", kind: "entity",
     reads: ["t0_tv", "t0_anime"],
     description:
-      "What the owner started and has not finished, per show: episodes watched, how long since the last one, and an episode total where one is known. Trakt is the record of what is actually watched and is what every status here is derived from. MyAnimeList supplies denominators only — the list was abandoned in August 2023, so the word they last filed against a title is returned as `declared` and clearly dated, never as the current state. Filter status='stalled' for what quietly stopped, or declared='dropped' for what they abandoned on purpose back when they were still keeping the list.",
+      "What the owner started and has not finished, per show: episodes watched, how long since the last one, and an episode total where one is known. Trakt is the record of what is actually watched and is what every status here is derived from. MyAnimeList supplies denominators only — the list stopped being kept, so the word they last filed against a title is returned as `declared` with the date the list froze (`declared_on`), never as the current state. Filter status='stalled' for what quietly stopped, or declared='dropped' for what they abandoned on purpose back when they were still keeping the list.",
     schema: {
       type: "object",
       properties: {
@@ -2051,7 +2401,7 @@ export const TOOLS = {
         declared: {
           type: "string",
           description:
-            "watching | completed | dropped | on_hold | plan_to_watch — the owner's own MyAnimeList word, frozen 2023-08-31. A historical fact about the list, not a claim about now.",
+            "watching | completed | dropped | on_hold | plan_to_watch — the owner's own MyAnimeList word, frozen on the day the list was last updated (`declared_on` on every row that carries one). A historical fact about the list, not a claim about now.",
         },
         stalled_since: {
           type: "string",
@@ -2199,16 +2549,22 @@ export const TOOLS = {
                   WHERE t.show_key <> '' AND EXISTS (
                     SELECT 1 FROM t0_anime a
                      WHERE a.show_key = t.show_key
-                       AND CAST(a.episodes_total AS INTEGER) > 0)) AS denominated`
+                       AND CAST(a.episodes_total AS INTEGER) > 0)) AS denominated,
+                -- The day the list froze, read off the list itself rather than
+                -- written here: the last edit anyone made to it is the date
+                -- every declared word is true as of (ADR-0014).
+                (SELECT max(substr(last_updated,1,10)) FROM t0_anime
+                  WHERE last_updated IS NOT NULL AND last_updated <> '') AS froze`
       );
+      const frozeOn = held?.froze ?? null;
 
       const out = rows.map((r) => ({
         title: r.title,
         status: r.status,
         // The owner's own word, kept beside the derived one and DATED. Without
-        // the date this is the bug it replaced: a 2023 list edit reading as a
-        // present-tense claim.
-        ...(r.declared ? { declared: r.declared, declared_on: "2023-08-31" } : {}),
+        // the date this is the bug it replaced: a years-old list edit reading
+        // as a present-tense claim.
+        ...(r.declared ? { declared: r.declared, declared_on: frozeOn } : {}),
         episodes_watched: r.watched,
         episodes_total: r.total ?? null,
         ...(r.total == null && r.no_total_because
@@ -2223,7 +2579,7 @@ export const TOOLS = {
 
       const notes = [
         COUNT_GAP,
-        `every status here is derived from Trakt activity; \`declared\` is the owner's MyAnimeList word and the list was abandoned on 2023-08-31`,
+        `every status here is derived from Trakt activity; \`declared\` is the owner's MyAnimeList word and the list was last updated ${frozeOn ?? "on a date the export does not carry"}`,
         `stalled means no episode in ${STALL_DAYS} days with episodes still to watch — derived here, never declared`,
         held?.shows
           ? `${held.denominated} of ${held.shows} shows can be given an episode total; the rest can be called neither finished nor unfinished`
@@ -2253,27 +2609,33 @@ export const TOOLS = {
     class: "intent", domain: "*", kind: "pointer",
     reads: ["t0_raindrop"],
     description:
-      "Links the owner bookmarked \u2014 2,188 of them across nine years. Filter by platform (youtube, substack, x, pinterest, tiktok, soundcloud...), by collection (the owner's own buckets: Gift Ideas, thought-provoking, aesthetically-pleasing, want-to-think-about, Tattoo Inspiration, yummy...), by kind, by tag, or by topic. Call with no arguments to see which platforms and collections exist before narrowing. A save is intent, not consumption: it caught their attention, they did not necessarily finish it.",
+      "Links the owner bookmarked. A save is attention, not consumption: it caught their eye, and nothing here says they finished it or agreed with it. Filter by `platform`, by `collection` (their own buckets), by `kind` of link, by `tag`, by `topic` (title, tags or collection), by `since`/`until`, or to those they wrote a note on. With no filter, the axes — which platforms and collections exist and how many — rather than an arbitrary page. Newest first; `order:'oldest'` reaches what has been sitting longest. For what they own see `collection`; for what they queued on purpose see `backlog`.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against title, tags or collection." },
-        platform: { type: "string", description: "youtube | substack | x | pinterest | tiktok | soundcloud | etsy ..." },
-        collection: { type: "string", description: "One of the owner's collections, e.g. 'thought-provoking'." },
+        platform: { type: "string", description: "One platform by name, e.g. youtube, substack, pinterest — the unfiltered answer lists the ones that exist." },
+        collection: { type: "string", description: "One of the owner's own collections, by name — the unfiltered answer lists them." },
         kind: { type: "string", description: "link | article | video | image | audio | document" },
         tag: { type: "string", description: "A single tag." },
         since: { type: "string", description: "ISO date; only saves on or after." },
+        until: { type: "string", description: "ISO date; only saves on or before." },
         with_note: { type: "boolean", description: "Only saves with a note written on them." },
+        order: { type: "string", description: "recent (default, newest save first) | oldest" },
       },
     },
-    async run(env, { topic, platform, collection, kind, tag, since, with_note }, ctx) {
+    async run(env, { topic, platform, collection, kind, tag, since, until, with_note, order }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const by = ordering(order, {
+        recent: "created DESC",
+        oldest: "created ASC",
+      });
 
-      // With nothing to narrow by, return the AXES rather than 20 arbitrary
-      // links. A flat sample of a 2,188-item library teaches an assistant
+      // With nothing to narrow by, return the AXES rather than an arbitrary
+      // page of links. A flat sample of a large library teaches an assistant
       // nothing about what is in it; the facets tell it what it can ask next,
       // which is the same job the standing brief does one level up.
-      if (!topic && !platform && !collection && !kind && !tag && !since && !with_note) {
+      if (!topic && !platform && !collection && !kind && !tag && !since && !until && !with_note) {
         const plats = await q(env,
           `SELECT platform AS name, count(*) AS n FROM t0_raindrop
            GROUP BY 1 ORDER BY n DESC LIMIT 10`);
@@ -2283,55 +2645,65 @@ export const TOOLS = {
         const [tot] = await q(env,
           `SELECT count(*) AS n, min(substr(created,1,10)) AS oldest,
                   max(substr(created,1,10)) AS newest FROM t0_raindrop`);
-        return {
-          rows: [],
+        return empty(ctx, {
           total: tot?.n ?? 0,
           span: `${tot?.oldest ?? "?"} .. ${tot?.newest ?? "?"}`,
           platforms: plats,
           collections: cols,
+          scope: `${tot?.n ?? 0} saves, ${tot?.oldest ?? "?"} → ${tot?.newest ?? "?"}`,
           note: "no filter given — these are the axes; call again with one to get links",
-        };
+        });
       }
 
-      const rows = await q(
-        env,
-        `SELECT title, url, kind, platform, collection, tags,
-                nullif(note,'') AS note, substr(created,1,10) AS saved
-         FROM t0_raindrop
-         WHERE (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?
+      const WHERE = `WHERE (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?
                           OR lower(COALESCE(collection,'')) LIKE ?)
            AND (? IS NULL OR lower(platform) = lower(?))
            AND (? IS NULL OR lower(collection) = lower(?))
            AND (? IS NULL OR kind = ?)
            AND (? IS NULL OR lower(COALESCE(tags,'')) LIKE ?)
            AND (? IS NULL OR substr(created,1,10) >= ?)
-           AND (? IS NULL OR note <> '')
-         ORDER BY created DESC, id
-         LIMIT ? OFFSET ?`,
+           AND (? IS NULL OR substr(created,1,10) <= ?)
+           AND (? IS NULL OR note <> '')`;
+      const binds = [
         like, like, like, like,
         platform ?? null, platform ?? "",
         collection ?? null, collection ?? "",
         kind ?? null, kind ?? "",
         tag ?? null, tag ? `%${tag.toLowerCase()}%` : "",
         since ?? null, since ?? "",
+        until ?? null, until ?? "",
         with_note ? 1 : null,
-        probe(ctx), skip(ctx)
+      ];
+      const rows = await q(
+        env,
+        `SELECT title, url, kind, platform, collection, tags,
+                nullif(note,'') AS note, substr(created,1,10) AS saved
+         FROM t0_raindrop
+         ${WHERE}
+         ORDER BY ${by.sql}, id
+         LIMIT ? OFFSET ?`,
+        ...binds, probe(ctx), skip(ctx)
       );
+      // The FILTERED set, not the zone (ADR-0023): "searched 2,000 saves"
+      // after platform:'youtube' is the wrong denominator for the page it
+      // sits beside.
       const [tot] = await q(env,
         `SELECT count(*) AS n, max(substr(created,1,10)) AS newest,
-                sum(CASE WHEN note <> '' THEN 1 ELSE 0 END) AS noted FROM t0_raindrop`);
+                sum(CASE WHEN note <> '' THEN 1 ELSE 0 END) AS noted
+         FROM t0_raindrop ${WHERE}`, ...binds);
       // Say when the commentary is absent rather than letting silence read as
-      // "these were saved without comment". 1,906 of these carry a note in
-      // raindrop; none are here until a token-based sync pulls them, because the
-      // MCP that seeded this snapshot does not return the field.
+      // "these were saved without comment": a snapshot seeded through an MCP
+      // that does not return the field carries no notes at all.
       const noted = tot?.noted ?? 0;
-      return {
-        ...cap(rows, ctx),
-        scope: `searched ${tot?.n ?? 0} saves, newest ${tot?.newest ?? "?"}`,
-        ...(noted === 0
-          ? { notes: "the owner's own notes on these saves are not synced yet — absence here is not evidence none were written" }
-          : { notes: `${noted} of these carry a note the owner wrote` }),
-      };
+      const capped = cap(rows, ctx);
+      const said = noted === 0
+        ? "the owner's own notes on these saves are not synced — absence here is not evidence none were written"
+        : `${noted} of these carry a note the owner wrote`;
+      return ordered({
+        ...capped,
+        scope: `${tot?.n ?? 0} saves matched, newest ${tot?.newest ?? "?"}`,
+        note: [capped.note, said].filter(Boolean).join(" · "),
+      }, by);
     },
   },
 
@@ -2348,17 +2720,18 @@ export const TOOLS = {
       : kind === "make" || kind === "buy" ? ["t0_raindrop"]
       : ["t0_book", "t0_raindrop"],   // no kind: the summary counts both piles
     description:
-      "What the owner has queued but not done — things they decided they wanted and have not gotten to. Shelving a book or filing a link into a bucket is a deliberate act, which is what separates this from `saves` (attention) and from `collection` (already owned). Kinds: 'read' (436 shelved to-read), 'resume' (41 books started and abandoned mid-way — the strongest candidates, since they already began), 'make' (things they want to build or cook), 'buy' (gift and shopping ideas). Call with no kind to see the sizes. Default order is newest-first; pass order='oldest' to dig up what has been sitting, which is usually the point of asking.",
+      "What the owner queued and has not done — a deliberate act of shelving or filing, which separates it from `saves` (attention) and `collection` (already owned). Four piles: `read` (shelved to-read), `resume` (books started and set down), `make` (things to build or cook), `buy` (gift and shopping ideas). With no `kind`, the size of each pile. Newest first; `order:'oldest'` digs up what has been sitting, which is usually the question. Nobody prunes these, so an old row is a decision made once, not a live intention. Every answer names the pile this record cannot see.",
     schema: {
       type: "object",
       properties: {
         kind: { type: "string", description: "read | resume | make | buy" },
         topic: { type: "string", description: "Match against title or author." },
         since: { type: "string", description: "ISO date; only things queued on or after." },
+        until: { type: "string", description: "ISO date; only things queued on or before." },
         order: { type: "string", description: "recent (default) | oldest" },
       },
     },
-    async run(env, { kind, topic, since, order }, ctx) {
+    async run(env, { kind, topic, since, until, order }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       // Two piles, two date columns, one vocabulary: the shelves date from
       // Goodreads' date_added and the collections from raindrop's created, and
@@ -2370,40 +2743,54 @@ export const TOOLS = {
 
       // The kinds are not one table. Books carry their queue state in a shelf
       // column; the making and buying queues are raindrop collections created
-      // by hand. Keeping them as named kinds rather than one union
-      // means each can say what it actually knows.
+      // by hand. Keeping them as named kinds rather than one union means each
+      // can say what it actually knows.
+      //
+      // WHICH shelves and collections is an instance fact (ADR-0014). The
+      // shelf defaults are Goodreads' own vocabulary, which every export
+      // carries; the collections have no default at all, because a bucket
+      // named by hand in one account is not a name the engine gets to know.
+      // Both come from `[surface]` in exo.toml, published beside the tool
+      // list, and are matched case-insensitively.
+      const inst = instanceOf(ctx);
+      const names = (v, dflt) =>
+        (Array.isArray(v) ? v : dflt).map((x) => String(x).trim().toLowerCase()).filter(Boolean);
       const SHELVES = {
-        read: ["to-read"],
-        resume: ["partly-read", "currently-reading"],
+        read: names(inst.backlog_read, ["to-read"]),
+        resume: names(inst.backlog_resume, ["currently-reading"]),
       };
       const COLLECTIONS = {
-        make: ["want-to-make"],
-        buy: ["Gift Ideas", "Shopping"],
+        make: names(inst.backlog_make, []),
+        buy: names(inst.backlog_buy, []),
       };
+      const marks = (list) => list.map(() => "?").join(",") || "''";
+      const unnamed = (k) =>
+        `no collection is named for the '${k}' pile — this instance sets [surface] backlog_${k} in exo.toml to the raindrop collections that hold it, and until then this pile cannot be counted`;
 
-      // No kind: return the sizes rather than an arbitrary 20 rows off one pile.
+      // No kind: return the sizes rather than an arbitrary page off one pile.
       // Same reasoning as `saves` — the shape of the backlog is the useful
       // answer when nothing has been narrowed.
       if (!kind) {
         const [b] = await q(env,
-          `SELECT sum(CASE WHEN lower(shelf) = 'to-read' THEN 1 ELSE 0 END) AS to_read,
-                  sum(CASE WHEN lower(shelf) IN ('partly-read','currently-reading') THEN 1 ELSE 0 END) AS resume
-           FROM t0_book`);
+          `SELECT sum(CASE WHEN lower(shelf) IN (${marks(SHELVES.read)}) THEN 1 ELSE 0 END) AS to_read,
+                  sum(CASE WHEN lower(shelf) IN (${marks(SHELVES.resume)}) THEN 1 ELSE 0 END) AS resume
+           FROM t0_book`, ...SHELVES.read, ...SHELVES.resume);
         const [m] = await q(env,
-          `SELECT sum(CASE WHEN lower(collection) = 'want-to-make' THEN 1 ELSE 0 END) AS make,
-                  sum(CASE WHEN collection IN ('Gift Ideas','Shopping') THEN 1 ELSE 0 END) AS buy
-           FROM t0_raindrop`);
-        return {
-          rows: [],
+          `SELECT sum(CASE WHEN lower(collection) IN (${marks(COLLECTIONS.make)}) THEN 1 ELSE 0 END) AS make,
+                  sum(CASE WHEN lower(collection) IN (${marks(COLLECTIONS.buy)}) THEN 1 ELSE 0 END) AS buy
+           FROM t0_raindrop`, ...COLLECTIONS.make, ...COLLECTIONS.buy);
+        const missing = ["make", "buy"].filter((k) => !COLLECTIONS[k].length);
+        return empty(ctx, {
           kinds: [
             { kind: "read", n: b?.to_read ?? 0, source: "goodreads shelf" },
             { kind: "resume", n: b?.resume ?? 0, source: "goodreads shelf" },
             { kind: "make", n: m?.make ?? 0, source: "raindrop collection" },
             { kind: "buy", n: m?.buy ?? 0, source: "raindrop collection" },
           ],
-          note: "no kind given — these are the piles; call again with one",
+          note: ["no kind given — these are the piles; call again with one",
+                 ...missing.map(unnamed)].join(" · "),
           gap: WATCH_GAP,
-        };
+        });
       }
 
       if (SHELVES[kind]) {
@@ -2418,70 +2805,79 @@ export const TOOLS = {
           `SELECT title, book_author AS author, shelf,
                   substr(date_added,1,10) AS queued, avg_rating
            FROM t0_book
-           WHERE lower(shelf) IN (${shelves.map(() => "?").join(",")})
+           WHERE lower(shelf) IN (${marks(shelves)})
              AND (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(book_author,'')) LIKE ?)
              AND (? IS NULL OR substr(date_added,1,10) >= ?)
+             AND (? IS NULL OR substr(date_added,1,10) <= ?)
            ORDER BY ${by.sql}, title, id
            LIMIT ? OFFSET ?`,
           ...shelves,
           like, like, like,
           since ?? null, since ?? "",
+          until ?? null, until ?? "",
           probe(ctx), skip(ctx)
         );
         const [tot] = await q(env,
           `SELECT count(*) AS n, min(substr(date_added,1,10)) AS oldest
-           FROM t0_book WHERE lower(shelf) IN (${shelves.map(() => "?").join(",")})`,
+           FROM t0_book WHERE lower(shelf) IN (${marks(shelves)})`,
           ...shelves);
+        const capped = cap(rows, ctx);
         return {
-          ...ordered(cap(rows, ctx), by),
+          ...ordered(capped, by),
           scope: `${tot?.n ?? 0} on this shelf, oldest queued ${tot?.oldest ?? "?"}`,
           // my_rating is 0 across every unread row, so it is omitted rather
           // than emitted as a zero an assistant would read as a verdict.
-          notes: "avg_rating is Goodreads' crowd score, not the owner's — they have not read these",
+          note: [capped.note, "avg_rating is Goodreads' crowd score, not the owner's — they have not read these"]
+            .filter(Boolean).join(" · "),
           gap: WATCH_GAP,
         };
       }
 
       if (COLLECTIONS[kind]) {
         const cols = COLLECTIONS[kind];
+        if (!cols.length) return empty(ctx, { note: unnamed(kind), gap: WATCH_GAP });
         const by = dated("created");
         const rows = await q(
           env,
           `SELECT title, url, platform, collection, nullif(note,'') AS note,
                   substr(created,1,10) AS queued
            FROM t0_raindrop
-           WHERE collection IN (${cols.map(() => "?").join(",")})
+           WHERE lower(collection) IN (${marks(cols)})
              AND (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?)
              AND (? IS NULL OR substr(created,1,10) >= ?)
+             AND (? IS NULL OR substr(created,1,10) <= ?)
            ORDER BY ${by.sql}, title, id
            LIMIT ? OFFSET ?`,
           ...cols,
           like, like, like,
           since ?? null, since ?? "",
+          until ?? null, until ?? "",
           probe(ctx), skip(ctx)
         );
         const [tot] = await q(env,
-          `SELECT count(*) AS n FROM t0_raindrop WHERE collection IN (${cols.map(() => "?").join(",")})`,
+          `SELECT count(*) AS n FROM t0_raindrop WHERE lower(collection) IN (${marks(cols)})`,
           ...cols);
+        const capped = cap(rows, ctx);
+        // A hand-filed collection undercounts by construction: most making
+        // references sit unfiled in the platform saves, and reporting the
+        // filed few as the whole pile understates it.
+        const said = [capped.note,
+                      kind === "make"
+                        ? "only what was filed into the making collection; most making references sit unfiled in the platform saves — try saves(platform:'pinterest') or saves(kind:'video')"
+                        : null].filter(Boolean).join(" · ");
         return {
-          ...ordered(cap(rows, ctx), by),
+          ...ordered(capped, by),
           scope: `${tot?.n ?? 0} in ${cols.join(" + ")}`,
-          // 'want-to-make' holds 9 items against 285 untagged Pinterest saves
-          // and a wall of TikToks. Reporting 9 as the making backlog without
-          // this would understate it by an order of magnitude.
-          ...(kind === "make"
-            ? { notes: "only what was filed into want-to-make; most making references sit unfiled in the pinterest and tiktok saves — try saves(platform:'pinterest')" }
-            : {}),
+          ...(said ? { note: said } : {}),
           gap: WATCH_GAP,
         };
       }
 
-      return {
-        rows: [],
-        error: `unknown kind '${kind}'`,
+      return empty(ctx, {
+        note: `no pile called '${kind}' — this tool knows read, resume, make, buy`,
         kinds: ["read", "resume", "make", "buy"],
         gap: WATCH_GAP,
-      };
+      });
     },
   },
 
@@ -2489,19 +2885,29 @@ export const TOOLS = {
     class: "dialogue", domain: "mind", kind: "event",
     reads: ["t0_chat_topic"],
     description:
-      "What the owner has been working through in conversation lately \u2014 titles and volume, not transcripts. Fresher than their notes, which lag a deliberate act of capture. Turn count is the signal a title cannot carry: 40 turns is a preoccupation, 3 is a passing look. Use this to know what is live for them right now.",
+      "What the owner has been working through in conversation — titles, dates and turn counts, with a clipped machine-written gist, never transcripts. Fresher than their notes, which lag a deliberate act of capture. Turn count is the signal a title cannot carry: a long thread is a preoccupation, a short one a glance. `topic` matches the title, the gist or where the thread landed, so a short word works better than a sentence; `min_turns` alone lists the long ones; `order:'oldest'` reaches the earliest. Each row carries the `id` that `thread` reads by. Half of every thread is another model's; only the owner's turns are theirs.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against the conversation title, its gist, or where it landed." },
         min_turns: { type: "number", description: "Only conversations at least this long." },
+        order: { type: "string", description: "recent (default, last active first) | oldest" },
       },
     },
-    async run(env, { topic, min_turns }, ctx) {
+    async run(env, { topic, min_turns, order }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const by = ordering(order, {
+        recent: "last_seen DESC, turns DESC",
+        oldest: "last_seen ASC, turns DESC",
+      });
+      const WHERE = `WHERE (? IS NULL OR lower(title) LIKE ?
+                          OR lower(COALESCE(summary, '')) LIKE ?
+                          OR lower(COALESCE(landed, '')) LIKE ?)
+           AND (? IS NULL OR turns >= ?)`;
+      const binds = [like, like, like, like, min_turns ?? null, min_turns ?? 0];
       const rows = await q(
         env,
-        `SELECT title, last_seen, started, turns, his_turns,
+        `SELECT id, title, last_seen, started, turns, his_turns,
                 -- Clipped here, whole in the thread tool. Listing threads with
                 -- no distillation meant the only route to one was already
                 -- knowing which thread to ask about, which is the opposite of
@@ -2513,53 +2919,75 @@ export const TOOLS = {
          -- after healthcare, so a title-only match answers "no such thread" to
          -- a question the corpus does contain. The gist was already SELECTed
          -- and shown to the caller; it was simply never searched.
-         WHERE (? IS NULL OR lower(title) LIKE ?
-                          OR lower(COALESCE(summary, '')) LIKE ?
-                          OR lower(COALESCE(landed, '')) LIKE ?)
-           AND (? IS NULL OR turns >= ?)
-         ORDER BY last_seen DESC, turns DESC, id
+         ${WHERE}
+         ORDER BY ${by.sql}, id
          LIMIT ? OFFSET ?`,
-        like, like, like, like, min_turns ?? null, min_turns ?? 0, probe(ctx), skip(ctx)
+        ...binds, probe(ctx), skip(ctx)
       );
-      return cap(rows, ctx);
+      const [held] = await q(env, `SELECT count(*) AS n FROM t0_chat_topic ${WHERE}`, ...binds);
+      return ordered({
+        ...cap(rows, ctx),
+        scope: `${held?.n ?? 0} conversations${topic || min_turns ? " matched" : ""}`,
+      }, by);
     },
   },
 
   thread: {
     class: "dialogue", domain: "mind", kind: "text",
+    // One conversation is never a page of anything; the turns inside it are
+    // walked with `from_turn`, so tools/list does not advertise limit/offset.
+    pages: false,
     reads: ["t0_chat", "t0_chat_topic"],
     description:
-      "One conversation. `include` chooses what comes back: 'conclusion' (where the owner landed, plus the machine distillation), 'turns' (only what THEY typed), 'dialogue' (both sides interleaved, speaker-tagged), or 'both' (default: conclusion + owner turns). Prefer 'dialogue' when those turns read as questions or fragments \u2014 45% of them are under 80 chars and answer something you cannot otherwise see. Lines tagged assistant are another model's output: context for reading the owner, not verified fact, and never quote them as the owner's.",
+      "One conversation, by `id` from a `recent_topics` listing, or matched by title first and by gist or landing second. `include` chooses what comes back: `conclusion` (where the owner landed, verbatim, beside the machine distillation, which is marked as such), `turns` (only what the owner typed), `dialogue` (both sides interleaved and speaker-tagged), or `both` (default: conclusion plus the owner's turns). Prefer `dialogue` when the owner's turns read as fragments — they are often questions, and the answer is the half you cannot otherwise see. Lines tagged as the assistant are another model's output: context for reading the owner, never their words. Long threads are clipped to the byte budget; the answer says how many turns were shown and `from_turn` continues from there.",
     schema: {
       type: "object",
       properties: {
-        topic: { type: "string", description: "Thread title, or what it was about." },
-        include: { type: "string", description: "conclusion | turns | both (default both)" },
+        topic: { type: "string", description: "Thread title, or what it was about. Not needed when `id` is given." },
+        id: { type: "string", description: "The `id` a recent_topics listing returned. Reads that exact thread, no matching." },
+        include: { type: "string", description: "conclusion | turns | dialogue | both (default)" },
+        from_turn: { type: "integer", minimum: 0, description: "Start the turns at this turn number. A clipped answer names the next one to pass." },
       },
-      required: ["topic"],
     },
-    async run(env, { topic, include }, ctx) {
+    async run(env, { topic, id, include, from_turn }, ctx) {
       const want = include || "both";
+      const start = Number.isInteger(from_turn) && from_turn > 0 ? from_turn : 0;
+      if (!id && !topic) return empty(ctx, { note: "pass a topic to match a thread by, or the id a recent_topics listing returned" });
       const like = `%${(topic || "").toLowerCase()}%`;
-      const [hit] = await q(
-        env,
-        `SELECT title, landed, turns, his_turns, last_seen,
-                COALESCE(summary, '') AS summary, COALESCE(summary_by, '') AS summary_by
-         FROM t0_chat_topic
-         -- Widened with recent_topics, and for the same reason. This param has
-         -- always been documented as "thread title, or what it was about", and
-         -- until now only the first half was true. Title matches still win —
-         -- the ORDER BY puts them first — so naming a thread outright returns
-         -- that thread, not one that merely mentions it in passing.
-         WHERE lower(title) LIKE ?
-            OR lower(COALESCE(summary, '')) LIKE ?
-            OR lower(COALESCE(landed, '')) LIKE ?
-         ORDER BY (lower(title) LIKE ?) DESC, turns DESC LIMIT 1`,
-        like, like, like, like
-      );
-      if (!hit) return { rows: [], note: "no thread matched — try recent_topics to see what exists" };
+      const [hit] = id
+        ? await q(
+            env,
+            `SELECT id, title, landed, turns, his_turns, last_seen,
+                    COALESCE(summary, '') AS summary, COALESCE(summary_by, '') AS summary_by
+             FROM t0_chat_topic WHERE id = ? LIMIT 1`,
+            String(id)
+          )
+        : await q(
+            env,
+            `SELECT id, title, landed, turns, his_turns, last_seen,
+                    COALESCE(summary, '') AS summary, COALESCE(summary_by, '') AS summary_by
+             FROM t0_chat_topic
+             -- Widened with recent_topics, and for the same reason. This param has
+             -- always been documented as "thread title, or what it was about", and
+             -- until now only the first half was true. Title matches still win —
+             -- the ORDER BY puts them first — so naming a thread outright returns
+             -- that thread, not one that merely mentions it in passing.
+             WHERE lower(title) LIKE ?
+                OR lower(COALESCE(summary, '')) LIKE ?
+                OR lower(COALESCE(landed, '')) LIKE ?
+             ORDER BY (lower(title) LIKE ?) DESC, turns DESC LIMIT 1`,
+            like, like, like, like
+          );
+      if (!hit) {
+        return empty(ctx, {
+          note: id
+            ? `no thread with id '${id}' — ids come from recent_topics, and a held one is absent rather than hidden`
+            : "no thread matched — try recent_topics to see what exists",
+        });
+      }
 
       const out = {
+        id: hit.id,
         title: hit.title,
         when: hit.last_seen,
         turns: hit.turns,
@@ -2576,6 +3004,17 @@ export const TOOLS = {
         }
       }
 
+      // The clip note names a real move: the turn to continue from. Without
+      // it the advice was "ask about a narrower part", and nothing on this
+      // tool could narrow a thread.
+      const clipNote = (kept, turns, whose) => {
+        const next = turns[kept.length]?.turn;
+        const shown = `${kept.length} of ${turns.length}${whose} turns shown`;
+        return next !== undefined
+          ? `${shown}, from turn ${turns[0]?.turn ?? start} — pass from_turn:${next} for the rest`
+          : `${shown}, from turn ${turns[0]?.turn ?? start}`;
+      };
+
       if (want === "dialogue") {
         // Interleaved and speaker-tagged. Owner turns are often questions —
         // returning them alone reads as a list of half-thoughts and invites a
@@ -2583,8 +3022,9 @@ export const TOOLS = {
         const turns = await q(
           env,
           `SELECT turn, channel, text FROM t0_chat
-           WHERE title = ? ORDER BY CAST(turn AS INTEGER) LIMIT 400`,
-          hit.title
+           WHERE title = ? AND CAST(turn AS INTEGER) >= ?
+           ORDER BY CAST(turn AS INTEGER), id LIMIT ? OFFSET ?`,
+          hit.title, start, 400, 0
         );
         const lines = turns.map(
           (t) => `${t.channel === "his" ? (env.OWNER_LABEL || "owner") : "assistant"}: ${t.text || ""}`
@@ -2594,34 +3034,33 @@ export const TOOLS = {
           "lines tagged assistant are another model's output — context, not fact, and not the owner's words";
         const kept = fitInto(out, "dialogue", lines, TURN_NOTE_SAMPLE);
         out.dialogue = kept;
-        if (kept.length < turns.length) {
-          out.note = `${kept.length} of ${turns.length} turns shown \u2014 ask about a narrower part`;
-        }
-        return cap([out], ctx);
+        if (kept.length < turns.length) out.note = clipNote(kept, turns, "");
+        return single(out);
       }
 
       if (want !== "conclusion") {
-        // Owner turns are short (176 chars average), so a thread's whole side
-        // usually fits. Ordered, and capped by the same budget as everything
-        // else rather than by a turn count, because thread lengths vary 100x.
+        // Owner turns are short, so a thread's whole side usually fits.
+        // Ordered, and capped by the same budget as everything else rather
+        // than by a turn count, because thread lengths vary a hundredfold.
         const turns = await q(
           env,
           `SELECT turn, text FROM t0_chat
-           WHERE title = ? ORDER BY CAST(turn AS INTEGER) LIMIT 200`,
-          hit.title
+           WHERE title = ? AND CAST(turn AS INTEGER) >= ?
+           ORDER BY CAST(turn AS INTEGER), id LIMIT ? OFFSET ?`,
+          hit.title, start, 200, 0
         );
         const kept = fitInto(out, "his_words", turns.map((t) => t.text || ""), TURN_NOTE_SAMPLE);
         out.his_words = kept;
-        if (kept.length < turns.length) {
-          out.note = `${kept.length} of ${turns.length} of the owner's turns shown — ask about a narrower part`;
-        }
+        if (kept.length < turns.length) out.note = clipNote(kept, turns, " of the owner's");
       }
-      return cap([out], ctx);
+      return single(out);
     },
   },
 
   taste_summary: {
     class: "derived", domain: "*", kind: "judgement",
+    // Documents, one at a time, or a directory of a few: nothing to page.
+    pages: false,
     reads: ["t0_taste_derived", "t0_beer"],
     // `beer` is computed here and reads nothing else; the two stored documents
     // read nothing else either. An unrecognised kind grades on both, which is
@@ -2631,7 +3070,7 @@ export const TOOLS = {
       : kind === "dining" || kind === "clusters" ? ["t0_taste_derived"]
       : ["t0_taste_derived", "t0_beer"],
     description:
-      "Derived summaries of the owner's taste: how their rating scales actually behave, and the clusters their loved items fall into. Read the dining one BEFORE interpreting any restaurant rating \u2014 that 0-10 scale has a median of 8.1, so an 8 is average, not a rave. The beer one does the same job for the 0-5 beer scale and is computed from the check-in log rather than mirrored from anywhere, so it is always current: median, deciles, and the count at every quarter step the record actually uses.",
+      "How to read the owner's rating scales — calibration documents, one per kind, to be read before calling any number high or low. `dining` and `clusters` are documents mirrored from the taste engine; `beer` is computed here from the check-in log and is always current: mean, median, deciles and the count at every step the record uses. With no `kind`, the list of documents and their sizes. Only the kinds listed exist; film, book and anime scales have no calibration and should be reported flat with their scale.",
     schema: {
       type: "object",
       properties: { kind: { type: "string", description: "dining | clusters | beer" } },
@@ -2644,7 +3083,7 @@ export const TOOLS = {
       // it calibrates rather than waiting on a file nobody is writing.
       if (kind === "beer") {
         const doc = await beerCalibration(env);
-        return doc ? cap([doc], ctx) : { rows: [], note: "no beer ratings are published here" };
+        return doc ? single(doc) : empty(ctx, { note: "no beer ratings are published here" });
       }
 
       // The two halves are now independently held-able: ADR-0020 offers this
@@ -2666,18 +3105,18 @@ export const TOOLS = {
         if (doc) rows.push(doc);
       }
       if (!rows.length) {
-        return { rows: [], note: kind ? `no taste summary called '${kind}'` : "no taste summaries are published here" };
+        return empty(ctx, { note: kind ? `no taste summary called '${kind}'` : "no taste summaries are published here" });
       }
-      // These are documents, not row sets: one is ~6KB and truncating it mid
-      // table would drop exactly the calibration it exists to convey. Return one
-      // at a time rather than clipping both.
+      // These are documents, not row sets: one is several KB and clipping it
+      // mid table would drop exactly the calibration it exists to convey.
+      // Return one at a time rather than clipping both.
       if (!kind && rows.length > 1) {
         return {
-          rows: rows.map((r) => ({ kind: r.kind, chars: r.text.length })),
+          ...cap(rows.map((r) => ({ kind: r.kind, chars: r.text.length })), ctx),
           note: "ask for one by kind — these are documents, and clipping them loses the point",
         };
       }
-      return cap(rows, ctx);
+      return single(rows[0]);
     },
   },
 
@@ -2685,16 +3124,18 @@ export const TOOLS = {
     class: "authored", domain: "table", kind: "entity",
     reads: ["t1_visits"],
     description:
-      "Restaurants the owner has been to, with their own notes and ratings. Filter by city or cuisine. Best-rated first on their own 0-10 scale, which runs high \u2014 read taste_summary(kind:'dining') before calling an 8 praise. Pass order='recent' for where they have been eating lately; every row now carries the date of the visit.",
+      "Restaurants the owner has visited, with their own notes, the rating they gave and the date of the visit. Best-rated first on their own 0-10 scale, which runs high — read `taste_summary(kind:'dining')` before calling an 8 praise; every row carries its `scale`. `order:'recent'` is where they have been eating lately. Filter by `city` or `cuisine`, or `topic` for a restaurant by name or by what they wrote about it. Restaurants only; not venues, trips or events.",
     schema: {
       type: "object",
       properties: {
-        city: { type: "string" },
-        cuisine: { type: "string" },
+        city: { type: "string", description: "One city, by name." },
+        cuisine: { type: "string", description: "One cuisine, by name, as the owner filed it." },
+        topic: { type: "string", description: "Match against the restaurant name or the owner's notes." },
         order: { type: "string", description: "rated (default, highest first) | recent" },
       },
     },
-    async run(env, { city, cuisine, order }, ctx) {
+    async run(env, { city, cuisine, topic, order }, ctx) {
+      const like = topic ? `%${topic.toLowerCase()}%` : null;
       // The rating is TEXT \u2014 it comes off a CSV column and lands in D1 as one \u2014
       // so `ORDER BY rating DESC` was a lexical sort: '9.5' above '9' above
       // '8.5' above '10'. Every perfect score sat near the bottom of a list
@@ -2710,15 +3151,31 @@ export const TOOLS = {
         // The visit date was in the row and never returned, so an assistant
         // could not tell a place they loved last month from one they loved in
         // 2019 \u2014 which is most of what "where should we eat" turns on.
-        `SELECT restaurant, city, neighborhood, cuisine_1, rating,
+        // `rating` is CAST on the way out too, so the same meal reads as the
+        // same number here and on `ratings(medium:'restaurants')`, and the
+        // scale rides with it as it does on every judgement row.
+        `SELECT restaurant, city, neighborhood, cuisine_1, ${score} AS rating, '0-10' AS scale,
                 substr(created,1,10) AS visited, notes
          FROM t1_visits
          WHERE (? IS NULL OR lower(city) = lower(?))
            AND (? IS NULL OR lower(cuisine_1) = lower(?))
+           AND (? IS NULL OR lower(restaurant) LIKE ? OR lower(COALESCE(notes,'')) LIKE ?)
          ORDER BY ${by.sql}, id LIMIT ? OFFSET ?`,
-        city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, probe(ctx), skip(ctx)
+        city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, like, like, like,
+        probe(ctx), skip(ctx)
       );
-      return ordered(cap(rows, ctx), by);
+      const [held] = await q(
+        env,
+        `SELECT count(*) AS n FROM t1_visits
+         WHERE (? IS NULL OR lower(city) = lower(?))
+           AND (? IS NULL OR lower(cuisine_1) = lower(?))
+           AND (? IS NULL OR lower(restaurant) LIKE ? OR lower(COALESCE(notes,'')) LIKE ?)`,
+        city ?? null, city ?? null, cuisine ?? null, cuisine ?? null, like, like, like
+      );
+      return ordered({
+        ...cap(rows, ctx),
+        scope: `${held?.n ?? 0} visits${city || cuisine || topic ? " matched" : ""}`,
+      }, by);
     },
   },
   /**
@@ -2736,14 +3193,14 @@ export const TOOLS = {
     class: "possession", domain: "workshop", kind: "entity",
     reads: ["t1_project", "t1_project_commit"],
     description:
-      "The owner's repos — what they are building, what they set down, and what each one claims to be. `status` is heat, not judgement: active (commit in 21 days), warm (90), stalled (a year), dormant (older, which includes everything that simply shipped). Repos filed under a group like 'hiatus' were deliberately set aside — that is deliberate shelving, not a guess. Call with no arguments for the shape of the workshop: the status counts plus what has actually been worked on, ranked by commits in the last 90 days rather than by last-commit date, because half these repos were git-init'd the same week and recency alone floats a one-commit import above a year of work. Prose and metadata only — no source code is in this store.",
+      "The owner's repos — what each claims to be, how hot it is, and what they have actually been working on. `status` is heat, not judgement: active, warm, stalled, dormant by time since the last commit, and dormant includes everything that simply shipped. A repo filed under a group like a hiatus folder was set aside deliberately. With no arguments, the status counts plus the repos with the most commits in the last 90 days — volume, not last-commit date, because recency floats a one-commit import above a year of work. Prose and metadata only; no source code is in this store. `project_activity` has the dated commits, `project_docs` the READMEs and decision records, `project_open` what is left unfinished.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against name, description or language." },
         status: { type: "string", description: "active | warm | stalled | dormant" },
         group: { type: "string", description: "The folder it is filed under, e.g. 'hiatus'." },
-        order: { type: "string", description: "worked (default, commits in 90d) | recent | biggest" },
+        order: { type: "string", description: "worked (default: commits in the last 90 days) | recent (last commit) | biggest (all-time commits)" },
       },
     },
     async run(env, { topic, status, group, order }, ctx) {
@@ -2857,58 +3314,105 @@ export const TOOLS = {
     class: "authored", domain: "workshop", kind: "text",
     reads: ["t1_project_doc"],
     description:
-      "The prose those repos carry: READMEs, CONTEXT glossaries, architecture decision records and plan documents. This is where a project states what it is FOR and why it was built the way it was — an ADR is the owner arguing with themselves and recording who won, which is the same category of writing as their notes and usually more decided. Search by topic to find which project already settled a question, or pass a repo to read what it says about itself. Returns matching excerpts; ask with full=true and a title to read one whole document.",
+      "The prose the owner's repos carry: READMEs, CONTEXT glossaries, architecture decision records, plan documents. Where a project states what it is for and why it was built that way — an ADR is the owner arguing with themselves and recording who won. `topic` finds which project already settled a question; `repo` reads what one says about itself; `kind` narrows to one document type. Returns excerpts around the match, each with the `id` to read it by; `full:true` returns the first matching document whole, or `id` returns that exact one, clipped to the byte budget either way. No source code is in this store.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against document title or body." },
         repo: { type: "string", description: "Repo name or slug." },
         kind: { type: "string", description: "readme | context | adr | plan | claude | doc" },
-        full: { type: "boolean", description: "Return one whole document rather than excerpts." },
+        id: { type: "string", description: "A document's `id` as an excerpt listing returned it (its repo and path). Reads that one document whole." },
+        full: { type: "boolean", description: "Return one whole document rather than excerpts — the first match, or the one `id` names." },
       },
     },
-    async run(env, { topic, repo, kind, full }, ctx) {
+    async run(env, { topic, repo, kind, id, full }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const rlike = repo ? `%${repo.toLowerCase()}%` : null;
+      const docId = (r) => `${r.repo}/${r.path}`;
 
+      if (full || id) {
+        // One document whole. Excerpting an ADR is how you end up quoting the
+        // option that was rejected: the decision is at the bottom, the
+        // alternatives are in the middle, and a keyword hit lands anywhere.
+        //
+        // Matched on the id as one string rather than split on a slash: a
+        // repo slug can itself carry one (a group folder), so the join is the
+        // only safe way to take it apart.
+        const rows = id
+          ? await q(env, `SELECT repo, path, kind, title, body, chars FROM t1_project_doc
+                          WHERE repo || '/' || path = ? LIMIT 1`, String(id))
+          : await q(
+              env,
+              `SELECT repo, path, kind, title, body, chars
+               FROM t1_project_doc
+               WHERE (? IS NULL OR lower(title) LIKE ? OR lower(body) LIKE ?)
+                 AND (? IS NULL OR lower(repo) = lower(?) OR lower(repo) LIKE ?)
+                 AND (? IS NULL OR kind = ?)
+               ORDER BY CASE kind WHEN 'context' THEN 0 WHEN 'readme' THEN 1
+                                  WHEN 'adr' THEN 2 ELSE 3 END, repo, path, id
+               LIMIT 1`,
+              like, like, like, rlike ? repo : null, repo ?? null, rlike, kind ?? null, kind ?? null
+            );
+        if (!rows.length) {
+          return empty(ctx, {
+            note: id
+              ? `no document with id '${id}' — ids come from this tool's own excerpt listing`
+              : "no document matched",
+          });
+        }
+        const d = { id: docId(rows[0]), ...rows[0] };
+        // Budgeted against its own envelope, the way readOne does, rather than
+        // handed to cap() unclipped — which withheld any document over the
+        // byte budget entirely and told the caller the tool had a bug.
+        const envelope = JSON.stringify({ ...d, body: "", note: "" }).length;
+        const budget = MAX_BYTES - envelope - 200;
+        const body = d.body ?? "";
+        const clipped = body.length > budget;
+        return single(
+          { ...d, body: clipped ? body.slice(0, budget) : body },
+          clipped
+            ? { note: `body clipped to ${budget} of ${body.length} chars — one answer holds this much of the document` }
+            : {}
+        );
+      }
+
+      const WHERE = `WHERE (? IS NULL OR lower(title) LIKE ? OR lower(body) LIKE ?)
+           AND (? IS NULL OR lower(repo) = lower(?) OR lower(repo) LIKE ?)
+           AND (? IS NULL OR kind = ?)`;
+      const binds = [like, like, like, rlike ? repo : null, repo ?? null, rlike, kind ?? null, kind ?? null];
       const rows = await q(
         env,
         `SELECT repo, path, kind, title, body, chars
          FROM t1_project_doc
-         WHERE (? IS NULL OR lower(title) LIKE ? OR lower(body) LIKE ?)
-           AND (? IS NULL OR lower(repo) = lower(?) OR lower(repo) LIKE ?)
-           AND (? IS NULL OR kind = ?)
+         ${WHERE}
          ORDER BY CASE kind WHEN 'context' THEN 0 WHEN 'readme' THEN 1
                             WHEN 'adr' THEN 2 ELSE 3 END, repo, path, id
          LIMIT ? OFFSET ?`,
-        like, like, like, rlike ? repo : null, repo ?? null, rlike,
-        kind ?? null, kind ?? null, full ? 1 : probe(ctx), full ? 0 : skip(ctx)
+        ...binds, probe(ctx), skip(ctx)
       );
+      const [held] = await q(env, `SELECT count(*) AS n FROM t1_project_doc ${WHERE}`, ...binds);
 
-      if (full) {
-        // One document whole. Excerpting an ADR is how you end up quoting the
-        // option that was rejected: the decision is at the bottom, the alternatives
-        // are in the middle, and a keyword hit lands anywhere.
-        if (!rows.length) return { rows: [], note: "no document matched" };
-        return cap([rows[0]], ctx);
-      }
-
-      // Excerpt around the hit rather than shipping bodies. A CONTEXT.md is
-      // 8KB and the byte cap would otherwise spend the whole answer on one file.
+      // Excerpt around the hit rather than shipping bodies. A CONTEXT.md can
+      // be most of the byte cap on its own, and the answer would otherwise be
+      // spent on one file.
       const out = rows.map((r) => {
         const body = r.body ?? "";
         const at = like ? body.toLowerCase().indexOf(topic.toLowerCase()) : 0;
         const from = Math.max(0, (at < 0 ? 0 : at) - 200);
         const excerpt = body.slice(from, from + 700).replace(/\s+/g, " ").trim();
         return {
+          id: docId(r),
           repo: r.repo, path: r.path, kind: r.kind, title: r.title,
           chars: r.chars,
           excerpt: (from > 0 ? "…" : "") + excerpt + (from + 700 < body.length ? "…" : ""),
         };
       });
+      const capped = cap(out, ctx);
       return {
-        ...cap(out, ctx),
-        note: "excerpts — ask again with full=true and a narrower repo/kind to read one whole",
+        ...capped,
+        scope: `${held?.n ?? 0} documents${topic || repo || kind ? " matched" : ""}`,
+        note: [capped.note, "excerpts — pass a row's id with full:true to read that document whole"]
+          .filter(Boolean).join(" · "),
       };
     },
   },

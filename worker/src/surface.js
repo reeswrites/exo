@@ -33,12 +33,17 @@
 // a tool the owner turned off an hour ago.
 export const TTL_MS = 60_000;
 
-let CACHE = null; // { offered: Set|null, peers, version, checked }
+let CACHE = null; // { offered: Set|null, peers, instance, version, checked }
 
-const EMPTY = { offered: null, peers: {} };
+const EMPTY = { offered: null, peers: {}, instance: {} };
 
 /**
- * `{ offered, peers }`. `offered === null` means no restriction. Never throws.
+ * `{ offered, peers, instance }`. `offered === null` means no restriction.
+ * `instance` is the `[surface]` table of exo.toml as publish wrote it — the
+ * instance facts a tool answer may carry and the engine may not know
+ * (ADR-0014): which collections are the making and buying queues, what the
+ * release crawl cannot reach. Absent, it is `{}` and every tool falls back to
+ * a neutral sentence. Never throws.
  */
 export async function loadSurface(env, now = Date.now()) {
   if (CACHE && now - CACHE.checked < TTL_MS) return CACHE;
@@ -61,7 +66,9 @@ export async function loadSurface(env, now = Date.now()) {
     // build cannot interpret, and the open reading is the safe one here.
     const offered = Array.isArray(parsed?.tools) ? new Set(parsed.tools) : null;
     const peers = parsed?.peers && typeof parsed.peers === "object" ? parsed.peers : {};
-    CACHE = { offered, peers, version, checked: now };
+    const instance = parsed?.instance && typeof parsed.instance === "object" && !Array.isArray(parsed.instance)
+      ? parsed.instance : {};
+    CACHE = { offered, peers, instance, version, checked: now };
     return CACHE;
   } catch {
     // Do NOT cache a failure as data — the next call should try again rather

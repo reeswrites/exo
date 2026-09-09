@@ -63,6 +63,16 @@ def setting(section: str, key: str, default=None):
     return _CFG.get(section, {}).get(key, default)
 
 
+def section(name: str) -> dict:
+    """One whole table from exo.toml, or `{}` — never a non-table.
+
+    For readers that ship a table onward as data (`[surface]` rides to the
+    worker inside surface.json) rather than picking one key out of it.
+    """
+    v = _CFG.get(name, {})
+    return dict(v) if isinstance(v, dict) else {}
+
+
 def _env(*names: str) -> str | None:
     """First environment variable set among `names`.
 

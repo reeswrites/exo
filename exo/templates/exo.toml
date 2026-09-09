@@ -96,6 +96,27 @@ max_depth = 2
 # domains = ["mind", "workshop"]
 # disable = ["recipes"]
 
+[surface]
+# Instance facts a tool answer may carry and the engine may not know
+# (ADR-0014). Every line is optional. Published into surface.json beside the
+# tool list, so the worker reads them as data; an instance that says nothing
+# gets the engine's neutral sentence in each place.
+#
+# backlog_*: which Goodreads shelves and raindrop collections are the four
+#            `backlog` piles. The shelf defaults are Goodreads' own vocabulary;
+#            the collections have no default, because a bucket you named by
+#            hand is not a name the engine gets to know. Matched
+#            case-insensitively.
+# release_pool: one sentence, appended to every `releases` answer, on what
+#            your release crawl covers and structurally cannot reach.
+# events_region: where your event feeds are from; the brief says so.
+# backlog_read   = ["to-read"]
+# backlog_resume = ["currently-reading", "partly-read"]
+# backlog_make   = ["want-to-make"]
+# backlog_buy    = ["Gift Ideas", "Shopping"]
+# release_pool   = "The crawl reads label rosters, so music that publishes itself is not in it."
+# events_region  = "the city you live in"
+
 [peers]
 # Sources that a system you also connect serves LIVE (ADR-0020).
 #

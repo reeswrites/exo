@@ -712,6 +712,11 @@ def run(dry_run: bool = False, only: list[str] | None = None) -> int:
         # peer, goes looking for a tool it will never be offered.
         offered = surface.resolve({z for z, _n in summary})
         offered["peers"] = surface.peers()
+        # Instance facts the tool answers carry (ADR-0014): which collections
+        # are the making and buying queues, what the release crawl cannot
+        # reach. Shipped as data beside the tool list, so no tool string in
+        # the engine has to name them.
+        offered["instance"] = surface.instance()
 
         # The brief reads the projection we just wrote — never the store — so it
         # cannot carry held material even by mistake.
@@ -747,6 +752,7 @@ def run(dry_run: bool = False, only: list[str] | None = None) -> int:
                 "tools": offered["tools"],
                 "withheld": offered["withheld"],
                 "peers": offered["peers"],
+                "instance": offered["instance"],
             }, f, indent=2)
         if offered["withheld"]:
             by_reason: dict[str, list[str]] = {}

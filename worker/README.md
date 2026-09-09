@@ -388,38 +388,38 @@ answers well, and a name a model has learned is hard to take back.
 
 | tool | domain | class | kind | answers |
 |---|---|---|---|---|
-| `collection` | culture | possession | entity | What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. |
-| `criticism` | culture | world | text | What the music press is publishing — titles, bylines, dates and the outlet's own blurb, from the underground outlets the owner follows, with the link to the piece. |
-| `releases` | culture | world | entity | Records that came out lately in the scenes the owner listens to, with what they have NOT already heard removed. |
-| `reviews` | culture | authored | text | The owner's written film reviews from Letterboxd — 115 of them, in their own words, each with a link. |
-| `taste` | culture | revealed | event | What the owner actually listens to, straight off the scrobble stream — revealed preference, as distinct from what they say. |
-| `verdicts` | culture | authored | text | The owner's written opinions on books, films, tv and music — in their own words, with reasoning. |
+| `collection` | culture | possession | entity | What the owner owns, which is not what they consumed — vinyl, DVDs, board games, fragrances, whatever the inventory holds, with what they paid and where. |
+| `criticism` | culture | world | text | What the music press is publishing — headline, byline, date, the outlet's own blurb and the link — from the outlets this record follows. |
+| `releases` | culture | world | entity | Records that came out recently in the scenes the owner follows, with anything they have already scrobbled or own removed — the count removed is stated. |
+| `reviews` | culture | authored | text | The owner's written film reviews, in their own words, each with its rating, its watch date and a link. |
+| `taste` | culture | revealed | event | What the owner actually listens to, straight off the scrobble stream — revealed preference, as distinct from what they say they like (`taste_profile`). |
+| `verdicts` | culture | authored | text | The owner's written opinions on books, films, television and music — their own words, with the reasoning, and the rating they gave. |
 | `watching` | culture | revealed | entity | What the owner started and has not finished, per show: episodes watched, how long since the last one, and an episode total where one is known. |
-| `places` | table | authored | entity | Restaurants the owner has been to, with their own notes and ratings. |
-| `recipes` | table | authored | text | What the owner actually cooks — recipes they wrote up and published, with their source links. |
-| `drafts` | mind | authored | text | Longform pieces the owner is in the middle of writing — the state between a private note and a published post. |
-| `notes_on` | mind | authored | text | The owner's notes about a topic. |
-| `open_threads` | mind | intent | pointer | Questions the owner has asked themselves and not closed. |
-| `posts` | mind | authored | text | The owner's published blog — articles, essays, lists, project write-ups — as opposed to the private notes behind them. |
-| `recent_topics` | mind | dialogue | event | What the owner has been working through in conversation lately — titles and volume, not transcripts. |
-| `thread` | mind | dialogue | text | One conversation. |
+| `places` | table | authored | entity | Restaurants the owner has visited, with their own notes, the rating they gave and the date of the visit. |
+| `recipes` | table | authored | text | Recipes the owner wrote up and published, with the post each came from. |
+| `drafts` | mind | authored | text | Longform pieces the owner is in the middle of writing — between a private note and a published post. |
+| `notes_on` | mind | authored | text | The owner's private notes on a topic, found by meaning. |
+| `open_threads` | mind | intent | pointer | Questions the owner has asked themselves in writing and not closed — the best single source of what they are currently chewing on. |
+| `posts` | mind | authored | text | The owner's published blog — essays, articles, lists, project write-ups — found by meaning, as opposed to the private notes behind them. |
+| `recent_topics` | mind | dialogue | event | What the owner has been working through in conversation — titles, dates and turn counts, with a clipped machine-written gist, never transcripts. |
+| `thread` | mind | dialogue | text | One conversation, by `id` from a `recent_topics` listing, or matched by title first and by gist or landing second. |
 | `whats_relevant` | mind | derived | vector | What has the owner written that bears on a topic? |
 | `project_activity` | workshop | revealed | event | What the owner actually worked on, dated — commit subjects from their own repos. |
-| `project_docs` | workshop | authored | text | The prose those repos carry: READMEs, CONTEXT glossaries, architecture decision records and plan documents. |
+| `project_docs` | workshop | authored | text | The prose the owner's repos carry: READMEs, CONTEXT glossaries, architecture decision records, plan documents. |
 | `project_open` | workshop | intent | pointer | What is visibly unfinished in those repos: TODO and FIXME markers left in code, unchecked items in plan documents, and files sitting uncommitted. |
-| `projects` | workshop | possession | entity | The owner's repos — what they are building, what they set down, and what each one claims to be. |
-| `agenda` | commitments | intent | pointer | What the owner has committed to and where it stands — the item spine Kairos schedules from. |
+| `projects` | workshop | possession | entity | The owner's repos — what each claims to be, how hot it is, and what they have actually been working on. |
+| `agenda` | commitments | intent | pointer | What the owner has committed to and where it stands — the item spine their scheduler reads from. |
 | `history` | commitments | revealed | event | What actually happened to the owner's commitments — the append-only log behind the item spine. |
-| `events` | world | world | entity | Upcoming DC events the owner could actually go to — a live pool merged from eight sources (library, theatre, improv, cinema, parties, music venues). |
-| `taste_profile` | world | authored | judgement | What the owner SAYS they like — stated preferences: venues and orgs they rate, things they seek out, things they avoid. |
-| `around_the_time` | * | lens | mixed | What was going on around a period: what the owner wrote, listened to, read or watched. |
-| `backlog` | * | intent | pointer | What the owner has queued but not done — things they decided they wanted and have not gotten to. |
-| `consumption` | * | revealed | event | Shape and recency of what the owner consumes, per medium: how much, and how current the record is. |
-| `facets` | * | revealed | judgement | How the owner rates a medium BROKEN DOWN by a facet of the thing itself — for beer: by style family, by full style, by brewery, by venue, or by the beer. |
-| `medium` | * | lens | mixed | Everything about one medium in a single call: how much of it the owner consumes, how they rate it ON ITS OWN SCALE, what they own, and what they have written about it. |
-| `ratings` | * | revealed | judgement | What the owner rated and how highly, per medium. |
-| `saves` | * | intent | pointer | Links the owner bookmarked — 2,188 of them across nine years. |
-| `taste_summary` | * | derived | judgement | Derived summaries of the owner's taste: how their rating scales actually behave, and the clusters their loved items fall into. |
+| `events` | world | world | entity | Upcoming events the owner could go to — a pool merged from the local feeds this instance follows, soonest first, from today unless `from` says otherwise. |
+| `taste_profile` | world | authored | judgement | What the owner says they like and will not have — stated preferences and standing constraints, as key/value rows grouped by kind: venues and organisers they rate, things they seek out, things they avoid, allergies and rules. |
+| `around_the_time` | * | lens | mixed | What was going on in a window of dates: what the owner wrote, played, watched and read between `from` and `to`. |
+| `backlog` | * | intent | pointer | What the owner queued and has not done — a deliberate act of shelving or filing, which separates it from `saves` (attention) and `collection` (already owned). |
+| `consumption` | * | revealed | event | How much of each medium the owner has consumed and how current each record is — totals and `last_logged` per medium, never titles. |
+| `facets` | * | revealed | judgement | The owner's ratings for one medium rolled up by a property of the thing rated — for beer: style family, full style, brewery, venue, or the beer itself. |
+| `medium` | * | lens | mixed | Everything about one medium in a single call: how much of it the owner has consumed and how current that record is, how they rate it on its own scale with the top few, what they own of it, and how much they have written about it. |
+| `ratings` | * | revealed | judgement | What the owner rated and how highly, one medium at a time, from the services that recorded it. |
+| `saves` | * | intent | pointer | Links the owner bookmarked. |
+| `taste_summary` | * | derived | judgement | How to read the owner's rating scales — calibration documents, one per kind, to be read before calling any number high or low. |
 
 <!-- TOOLS:END -->
 
@@ -429,14 +429,14 @@ which orders the answer — from one vocabulary, so it is learned once:
 
 | `order` | what it means | offered by |
 |---|---|---|
-| `recent` | newest first — the default wherever the record carries a date | `ratings`, `reviews`, `places`, `collection`, `backlog`, `projects`, `taste`, `facets` |
-| `oldest` | the same axis reversed, for what has been sitting | `backlog`, `collection`, `taste` |
+| `recent` | newest first — the default wherever the record carries a date | `ratings`, `reviews`, `places`, `collection`, `backlog`, `projects`, `taste`, `facets`, `saves`, `recent_topics`, `drafts`, `notes_on` |
+| `oldest` | the same axis reversed, for what has been sitting | `backlog`, `collection`, `taste`, `saves`, `recent_topics`, `drafts`, `notes_on` |
 | `rated` | the owner's own rating, highest first | `ratings` (default), `reviews`, `places` (default), `facets` |
 | `played` | how often they actually reached for it | `collection`, `taste` (default), `facets` (default) |
 
 A tool that offers a choice returns `order: "<name>"` beside `returned_count`,
 `offset` and `has_more`, because a page means something different on each axis:
-the first twenty films off 720 sorted by rating are the *top* twenty, and the
+the first twenty films sorted by rating are the *top* twenty, and the
 first twenty by recency are the *last* twenty. A tool with one axis says nothing, because there
 is nothing a caller could have asked for instead. An unrecognised name falls back to the default and says so rather than
 failing the call. `verdicts` offers no `recent`, because that zone carries no
