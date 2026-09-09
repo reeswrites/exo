@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { env, corpus } from "./harness.mjs";
-import { TOOLS, CLASSES, DOMAINS, KINDS, cap, probe, pageSize, ordering, ROW_CAP, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
+import { TOOLS, CLASSES, DOMAINS, KINDS, cap, probe, pageSize, skip, ordering, DEFAULT_ROWS, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
 import { GRADES, DEFAULT_GRADE, gradeOf, bestGradeOf, loadExposure, TTL_MS } from "../src/exposure.js";
 import worker from "../src/index.js";
 
@@ -18,7 +18,9 @@ ok((await post({ jsonrpc: "2.0", id: 1, method: "ping" }, "wrong")).status === 4
 ok((await post({ jsonrpc: "2.0", id: 1, method: "ping" })).status === 200, "correct token accepted");
 const batch = await worker.fetch(new Request("https://x/", { method: "POST",
   headers: { authorization: "Bearer test-token" }, body: "[]" }), env);
-ok((await batch.json()).error?.code === -32600, "batch requests refused (would multiply the cap)");
+const batchErr = (await batch.json()).error;
+ok(batchErr?.code === -32600 && /not implemented/.test(batchErr.message),
+   `batch requests are refused as unimplemented, not as a threat: ${batchErr?.message}`);
 
 console.log("\n── protocol ──");
 const init = await (await post({ jsonrpc: "2.0", id: 1, method: "initialize" })).json();
@@ -331,34 +333,54 @@ ok(bestGradeOf(grades, TOOLS.backlog) === "profile",
 ok(bestGradeOf(grades, TOOLS.notes_on) === gradeOf(grades, TOOLS.notes_on.reads),
    "a tool without per-call reads advertises exactly its grade");
 
-console.log("\n── the row cap follows the axis, the byte cap does not ──");
-ok(ROW_CAP.private === MAX_ROWS, "private is the floor, and the floor is ADR-0007's twenty");
-ok(ROW_CAP.profile > ROW_CAP.private && ROW_CAP.published >= ROW_CAP.profile,
-   `ceilings rise with publicity (${ROW_CAP.private}/${ROW_CAP.profile}/${ROW_CAP.published})`);
-ok(pageSize({ exposure: "published" }) === ROW_CAP.published, "a published tool may return more");
-ok(pageSize({}) === ROW_CAP.private, "an ungraded call gets the private ceiling");
-ok(pageSize(undefined) === ROW_CAP.private, "and so does one with no context at all");
-ok(pageSize({ exposure: "nonsense" }) === ROW_CAP.private, "an unknown grade gets the private ceiling");
+console.log("\n── the page: limit sizes it, offset places it, the grade only stamps it (ADR-0028) ──");
+ok(DEFAULT_ROWS === 20 && MAX_ROWS === 500, `a page is ${DEFAULT_ROWS} unless asked, and never more than ${MAX_ROWS}`);
+ok(pageSize({}) === DEFAULT_ROWS, "no limit -> the default page");
+ok(pageSize(undefined) === DEFAULT_ROWS, "and so does one with no context at all");
+for (const g of ["private", "profile", "published", "nonsense"]) {
+  ok(pageSize({ exposure: g }) === DEFAULT_ROWS, `the ${g} grade does not size the page`);
+}
 
-// `limit` narrows and can never widen. This is the whole difference between an
-// ergonomics parameter and a hole in ADR-0007.
-ok(pageSize({ exposure: "published", limit: 5 }) === 5, "limit narrows");
-ok(pageSize({ exposure: "private", limit: 500 }) === MAX_ROWS, "limit cannot widen past the grade");
-ok(pageSize({ exposure: "published", limit: 0 }) >= 1, "a zero limit is not a zero-row answer");
-ok(pageSize({ exposure: "published", limit: -3 }) === ROW_CAP.published, "a negative limit is ignored, not obeyed");
-ok(pageSize({ exposure: "published" }, 5) === 5, "a tool's own ceiling narrows below the grade");
+// `limit` sizes the page in both directions: the caller knows the question.
+ok(pageSize({ limit: 5 }) === 5, "limit narrows");
+ok(pageSize({ limit: 100 }) === 100, "limit raises above the default");
+ok(pageSize({ limit: 999 }) === MAX_ROWS, `limit above ${MAX_ROWS} clamps to it`);
+ok(pageSize({ limit: 0 }) >= 1, "a zero limit is not a zero-row answer");
+ok(pageSize({ limit: -3 }) === DEFAULT_ROWS, "a negative limit is ignored, not obeyed");
+ok(pageSize({ limit: 2.5 }) === DEFAULT_ROWS, "a fractional limit is ignored, not rounded");
+ok(pageSize({ limit: 100 }, 5) === 5, "a tool's own ceiling still narrows below the caller's");
+ok(pageSize({}, 8) === 8 && pageSize({ limit: 3 }, 8) === 3, "and is itself lowered by a smaller limit");
 
-// The byte cap does NOT follow the axis: it protects the caller's context
-// window, which does not care who may read the rows.
-const wide = Array.from({ length: ROW_CAP.published }, () => ({ t: "y".repeat(400) }));
-ok(JSON.stringify(cap(wide, { exposure: "published" }).rows).length <= MAX_BYTES,
-   "a published answer still fits the 16KB budget");
+// `offset` is where the page starts. Anything that is not a whole number of
+// rows to skip is no skip at all.
+ok(skip({}) === 0 && skip(undefined) === 0, "no offset -> the first page");
+ok(skip({ offset: 40 }) === 40, "an offset is honoured");
+ok(skip({ offset: -1 }) === 0 && skip({ offset: 1.5 }) === 0 && skip({ offset: "9" }) === 0,
+   "a negative, fractional or stringly offset is read as none");
 
-// A raised ceiling must not cost the honesty won in the previous phase.
-const over = Array.from({ length: probe({ exposure: "profile" }) }, (_, i) => ({ i }));
-ok(cap(over, { exposure: "profile" }).returned_count === ROW_CAP.profile, "profile returns its ceiling");
-ok(cap(over, { exposure: "profile" }).has_more === true, "and still says there is more");
-ok(cap(over).returned_count === MAX_ROWS, "the same rows with no context stay at twenty");
+// The byte cap does not move for a raised limit: it protects the caller's
+// context window, which does not care how many rows were asked for.
+const wide = Array.from({ length: MAX_ROWS }, () => ({ t: "y".repeat(400) }));
+const wideOut = cap(wide, { limit: MAX_ROWS });
+ok(JSON.stringify(wideOut.rows).length <= MAX_BYTES && wideOut.rows.length < MAX_ROWS,
+   `a ${MAX_ROWS}-row ask still fits the 16KB budget (${wideOut.rows.length} rows)`);
+ok(wideOut.has_more === true && /offset:\d+/.test(wideOut.note ?? ""),
+   "and the byte-bound note names the offset of the next page");
+
+// A raised limit must not cost the honesty won earlier: the probe row still
+// turns into has_more and never into a row.
+const over = Array.from({ length: probe({ limit: 100 }) }, (_, i) => ({ i }));
+ok(cap(over, { limit: 100 }).returned_count === 100, "limit:100 returns a hundred");
+ok(cap(over, { limit: 100 }).has_more === true, "and still says there is more");
+ok(cap(over).returned_count === DEFAULT_ROWS, "the same rows with no context stay at the default page");
+
+// The envelope says where the page started, so a caller assembling pages can
+// check its own arithmetic instead of trusting it.
+ok(cap([{ i: 1 }]).offset === 0, "offset:0 is stated, not omitted");
+const paged = cap(Array.from({ length: 6 }, (_, i) => ({ i })), { limit: 5, offset: 10 });
+ok(paged.offset === 10 && paged.returned_count === 5 && paged.has_more === true,
+   "a page echoes its offset beside its count");
+ok(/offset:15/.test(paged.note ?? ""), `and the note names the next one: ${paged.note}`);
 
 // Every tool survives being called with and without a context. A tool that
 // destructured `ctx` in a branch nobody exercised would throw only in
@@ -440,27 +462,28 @@ ok(drift.length === 0, `reads match the SQL (${drift.join("; ") || "no drift"})`
 // 28 tools reads exactly like one that covers all of them.
 console.log(`  note ${unverifiable} tool(s) choose a table at runtime — their reads are declared, not verified`);
 
-console.log("\n── caps (ADR-0007) ──");
-const many = Array.from({ length: 500 }, (_, i) => ({ i, pad: "x".repeat(50) }));
+console.log("\n── caps ──");
+const many = Array.from({ length: 600 }, (_, i) => ({ i, pad: "x".repeat(50) }));
 const c = cap(many);
-ok(c.rows.length <= MAX_ROWS, `row cap holds (${c.rows.length} <= ${MAX_ROWS})`);
+ok(c.rows.length === DEFAULT_ROWS, `the default page holds (${c.rows.length} = ${DEFAULT_ROWS})`);
+ok(cap(many, { limit: 9999 }).rows.length <= MAX_ROWS, `and MAX_ROWS bounds a limit above it (${cap(many, { limit: 9999 }).rows.length} <= ${MAX_ROWS})`);
 ok(JSON.stringify(c.rows).length <= MAX_BYTES, `byte cap holds (${JSON.stringify(c.rows).length} <= ${MAX_BYTES})`);
 ok(!!c.note, "truncation is announced, not silent");
 
 console.log("\n── has_more (a cap that cannot say \"there is more\" is a cap that lies) ──");
-// The defect this replaces: every SQL tool bound its LIMIT to MAX_ROWS and then
+// The defect this replaces: every SQL tool bound its LIMIT to the page and then
 // handed the result to cap(), so cap() never saw a row it had to drop. It
 // reported "20 of 20" for a shelf of 436, and an assistant reading that
 // concluded the shelf was twenty books long.
-const exact = cap(Array.from({ length: MAX_ROWS }, (_, i) => ({ i })));
-ok(exact.returned_count === MAX_ROWS && exact.has_more === false,
-   `exactly ${MAX_ROWS} rows -> has_more=false`);
+const exact = cap(Array.from({ length: DEFAULT_ROWS }, (_, i) => ({ i })));
+ok(exact.returned_count === DEFAULT_ROWS && exact.has_more === false,
+   `exactly ${DEFAULT_ROWS} rows -> has_more=false`);
 ok(exact.note === undefined, "and nothing is announced, because nothing was dropped");
 
 const probed = cap(Array.from({ length: probe() }, (_, i) => ({ i })));
-ok(probed.returned_count === MAX_ROWS && probed.has_more === true,
-   `one row past the cap -> has_more=true, ${probed.returned_count} returned`);
-ok(!probed.rows.some((r) => r.i === MAX_ROWS), "the probe row is counted, never emitted");
+ok(probed.returned_count === DEFAULT_ROWS && probed.has_more === true,
+   `one row past the page -> has_more=true, ${probed.returned_count} returned`);
+ok(!probed.rows.some((r) => r.i === DEFAULT_ROWS), "the probe row is counted, never emitted");
 
 // A tool with its own smaller page must detect ITS overflow, not the global one.
 // `ratings` shows five per medium; without this it would report has_more=false
@@ -468,26 +491,30 @@ ok(!probed.rows.some((r) => r.i === MAX_ROWS), "the probe row is counted, never 
 const small = cap(Array.from({ length: probe(undefined, 5) }, (_, i) => ({ i })), undefined, 5);
 ok(small.returned_count === 5 && small.has_more === true, "own=5 overflows at 5, not at 20");
 ok(cap([{ i: 1 }], undefined, 5).has_more === false, "own=5 under-full -> has_more=false");
-ok(cap(Array.from({ length: 100 }, (_, i) => ({ i })), { limit: 999 }).returned_count === MAX_ROWS,
-   "a caller's limit narrows the page and can never widen it past the grade's ceiling");
+ok(cap(Array.from({ length: 100 }, (_, i) => ({ i })), { limit: 999 }).returned_count === 100,
+   "a caller's limit above the rows on hand returns them all, and says nothing is left");
 
-// The regression that actually bites: a tool binding MAX_ROWS instead of probe()
-// loses the ability to say there is more, and NOTHING ELSE FAILS — the rows come
-// back, the caps hold, the tests pass, and the answer quietly claims to be whole.
-// So the guard is over the source, not over behaviour.
-const CAP_DEFS = [
-  /^\s*(\/\/|\*)/,                    // prose about the cap
-  /export const MAX_ROWS/,
-  /export const probe = \(want = MAX_ROWS\)/,
-  /\{ want = MAX_ROWS \}/,
-  /Math\.min\(want, MAX_ROWS\)/,
-];
-const bareBinds = readFileSync(new URL("../src/tools.js", import.meta.url), "utf8")
-  .split("\n")
-  .map((line, n) => [n + 1, line])
-  .filter(([, line]) => /\bMAX_ROWS\b/.test(line) && !CAP_DEFS.some((re) => re.test(line)));
-ok(bareBinds.length === 0,
-   `every row limit probes — bare MAX_ROWS binds: ${bareBinds.map(([n]) => n).join(", ") || "none"}`);
+// The regression that actually bites: a LIMIT with no OFFSET beside it, or a
+// probe() bound with no skip() beside it, pages correctly on page one and
+// returns page one again for every page after — the rows come back, the tests
+// pass, and a caller walking a list sees the same twenty for ever. So the guard
+// is over the source, not over behaviour.
+const toolsSrc = readFileSync(new URL("../src/tools.js", import.meta.url), "utf8");
+const toolsLines = toolsSrc.split("\n").map((line, n) => [n + 1, line]);
+const codeLine = ([, line]) => !/^\s*(\/\/|\*|\/\*\*)/.test(line) && !/^\s*--/.test(line);
+const loneLimits = toolsLines.filter(codeLine)
+  .filter(([, line]) => /\bLIMIT \?/.test(line) && !/LIMIT \? OFFSET \?/.test(line));
+ok(loneLimits.length === 0,
+   `every LIMIT ? is paired with OFFSET ? — unpaired at: ${loneLimits.map(([n]) => n).join(", ") || "none"}`);
+const loneProbes = toolsLines.filter(codeLine)
+  .filter(([, line]) => /\bprobe\(ctx/.test(line) && !/\bskip\(ctx\)/.test(line)
+                     && !/export const probe/.test(line)
+                     // a search k is a count, not a SQL bind; its page is sliced in JS
+                     && !/\bk:/.test(line) && !/const want = probe/.test(line));
+ok(loneProbes.length === 0,
+   `every probe() bind has a skip() beside it — unpaired at: ${loneProbes.map(([n]) => n).join(", ") || "none"}`);
+const limits = toolsSrc.match(/LIMIT \? OFFSET \?/g)?.length ?? 0;
+ok(limits >= 25, `the surface pages in ${limits} places`);
 
 console.log("\n── caps, continued ──");
 // sized from MAX_BYTES so raising the cap cannot silently retire this check
@@ -495,6 +522,116 @@ const fatRow = Math.ceil(MAX_BYTES / 3);
 const fat = cap(Array.from({ length: 5 }, () => ({ t: "y".repeat(fatRow) })));
 ok(fat.rows.length < 5 && !!fat.note,
    `byte cap binds before row cap on large rows (${fat.rows.length} of 5 at ${fatRow}B each)`);
+
+console.log("\n── paging: offset walks a list without a repeat or a skip (ADR-0028) ──");
+// Every ORDER BY ends on a unique key, so a page at offset N is exactly the
+// rows N..N+limit of the single ordered list, however heavily the sort key
+// ties. Checked over real rows on tools whose sort keys DO tie — plays, a
+// rating, an acquisition date, a commit day — by walking each list three rows
+// at a time and requiring the walk to equal one large page, in order.
+{
+  const WALKS = [
+    ["taste", {}],
+    ["ratings", { medium: "beer" }],
+    ["collection", {}],
+    ["history", {}],
+    ["project_activity", { repo: "" }],
+    ["saves", { since: "1970-01-01" }],
+    ["places", {}],
+  ];
+  let walked = 0;
+  for (const [name, args] of WALKS) {
+    // project_activity needs a repo to list subjects; pick the busiest one.
+    if (name === "project_activity") {
+      const totals = await TOOLS.project_activity.run(env, { from: "1970-01-01" }, {});
+      if (!totals.rows.length) continue;
+      args.repo = totals.rows[0].repo; args.from = "1970-01-01";
+    }
+    const whole = await TOOLS[name].run(env, args, { limit: MAX_ROWS });
+    if (whole.rows.length <= 3) { console.log(`  note ${name}: ${whole.rows.length} rows, too few to page`); continue; }
+    const key = (r) => JSON.stringify(r);
+    const pages = [];
+    let off = 0, more = true, guard = 0;
+    while (more && guard++ < 200) {
+      const pg = await TOOLS[name].run(env, args, { limit: 3, offset: off });
+      ok(pg.offset === off, `${name}: page at ${off} echoes offset ${pg.offset}`);
+      pages.push(pg.rows);
+      more = pg.has_more;
+      off += pg.rows.length;
+      if (!pg.rows.length) break;
+    }
+    const seq = pages.flat().map(key);
+    const all = whole.rows.map(key);
+    ok(new Set(seq).size === seq.length, `${name}: ${pages.length} pages of 3 share no row`);
+    ok(seq.length === all.length && seq.every((k, i) => k === all[i]),
+       `${name}: the pages in order are the ${all.length}-row list exactly`);
+    walked++;
+  }
+  ok(walked >= 3, `paging exercised on ${walked} tools with tied sort keys`);
+
+  // A page past the end is empty and says so, rather than wrapping or erroring.
+  const past = await TOOLS.taste.run(env, {}, { limit: 5, offset: 100000 });
+  ok(past.rows.length === 0 && past.has_more === false && past.offset === 100000,
+     "an offset past the end returns nothing, has_more:false, and still echoes the offset");
+}
+
+console.log("\n── limit is the caller's, in both directions ──");
+{
+  // More than the default, bounded by bytes rather than by twenty. Against the
+  // longest list a tool here can be relied on to hold: every rated beer.
+  const beers = (await env.DB.prepare(
+    "SELECT count(*) AS n FROM t0_beer WHERE CAST(rating_score AS REAL) > 0").bind().all()).results[0].n;
+  const dflt = await TOOLS.ratings.run(env, { medium: "beer" });
+  const big = await TOOLS.ratings.run(env, { medium: "beer" }, { limit: 100 });
+  ok(dflt.rows.length === Math.min(DEFAULT_ROWS, beers),
+     `no limit -> the default page (${dflt.rows.length} of ${beers})`);
+  ok(big.rows.length === Math.min(100, beers) && big.rows.length > DEFAULT_ROWS,
+     `limit:100 -> more rows than the default (${big.rows.length} > ${DEFAULT_ROWS})`);
+  ok(JSON.stringify(big.rows).length <= MAX_BYTES, "and still inside the byte budget");
+  ok(big.has_more === (beers > 100), "and has_more is about the rows, not the default page");
+  // Above the sanity bound: clamped, not refused, and never past it.
+  const huge = await TOOLS.ratings.run(env, { medium: "beer" }, { limit: 100000 });
+  ok(huge.rows.length <= MAX_ROWS && huge.rows.length === Math.min(MAX_ROWS, beers),
+     `limit:100000 clamps to ${MAX_ROWS} (got ${huge.rows.length})`);
+  // Through the door, the same: the schema says so and the call honours it.
+  const advertised = list.result.tools.find((t) => t.name === "taste").inputSchema.properties;
+  ok(advertised.limit.maximum === MAX_ROWS && advertised.limit.minimum === 1,
+     `tools/list advertises limit 1..${MAX_ROWS}`);
+  ok(advertised.offset?.type === "integer" && advertised.offset.minimum === 0,
+     "and an offset from 0");
+  ok(advertised.offset.description ===
+       "Rows to skip before the first returned. Pair with limit to page; has_more says whether another page exists.",
+     "with the description a caller is told to read");
+  ok(list.result.tools.every((t) => t.inputSchema.properties.offset && t.inputSchema.properties.limit),
+     "every offered tool takes limit and offset");
+  const call = (args) => post({ jsonrpc: "2.0", id: 5, method: "tools/call",
+                                params: { name: "ratings", arguments: { medium: "beer", ...args } } });
+  const viaDoor = JSON.parse((await (await call({ limit: 100, offset: 2 })).json()).result.content[0].text);
+  ok(viaDoor.offset === 2 && viaDoor.returned_count === Math.max(0, Math.min(100, beers) - 2),
+     `tools/call honours limit and offset and echoes the offset (${viaDoor.offset}, ${viaDoor.returned_count} rows)`);
+  ok(viaDoor.exposure !== undefined, "and the answer still carries its exposure stamp");
+  const badOff = await (await call({ offset: -1 })).json();
+  ok(badOff.error?.code === -32602 && /offset/.test(badOff.error.message), "a negative offset is refused, not read as zero");
+  const fracOff = await (await call({ offset: 1.5 })).json();
+  ok(fracOff.error?.code === -32602, "so is a fractional one");
+  const zeroOff = JSON.parse((await (await call({ offset: 0 })).json()).result.content[0].text);
+  ok(zeroOff.offset === 0 && zeroOff.returned_count === dflt.rows.length, "offset:0 is page one");
+}
+
+console.log("\n── the exposure stamp is a stamp, not a size ──");
+{
+  // Same rows for the same question whatever the grade in the context: the
+  // grade rides on the envelope for the caller to read and decides nothing.
+  const counts = new Set();
+  for (const g of ["private", "profile", "published"]) {
+    const r = await TOOLS.ratings.run(env, { medium: "beer" }, { exposure: g });
+    counts.add(r.rows.length);
+  }
+  ok(counts.size === 1, `ratings(beer) returns the same page at every grade (${[...counts]})`);
+  const stamped = JSON.parse((await (await post({ jsonrpc: "2.0", id: 6, method: "tools/call",
+    params: { name: "ratings", arguments: { medium: "beer" } } })).json()).result.content[0].text);
+  ok(GRADES.includes(stamped.exposure), `the answer is stamped with a grade (${stamped.exposure})`);
+}
 
 console.log("\n── tools against real data ──");
 for (const name of ["open_threads", "verdicts", "taste", "consumption", "places"]) {
@@ -533,9 +670,30 @@ const rnList = await TOOLS.notes_on.run(env, { topic: "anything" });
 ok(rnList.rows.length > 1 && !("body" in rnList.rows[0]),
    `without full:true it lists titles (${rnList.rows.length}), no bodies`);
 
-// no enumeration affordance
-ok(!TOOLS.notes_on.schema.properties.id && !TOOLS.notes_on.schema.properties.offset,
-   "no id/offset parameter — nothing to walk");
+// Two ways in: the map, then the row. The listing hands back the key, and the
+// same tool takes it, so a caller never has to re-guess the wording of a title.
+ok(rnList.rows.every((r) => typeof r.id === "string" && r.id.length > 0),
+   "every listed note carries the id to ask for it by");
+ok(TOOLS.notes_on.schema.properties.id && !TOOLS.notes_on.schema.required?.includes("topic"),
+   "notes_on takes an id, and topic is no longer required when one is given");
+{
+  const byId = await TOOLS.notes_on.run(env, { id: rnList.rows[0].id });
+  ok(byId.rows.length === 1 && byId.rows[0].id === rnList.rows[0].id,
+     `notes_on(id) returns that one note (${byId.rows[0]?.title})`);
+  ok(typeof byId.rows[0].body === "string" && byId.rows[0].body.length > 0,
+     "whole, without asking for full:true");
+  ok(!("match_score" in byId.rows[0]), "and carries no match score, because nothing was searched");
+  // The topic path resolves to a row; asking for that row by id gives the same
+  // row. Same key column, same select, so the two paths cannot drift.
+  ok(byId.rows[0].id === rn.rows[0].id && byId.rows[0].body === rn.rows[0].body,
+     "the id path and the topic path return the same note by the same key");
+  const missing = await TOOLS.notes_on.run(env, { id: "no-such-note-anywhere" });
+  ok(missing.rows.length === 0 && /no note with id/.test(missing.note ?? ""),
+     "an unknown id is a miss, not an error");
+  const neither = await TOOLS.notes_on.run(env, {});
+  ok(neither.rows.length === 0 && /topic|id/.test(neither.note ?? ""), "neither topic nor id is a miss that says what to pass");
+}
+
 
 console.log("\n── a slice says what it is a slice of (ADR-0023) ──");
 // The recurring failure this section exists for: an assistant read a capped
@@ -550,13 +708,13 @@ ok(t.order === "played", "and the axis it drew them on");
 ok(t.rows.every((r) => r.first_played && r.last_played),
    "every artist carries the span it was played over, so 'lately' is checkable");
 
-// The cap must be the profile one now. A tool about a profile-graded record
-// answering twenty at a time, because one optional column came off the notes,
-// is the whole bug (ADR-0023 §2).
+// The stamp must be the scrobbles' own. A tool about a profile-graded record
+// stamped private because one optional column came off the notes is the whole
+// bug (ADR-0023 §2) — and the stamp is all the grade does now.
 const scrobbleGrade = gradeOf(await loadExposure(env), TOOLS.taste.readsFor({}));
-ok(scrobbleGrade === "profile" || scrobbleGrade === "published",
+ok(scrobbleGrade === gradeOf(await loadExposure(env), ["t0_music"]),
    `taste is graded on the scrobble record (${scrobbleGrade}), not on the notes`);
-ok(t.rows.length <= ROW_CAP[scrobbleGrade], "and returns no more than that grade allows");
+ok(t.rows.length <= DEFAULT_ROWS, "and returns the default page, whatever the grade");
 
 // Reach. Each of these was unaskable before: the surface held one lifetime
 // ranking and no way to enter it from any other direction.
@@ -703,7 +861,7 @@ console.log("\n── beer: a check-in is more than a name (G1-G4) ──");
   // string is the shape that lets them drift.
   ok(repeats.has_more || repeats.rows.length === b.repeat_count,
      `the repeats list is exactly as long as the repeat_count beside it (${repeats.rows.length} = ${b.repeat_count})`);
-  ok(!repeats.has_more || repeats.rows.length === MAX_ROWS,
+  ok(!repeats.has_more || repeats.rows.length === DEFAULT_ROWS,
      "a truncated rollup says so rather than reading as the whole list");
 }
 
@@ -1228,7 +1386,7 @@ if (mixed) {
   ok(true, "no mixed-price series upcoming to check");
 }
 
-console.log("\n── caller observability (phase 1 of origin gating) ──");
+console.log("\n── caller telemetry: what was asked, by which door, from where (ADR-0028) ──");
 // A real Request has no `cf` in Node; the edge fills it in production. Both
 // shapes are exercised, because the empty one is what the test harness and any
 // non-Cloudflare caller produce and it must not throw.
@@ -1404,8 +1562,17 @@ if (postIdx >= 0) {
   ok(ph.length > 0 && ph.every((r) => r.url?.startsWith("https://example.com/posts/")),
      "whats_relevant hands back the URL on post hits");
 }
-ok(!TOOLS.posts.schema.properties.offset && !TOOLS.posts.schema.properties.id,
-   "the blog tool exposes no cursor and no id (ADR-0007)");
+ok(!!TOOLS.posts.schema.properties.id && !TOOLS.posts.schema.required?.includes("topic"),
+   "the blog tool takes an id (a slug), and topic is optional when one is given");
+{
+  const listed = await TOOLS.posts.run(env, { topic: "anything" });
+  if (listed.rows.length) {
+    ok(listed.rows.every((r) => typeof r.slug === "string" && r.slug), "every listed post carries its slug");
+    const one = await TOOLS.posts.run(env, { id: listed.rows[0].slug });
+    ok(one.rows.length === 1 && one.rows[0].id === listed.rows[0].slug && typeof one.rows[0].body === "string",
+       `posts(id) returns that one post whole (${one.rows[0]?.title})`);
+  }
+}
 
 console.log("\n── the item spine ──");
 const x_ag = await TOOLS.agenda.run(env, {});
@@ -1567,7 +1734,7 @@ console.log("\n── drafts ──");
 {
   const all = await TOOLS.drafts.run(env, {});
   const n = (await env.DB.prepare("SELECT count(*) AS n FROM t1_draft").bind().all()).results[0].n;
-  ok(all.rows.length === Math.min(n, MAX_ROWS), `drafts -> ${all.rows.length} of ${n}`);
+  ok(all.rows.length === Math.min(n, DEFAULT_ROWS), `drafts -> ${all.rows.length} of ${n}`);
   if (n === 0) {
     // Zero drafts is a real state, not a failure — but it must be distinguishable
     // from "your filter matched nothing", or a reader concludes nothing was ever written.
@@ -1586,8 +1753,14 @@ console.log("\n── drafts ──");
     const cold = await TOOLS.drafts.run(env, { stale_days: 3650 });
     ok(cold.rows.length === 0, "stale_days filters rather than being ignored");
   }
-  ok(!TOOLS.drafts.schema.properties.id && !TOOLS.drafts.schema.properties.offset,
-     "no cursor, no id (ADR-0007)");
+  ok(!!TOOLS.drafts.schema.properties.id, "drafts takes an id (a slug) as the follow-up to a listing");
+  if (n > 0) {
+    const byId = await TOOLS.drafts.run(env, { id: all.rows[0].slug });
+    ok(byId.rows.length === 1 && byId.rows[0].slug === all.rows[0].slug && typeof byId.rows[0].body === "string",
+       "drafts(id) returns that exact draft whole");
+    const missing = await TOOLS.drafts.run(env, { id: "no-such-draft" });
+    ok(missing.rows.length === 0 && /no draft with slug/.test(missing.note ?? ""), "an unknown slug is a miss, not an error");
+  }
 }
 
 console.log("\n── taxonomy (ADR-0015) ──");

@@ -82,8 +82,8 @@ TOOL_ZONES: dict[str, Reads] = {
     "whats_relevant": Reads(any_of=(("t2_atom", "t2_atom_vec"),
                                     ("t1_notes", "t2_note_vec"),
                                     ("t1_post", "t2_post_vec"))),
-    # Both required: the lookup is semantic (ADR-0007 — there is no id to ask
-    # by), so the index is the only way in, and the body is the whole answer.
+    # Both required: the lookup is semantic by default (the index is the way
+    # in; `id` from a listing is the other), and the body is the whole answer.
     "notes_on": Reads(required=("t1_notes", "t2_note_vec")),
     "open_threads": Reads(required=("t1_open_thread",)),
     "posts": Reads(required=("t1_post", "t2_post_vec")),

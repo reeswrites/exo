@@ -150,9 +150,9 @@ export function cap(rows, ctx, own) {
  *
  * A tool advertises only the axes its rows can answer, and the FIRST key of the
  * map is its default. The chosen name rides back on the answer, because a
- * truncated list means something different on each axis: twenty films by rating
- * are the best twenty of 720, twenty by recency are the last twenty, and
- * `has_more` cannot tell those apart. An assistant should not have to infer it
+ * truncated list means something different on each axis: a page of films by
+ * rating is the best of 720, a page by recency is the latest, and `has_more`
+ * cannot tell those apart. An assistant should not have to infer it
  * from the shape of the rows.
  *
  * The SQL never comes from the caller. `asked` only ever picks a key out of a
@@ -434,29 +434,49 @@ const q = (env, sql, ...binds) =>
  * instead of going through cap(, ctx), which is exactly the shape a second copy
  * takes when the first one is copied.
  *
- * Semantic lookup is load-bearing, not incidental (ADR-0007): there is no id to
- * pass and no cursor to walk, so one named thing per call is the hardest shape
- * to bulk-extract with. That property lives here now, in one place, rather than
- * being restated wherever someone needs a whole document.
+ * Two ways in. By `topic`, the default: a vector search picks the best match
+ * and its ref is the row's key. By `id`: the same key column, handed back by a
+ * title listing from the same tool, so a caller that has already seen the map
+ * can pick a document off it without a second guess at wording. Either way
+ * the shape is one row, budgeted against its own envelope.
  */
-async function readOne(env, { topic, kind, table, key, select, missing, onClip }) {
-  const [hit] = await search(env, topic, { k: 1, kind });
-  if (!hit) return { rows: [], note: `no ${missing} matched` };
+async function readOne(env, { topic, id, kind, table, key, select, missing, onClip }) {
+  let ref = id;
+  let score = null;
+  if (ref === undefined || ref === null || ref === "") {
+    if (!topic) return { rows: [], note: `pass a topic to search for a ${missing}, or the id a listing returned` };
+    const [hit] = await search(env, topic, { k: 1, kind });
+    if (!hit) return { rows: [], note: `no ${missing} matched` };
+    ref = hit.ref;
+    score = hit.score;
+  }
 
-  const rows = await q(env, `SELECT ${select} FROM ${table} WHERE ${key} = ? LIMIT 1`, hit.ref);
-  if (!rows.length) return { rows: [], note: `matched a ${missing} that is not published` };
+  const rows = await q(env, `SELECT ${select} FROM ${table} WHERE ${key} = ? LIMIT 1`, String(ref));
+  if (!rows.length) {
+    return {
+      rows: [],
+      note: score === null
+        ? `no ${missing} with id '${ref}' — ids come from this tool's own listing, and a held one is absent rather than hidden`
+        : `matched a ${missing} that is not published`,
+    };
+  }
 
   const row = rows[0];
   const full = row.body ?? "";
   // Budget against the real envelope, not a guessed constant: the metadata
   // around the body differs per table, and a flat allowance is how a single
   // row ends up over the cap and gets dropped entirely.
-  const envelope = JSON.stringify({ ...row, body: "", match_score: 0.999, note: "" }).length;
+  const envelope = JSON.stringify({ ...row, id: ref, body: "", match_score: 0.999, note: "" }).length;
   const budget = MAX_BYTES - envelope - 200;
   const clipped = full.length > budget;
 
   return {
-    rows: [{ ...row, match_score: hit.score, body: clipped ? full.slice(0, budget) : full }],
+    rows: [{
+      id: ref,
+      ...row,
+      ...(score === null ? {} : { match_score: score }),
+      body: clipped ? full.slice(0, budget) : full,
+    }],
     ...(clipped ? { note: onClip(row, budget, full.length) } : {}),
   };
 }
@@ -501,18 +521,21 @@ export const TOOLS = {
       required: ["topic"],
     },
     async run(env, { topic }, ctx) {
-      const hits = await search(env, topic, { k: probe(ctx) });
+      const hits = await search(env, topic, { k: probe(ctx) + skip(ctx) });
       // A post hit is the one kind that has somewhere to send a reader. Its ref is
       // the slug, and the permalink is a pure function of it, so the link costs
       // no round trip — and an answer with a link beats one that paraphrases
-      // an essay back at its own author.
+      // an essay back at its own author. A note hit carries its id, so
+      // `notes_on` can be asked for it directly.
       return cap(
-        hits.map((h) => ({
+        hits.slice(skip(ctx)).map((h) => ({
           kind: h.kind,
           text: h.label,
           score: h.score,
           ...(h.kind === "post" ? postUrl(env, h.ref) : {}),
-        }))
+          ...(h.kind === "note" ? { id: h.ref } : {}),
+        })),
+        ctx
       );
     },
   },
@@ -521,19 +544,19 @@ export const TOOLS = {
     class: "authored", domain: "mind", kind: "text",
     reads: ["t1_notes"],
     description:
-      "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents. Pass full:true for the entire text of the single best match.",
+      "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents, each with the `id` to ask for it by. Pass full:true for the entire text of the single best match, or `id` from a listing to read that exact note without searching again.",
     schema: {
       type: "object",
       properties: {
-        topic: { type: "string" },
+        topic: { type: "string", description: "A topic, question, or phrase. The default way in." },
+        id: { type: "string", description: "The `id` a title listing returned. Fetches that one note whole, no search — the follow-up to a listing." },
         full: { type: "boolean", description: "Return one whole note instead of a list of titles." },
       },
-      required: ["topic"],
     },
-    async run(env, { topic, full }, ctx) {
-      if (full) {
+    async run(env, { topic, id, full }, ctx) {
+      if (full || id) {
         const one = await readOne(env, {
-          topic, kind: "note", table: "t1_notes", key: "origin_ref", missing: "note",
+          topic, id, kind: "note", table: "t1_notes", key: "origin_ref", missing: "note",
           // `source` and `uuid` are the join key back to wherever this note came
           // out of (ADR-0020). A caller holding that system's own MCP server can
           // match this row to the live page instead of treating the two as two
@@ -554,8 +577,11 @@ export const TOOLS = {
           + `and indexed one, that copy is the current one`;
         return { ...one, peer, note: [one.note, said].filter(Boolean).join("; ") };
       }
-      const hits = await search(env, topic, { k: probe(ctx), kind: "note" });
-      return cap(hits.map((h) => ({ title: h.label, score: h.score })));
+      if (!topic) return { rows: [], note: "pass a topic to search by, or an id from an earlier listing" };
+      // The index is ranked, so a page of it is the next `limit` hits past the
+      // ones already shown: ask for that many and drop the head.
+      const hits = await search(env, topic, { k: probe(ctx) + skip(ctx), kind: "note" });
+      return cap(hits.slice(skip(ctx)).map((h) => ({ id: h.ref, title: h.label, score: h.score })), ctx);
     },
   },
 
@@ -573,7 +599,7 @@ export const TOOLS = {
          ORDER BY created DESC, id LIMIT ? OFFSET ?`,
         probe(ctx), skip(ctx)
       );
-      return cap(rows.map((r) => ({ question: r.question })));
+      return cap(rows.map((r) => ({ question: r.question })), ctx);
     },
   },
 
@@ -609,9 +635,9 @@ export const TOOLS = {
     reads: ["t0_music", "t2_affinity"],
     // The scrobble stream is what this tool is ABOUT; `mentions` is colour on it
     // (ADR-0023 §2). t2_affinity joins t0_music to t1_notes, so a tool that
-    // always returned that one integer was always as private as the notes — a
-    // twenty-row answer off a profile-grade record that allows a hundred. The
-    // grade now follows the subject, and the colour costs its own call.
+    // always returned that one integer was always as private as the notes. The
+    // grade follows the subject, and the colour costs its own call, so the
+    // exposure stamp on a plain scrobble answer is the scrobbles' own.
     readsFor: ({ with_mentions }) =>
       with_mentions ? ["t0_music", "t2_affinity"] : ["t0_music"],
     description:
@@ -619,7 +645,7 @@ export const TOOLS = {
     schema: {
       type: "object",
       properties: {
-        artist: { type: "string", description: "One act by name, matched anywhere in the string. The way to ask 'do they listen to this at all' rather than 'is this in their top twenty'." },
+        artist: { type: "string", description: "One act by name, matched anywhere in the string. The way to ask 'do they listen to this at all' rather than 'is this at the top of the list'." },
         since: { type: "string", description: "ISO date; only plays on or after it." },
         until: { type: "string", description: "ISO date; only plays on or before it." },
         order: { type: "string", description: "played (default, most plays first) | recent (last reached for) | oldest (fell out of rotation longest ago)" },
@@ -785,7 +811,7 @@ export const TOOLS = {
         ...(r.to_status ? { to: r.to_status } : {}),
         when_: r.date || (r.ts ?? "").slice(0, 10),
         ...(r.ref_kind ? { ref_kind: r.ref_kind } : {}),
-      })));
+      })), ctx);
     },
   },
 
@@ -844,29 +870,33 @@ export const TOOLS = {
     class: "authored", domain: "mind", kind: "text",
     reads: ["t1_draft"],
     description:
-      "Longform pieces the owner is in the middle of writing \u2014 the state between a private note and a published post. Ask with no arguments for everything open, oldest-touched last. `stale_days` finds the ones that have gone cold, which is the question a writer cannot answer about themselves. Pass full:true for the whole text of one.",
+      "Longform pieces the owner is in the middle of writing \u2014 the state between a private note and a published post. Ask with no arguments for everything open, oldest-touched last. `stale_days` finds the ones that have gone cold, which is the question a writer cannot answer about themselves. Pass full:true for the whole text of one, or `id` (a slug from a listing) for that exact draft.",
     schema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Match against title or text." },
+        id: { type: "string", description: "A draft's `slug`, as a listing returned it. Fetches that one draft whole." },
         stale_days: { type: "number", description: "Only drafts untouched for at least this many days." },
         full: { type: "boolean", description: "Return the entire text of the best match." },
       },
     },
-    async run(env, { topic, stale_days, full }, ctx) {
+    async run(env, { topic, id, stale_days, full }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
       const match = "(? IS NULL OR lower(title) LIKE ? OR lower(body) LIKE ?)";
       const stale = "(? IS NULL OR julianday('now') - julianday(modified) >= ?)";
       const binds = [like, like, like, stale_days ?? null, stale_days ?? 0];
 
-      if (full) {
-        const rows = await q(
-          env,
-          `SELECT title, slug, description, started, modified, words, state, body
-           FROM t1_draft WHERE ${match} AND ${stale} ORDER BY modified DESC LIMIT 1`,
-          ...binds
-        );
-        if (!rows.length) return { rows: [], note: "no draft matched" };
+      if (full || id) {
+        // By slug when one was handed back by a listing; by best match otherwise.
+        // `modified DESC, id` so two drafts touched in the same second still
+        // resolve to the same one on every call.
+        const rows = id
+          ? await q(env, `SELECT title, slug, description, started, modified, words, state, body
+                          FROM t1_draft WHERE slug = ? LIMIT 1`, String(id))
+          : await q(env, `SELECT title, slug, description, started, modified, words, state, body
+                          FROM t1_draft WHERE ${match} AND ${stale} ORDER BY modified DESC, id LIMIT 1`,
+                    ...binds);
+        if (!rows.length) return { rows: [], note: id ? `no draft with slug '${id}'` : "no draft matched" };
         const d = rows[0];
         const envelope = JSON.stringify({ ...d, body: "", note: "" }).length;
         const budget = MAX_BYTES - envelope - 200;
@@ -965,7 +995,7 @@ export const TOOLS = {
           if (base) out.push({ medium: k, unit: d.unit, total: base.n ?? 0 });
         }
         return {
-          ...cap(out, ctx),
+          ...cap(out.slice(skip(ctx)), ctx),
           note: missing
             ? `no medium called '${missing}' here — ask for one of these`
             : "ask for one by name to get ratings, what is owned, and what was written about it",
@@ -1158,7 +1188,7 @@ export const TOOLS = {
         }
         out.push(rec);
       }
-      return cap(out, ctx);
+      return cap(out.slice(skip(ctx)), ctx);
     },
   },
 
@@ -1166,23 +1196,23 @@ export const TOOLS = {
     class: "authored", domain: "mind", kind: "text",
     reads: ["t1_post"],
     description:
-      "The owner's published blog — articles, essays, lists, project write-ups — as opposed to the private notes behind them. Searches by meaning and returns each post's live URL. Pass full:true for the entire text of the best match.",
+      "The owner's published blog — articles, essays, lists, project write-ups — as opposed to the private notes behind them. Searches by meaning and returns each post's live URL and its `slug`. Pass full:true for the entire text of the best match, or `id` (a slug from a listing) to read that exact post.",
     schema: {
       type: "object",
       properties: {
-        topic: { type: "string", description: "A topic, question, or phrase." },
+        topic: { type: "string", description: "A topic, question, or phrase. The default way in." },
+        id: { type: "string", description: "A post's `slug`, as a listing returned it. Fetches that one post whole, no search." },
         kind: {
           type: "string",
           description: "article | essay | notes | list | project | stub | recipe",
         },
         full: { type: "boolean", description: "Return one whole post instead of a list." },
       },
-      required: ["topic"],
     },
-    async run(env, { topic, kind, full }, ctx) {
-      if (full) {
+    async run(env, { topic, id, kind, full }, ctx) {
+      if (full || id) {
         return readOne(env, {
-          topic, kind: "post", table: "t1_post", key: "slug", missing: "post",
+          topic, id, kind: "post", table: "t1_post", key: "slug", missing: "post",
           select: "title, url, published, kind, words, body",
           onClip: (r, kept, total) =>
             `body truncated to ${kept} of ${total} chars — the whole post is public at ${r.url}`,
@@ -1191,7 +1221,9 @@ export const TOOLS = {
       // Over-fetch, then filter: the vector index carries no post kind, so a
       // kind filter applied after the search would return 3 rows out of 20 and
       // look like the blog is empty on that kind.
-      const hits = await search(env, topic, { k: kind ? 60 : probe(ctx), kind: "post" });
+      if (!topic) return { rows: [], note: "pass a topic to search by, or an id (slug) from an earlier listing" };
+      const want = probe(ctx) + skip(ctx);
+      const hits = await search(env, topic, { k: kind ? Math.max(60, want * 3) : want, kind: "post" });
       if (!hits.length) return { rows: [], note: "nothing on the blog matched" };
 
       const slugs = hits.map((h) => h.ref).filter(Boolean);
@@ -1211,12 +1243,12 @@ export const TOOLS = {
         if (!m) continue;
         if (kind && (m.kind || "").toLowerCase() !== kind.toLowerCase()) continue;
         rows.push({
-          title: m.title, url: m.url, published: m.published,
+          slug: m.slug, title: m.title, url: m.url, published: m.published,
           kind: m.kind, words: m.words, description: m.description, score: h.score,
         });
       }
       if (!rows.length) return { rows: [], note: `matched posts, but none of kind '${kind}'` };
-      return cap(rows, ctx);
+      return cap(rows.slice(skip(ctx)), ctx);
     },
   },
 
@@ -1300,7 +1332,9 @@ export const TOOLS = {
                 -- sending the reader to a paid night expecting a free one.
                 CASE WHEN free_min <> free_max THEN 1 END AS price_varies
          FROM ranked WHERE rn <= 4
-         ORDER BY start, url
+         -- One row per (title, feed) after the collapse, so those two make the
+         -- order total; url last so the lint that reads this clause can see it.
+         ORDER BY start, title, feed, url
          LIMIT ? OFFSET ?`,
         from ?? null, to ?? null, to ?? null,
         like, like, like, like, free ? 1 : null, probe(ctx), skip(ctx)
@@ -1472,10 +1506,10 @@ export const TOOLS = {
          )
          SELECT outlet, byline, title, published, url, tags,
                 -- Clipped again here, and deliberately. The stored blurb runs to
-                -- 700 chars, which at twenty rows is the whole byte budget and
-                -- returns eleven links instead of twenty. A dek is enough to
-                -- decide whether to follow one, and the count says there is more
-                -- behind it.
+                -- 700 chars, which across a default page is the whole byte
+                -- budget and returns eleven links instead of a page. A dek is
+                -- enough to decide whether to follow one, and the count says
+                -- there is more behind it.
                 substr(COALESCE(summary,''), 1, 320) AS summary,
                 CASE WHEN chars > 320 THEN chars END AS blurb_chars
          FROM ranked WHERE rn <= ?
@@ -1541,14 +1575,14 @@ export const TOOLS = {
         env,
         `SELECT 'note' AS kind, title AS label, substr(created,1,10) AS when_
          FROM t1_notes WHERE substr(created,1,10) BETWEEN ? AND ?
-         ORDER BY created LIMIT 8`,
+         ORDER BY created, id LIMIT 8`,
         from, to
       );
       const music = await q(
         env,
         `SELECT 'artist' AS kind, artist AS label, count(*) AS plays
          FROM t0_music WHERE substr(created,1,10) BETWEEN ? AND ?
-         GROUP BY artist ORDER BY plays DESC LIMIT 5`,
+         GROUP BY artist ORDER BY plays DESC, artist LIMIT 5`,
         from, to
       );
       // Ratings ride along: "X was watched" and "X was watched and rated 5"
@@ -1560,7 +1594,7 @@ export const TOOLS = {
         `SELECT 'film' AS kind, title AS label, substr(created,1,10) AS when_,
                 nullif(CAST(rating AS TEXT),'') AS rating, '0-5' AS scale
          FROM t0_film WHERE substr(created,1,10) BETWEEN ? AND ?
-         ORDER BY created LIMIT 4`,
+         ORDER BY created, id LIMIT 4`,
         from, to
       );
       const books = await q(
@@ -1569,7 +1603,7 @@ export const TOOLS = {
                 nullif(CAST(my_rating AS TEXT),'0') AS rating, '0-5' AS scale
          FROM t0_book WHERE substr(created,1,10) BETWEEN ? AND ?
            AND shelf = 'read'
-         ORDER BY created LIMIT 4`,
+         ORDER BY created, id LIMIT 4`,
         from, to
       );
       // The scale string is doing real work on this branch. A show is IN the
@@ -1584,7 +1618,7 @@ export const TOOLS = {
                 CAST(episodes_watched AS TEXT) AS rating,
                 'episodes watched in total, not in this window' AS scale
          FROM t0_tv WHERE substr(created,1,10) BETWEEN ? AND ?
-         ORDER BY created LIMIT 4`,
+         ORDER BY created, id LIMIT 4`,
         from, to
       );
       // Interleaved, not concatenated. The per-branch LIMITs above exist so a
@@ -1631,7 +1665,9 @@ export const TOOLS = {
         held?.books ? `${held.books} books` : null,
         held?.tv ? `${held.tv} shows last watched` : null,
       ].filter(Boolean).join(" · ");
-      const capped = cap(all, ctx);
+      // The page is over the interleaved list, since the branches above are
+      // sized by hand rather than by the caller; `offset` walks that list.
+      const capped = cap(all.slice(skip(ctx)), ctx);
       return {
         ...capped,
         scope: `${from} → ${to} held ${counted || "nothing"}; these rows are the head of each, not the whole`,
@@ -1651,7 +1687,7 @@ export const TOOLS = {
       beer: ["t0_beer"], restaurants: ["t1_visits"], anime: ["t0_anime"],
     })[medium] ?? ["t0_anime", "t0_beer", "t0_book", "t0_film", "t1_visits"],
     description:
-      "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
+      "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the top of the list, not a sample \u2014 pass order='recent' for what they have rated lately, which is a different list entirely.",
     schema: {
       type: "object",
       properties: {
@@ -1727,7 +1763,7 @@ export const TOOLS = {
     class: "revealed", domain: "*", kind: "judgement",
     reads: ["t0_beer"],
     description:
-      "How the owner rates a medium BROKEN DOWN by a facet of the thing itself \u2014 for beer: by style family, by full style, by brewery, by venue, or by the beer. One row per group with how many check-ins, how many carried a rating, the mean, the best and the last. `ratings` returns twenty rows out of 1,906 and so cannot answer 'which styles do they rate highest'; this can, because a rollup is a summary rather than a page of a set. Ordered by how often they reached for it, which is the honest default \u2014 a mean over two check-ins is not a preference. Pass min_n:2 with by:'beer' for the beers they went back to, which is the rarest thing in this record.",
+      "How the owner rates a medium BROKEN DOWN by a facet of the thing itself \u2014 for beer: by style family, by full style, by brewery, by venue, or by the beer. One row per group with how many check-ins, how many carried a rating, the mean, the best and the last. `ratings` returns a page of 1,906 rows and so cannot answer 'which styles do they rate highest'; this can, because a rollup is a summary rather than a page of a set. Ordered by how often they reached for it, which is the honest default \u2014 a mean over two check-ins is not a preference. Pass min_n:2 with by:'beer' for the beers they went back to, which is the rarest thing in this record.",
     schema: {
       type: "object",
       properties: {
@@ -2305,8 +2341,8 @@ export const TOOLS = {
     // The kinds are not one table, and they are not one publicity either: the
     // shelves come off a Goodreads profile and the collections out of a private
     // Raindrop account. Graded as one tool, the gift list decided for the
-    // reading list, and a 436-book shelf answered twenty at a time because a
-    // folder of present ideas shared the door (ADR-0019 §2).
+    // reading list, and a shelf off a public profile was stamped private
+    // because a folder of present ideas shared the door (ADR-0019 §2).
     readsFor: ({ kind }) =>
       kind === "read" || kind === "resume" ? ["t0_book"]
       : kind === "make" || kind === "buy" ? ["t0_raindrop"]
@@ -2716,10 +2752,10 @@ export const TOOLS = {
 
       // Bound, not interpolated. `since` is derived from the clock rather than
       // from the caller, so this is not injectable today — but it was the only
-      // value in this file spliced into SQL as text, and the header above says
-      // the tool surface is the security boundary. The placeholder is first in
-      // both statements below because SQLite binds by position in the SQL text
-      // and this subquery sits in the FROM clause, ahead of every filter.
+      // value in this file spliced into SQL as text, and nothing a caller sends
+      // ever reaches SQL as text. The placeholder is first in both statements
+      // below because SQLite binds by position in the SQL text and this
+      // subquery sits in the FROM clause, ahead of every filter.
       const RECENT = `(SELECT repo, count(*) AS n FROM t1_project_commit
                        WHERE substr(committed_at,1,10) >= ? GROUP BY repo)`;
 
@@ -2729,8 +2765,8 @@ export const TOOLS = {
         const hot = await q(env,
           `SELECT p.name, p.slug, p.status, c.n AS commits_90d, p.description
            FROM t1_project p JOIN ${RECENT} c ON c.repo = p.slug
-           ORDER BY c.n DESC LIMIT 8`,
-          since);
+           ORDER BY c.n DESC, p.slug LIMIT ? OFFSET ?`,
+          since, probe(ctx, 8), skip(ctx));
         return {
           ...cap(hot, ctx),
           statuses: bands,

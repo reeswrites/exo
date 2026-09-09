@@ -14,9 +14,9 @@
  * surface used here is five methods, and a dependency-free Worker is one less
  * thing that can change under a corpus this personal.
  */
-import { bestGradeOf, loadExposure, gradeOf } from "./exposure.js";
+import { loadExposure, gradeOf } from "./exposure.js";
 import { loadSurface, offers } from "./surface.js";
-import { ROW_CAP, TOOLS } from "./tools.js";
+import { DEFAULT_ROWS, MAX_ROWS, TOOLS } from "./tools.js";
 
 // Newest first. A client that names one of these gets exactly that back;
 // anything else — older, newer, absent — gets the newest, which is what the
@@ -47,17 +47,16 @@ export function tokenOk(presented, expected) {
 
 /**
  * What Cloudflare already knows about the caller. Free to collect — `req.cf` is
- * filled by the edge before the isolate runs — and it is the only thing that can
- * answer the question an allowlist needs answered first: which egress does a
- * legitimate client actually come from.
+ * filled by the edge before the isolate runs — and it is what lets the log say
+ * from WHERE a call came, beside what was asked and by which door (ADR-0028).
  *
- * Phase 1 of origin gating (ADR-0007). Observation only: nothing here rejects
- * anything. An allowlist written before the answer is known locks out the
- * client it was meant to protect.
+ * Telemetry only: nothing here rejects anything, and nothing about the answer
+ * depends on it. It is how the owner reads their own surface's traffic — which
+ * clients actually connect, and from which egress.
  *
  * Note what is NOT here: `Origin`. Poke and every other assistant call this
- * server-to-server, so there is no Origin header and no preflight — CORS-shaped
- * gating would be unenforced decoration. IP and ASN are what exist.
+ * server-to-server, so there is no Origin header and no preflight. IP and ASN
+ * are what exist.
  */
 function callerFacts(req) {
   const cf = req.cf ?? {};
@@ -91,9 +90,9 @@ function throttled(ip) {
 }
 
 /**
- * Where calls come from, rolled up by day. Both outcomes: `ok` is the allowlist
- * candidate, `denied` is someone holding a wrong token, and the second is the
- * one worth an alarm.
+ * Where calls come from, rolled up by day. Both outcomes: `ok` is a client
+ * that got in, `denied` is someone holding a wrong token, and the second is the
+ * one worth a look.
  *
  * Rolled up rather than appended because the question is "which distinct places
  * call", not "how did request 4,812 go" — wh_audit already holds per-call detail
@@ -132,13 +131,14 @@ async function recordCaller(env, req, outcome) {
 }
 
 /**
- * Append-only call log (ADR-0007). This is the only control here that DETECTS
- * rather than limits — the other three bound a leak, this one is how you find
- * out it happened. Never fails the request: an unlogged answer beats an outage.
+ * Append-only call log (ADR-0028): what was asked, by which door, from where,
+ * and how many rows came back. Telemetry for the owner — which questions their
+ * assistants actually ask of the record, and which tools earn their place.
+ * Never fails the request: an unlogged answer beats an outage.
  *
  * Carries the caller's ip and asn as well as the call, because with more than
  * one token holder (the owner's own machine, and whatever assistant is connected)
- * "what was asked" without "by whom" cannot tell a normal week from a compromise.
+ * "what was asked" without "by whom" is only half a picture.
  *
  * Lives outside the published set, so `import.sh` protects `wh_` and will not
  * reconcile it away. The ip/asn columns require migrations/0001 to have run
@@ -369,39 +369,41 @@ async function handleRpc(req, env, body, door) {
     }
 
     case "tools/list": {
-      // Built per request rather than declared, because a tool's ceiling depends
-      // on how public the zones it reads are, and that is a property of the
-      // bundle rather than of this code. A static schema would have to state one
-      // number for every grade, and the number it stated would be wrong.
-      const zones = await loadExposure(env);
-      // What this INSTANCE offers, which is not what this engine defines
-      // (ADR-0020). A tool whose zones are held would otherwise be advertised
-      // and then fail on the table it cannot find, reporting a configuration
-      // choice to the caller as a malfunction.
+      // Built per request rather than declared: what this INSTANCE offers is
+      // not what this engine defines (ADR-0020). A tool whose zones are held
+      // would otherwise be advertised and then fail on the table it cannot
+      // find, reporting a configuration choice to the caller as a malfunction.
       const surface = await loadSurface(env);
+      // `limit` and `offset` are synthesised here rather than written into
+      // thirty schemas, so every list tool pages the same way and the numbers
+      // stated are the ones tools.js enforces.
       return rpcResult(id, {
-        tools: Object.entries(TOOLS).filter(([name]) => offers(surface, name)).map(([name, t]) => {
-          const ceiling = ROW_CAP[bestGradeOf(zones, t)] ?? ROW_CAP.private;
-          return {
-            name,
-            description: t.description,
-            inputSchema: {
-              ...t.schema,
-              properties: {
-                ...(t.schema.properties ?? {}),
-                limit: {
-                  type: "integer",
-                  minimum: 1,
-                  maximum: ceiling,
-                  description:
-                    `Rows to return, at most ${ceiling}. Lower it to spend less ` +
-                    `context; it cannot be raised. There is no offset: this ` +
-                    `surface has no cursor that walks a set (ADR-0007).`,
-                },
+        tools: Object.entries(TOOLS).filter(([name]) => offers(surface, name)).map(([name, t]) => ({
+          name,
+          description: t.description,
+          inputSchema: {
+            ...t.schema,
+            properties: {
+              ...(t.schema.properties ?? {}),
+              limit: {
+                type: "integer",
+                minimum: 1,
+                maximum: MAX_ROWS,
+                description:
+                  `Rows to return; ${DEFAULT_ROWS} if unset, at most ${MAX_ROWS}. ` +
+                  `Answers also stop at a 16KB byte budget, whichever binds first; ` +
+                  `has_more says whether more matched.`,
+              },
+              offset: {
+                type: "integer",
+                minimum: 0,
+                description:
+                  "Rows to skip before the first returned. Pair with limit to page; " +
+                  "has_more says whether another page exists.",
               },
             },
-          };
-        }),
+          },
+        })),
       });
     }
 
@@ -426,6 +428,13 @@ async function handleRpc(req, env, body, door) {
       // `readsFor` may only ever narrow: the test asserts it returns a subset of
       // `reads`, so a bug there cannot grade a call more public than declared.
       const exposure = gradeOf(await loadExposure(env), tool.readsFor?.(args) ?? tool.reads);
+      // The page. A `limit` above MAX_ROWS is clamped in tools.js rather than
+      // refused; an `offset` that is not a whole number is refused, because
+      // silently reading it as zero would hand back page one to a caller that
+      // asked for page three and let it conclude the list had ended.
+      if (args.offset !== undefined && !(Number.isInteger(args.offset) && args.offset >= 0)) {
+        return rpcError(id, -32602, "offset must be an integer of 0 or more");
+      }
       const ctx = {
         exposure,
         // Carried so a tool can tell a caller that the row it is handing back
@@ -434,24 +443,16 @@ async function handleRpc(req, env, body, door) {
         // the agent's (ADR-0013 §2).
         surface,
         limit: Number.isInteger(args.limit) && args.limit > 0 ? args.limit : undefined,
+        offset: Number.isInteger(args.offset) && args.offset > 0 ? args.offset : 0,
       };
-      // Named, not ignored. A model that guessed at `offset` deserves to hear
-      // why the surface has none rather than to receive page one again and
-      // conclude it had reached the end.
-      if (args.offset !== undefined) {
-        return rpcError(id, -32602,
-          "this surface has no offset: a cursor that can walk the full set is the " +
-          "one thing the tool surface is not (ADR-0007). Narrow the question instead " +
-          "— every tool takes filters, and the answer carries has_more.");
-      }
       try {
         const result = await tool.run(env, args, ctx);
         // How public this answer is (ADR-0019), stamped on every one of them.
-        // It sized the caps above; it is also the half of the axis worth more on
-        // its own. An assistant otherwise cannot tell "this is on his blog, link
-        // it" from "this is a half-formed private note, do not repeat it to
+        // An assistant otherwise cannot tell "this is on his blog, link it"
+        // from "this is a half-formed private note, do not repeat it to
         // whoever asked" — CONTEXT has stated that rule since the blog zone
-        // existed and the surface could never carry it.
+        // existed and the surface could never carry it. It is a stamp, not a
+        // size: nothing about how many rows come back depends on it.
         await audit(env, req, params.name, args, result.rows?.length ?? 0, door);
         return rpcResult(id, {
           content: [{ type: "text", text: JSON.stringify({ ...result, exposure }, null, 2) }],
@@ -488,15 +489,16 @@ async function serveRpc(req, env, ctx, door) {
   }
 
   if (Array.isArray(body)) {
-    // Batches would let one authenticated request pull N caps' worth of data,
-    // turning the per-call cap into no cap at all.
-    return rpcError(null, -32600, "batch requests are not accepted");
+    // Not implemented. Every client this surface has met sends one request per
+    // call, and a batch would need per-entry ids, ordering and error handling
+    // that nothing here has needed yet.
+    return rpcError(null, -32600, "batch requests are not implemented; send one request per call");
   }
   return handleRpc(req, env, body, door);
 }
 
 /**
- * The header door (ADR-0007), at the root, unchanged. Poke and Claude Code
+ * The header door, at the root, unchanged. Poke and Claude Code
  * arrive this way. It has no store, no expiry and no redirect, and it stays the
  * configuration of this surface an owner can hold in their head completely —
  * which is why ADR-0021 refuses to make it a legacy path.
@@ -518,9 +520,9 @@ export const headerDoor = {
     }
     if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 
-    // Token in a header, never the URL — URLs reach logs, referrers and history
-    // (ADR-0007). This proves the CALLER is who they say; it cannot prove they
-    // act on the owner's intent, which is why the caps and the log exist.
+    // Token in a header, never the URL — URLs reach logs, referrers and history.
+    // This proves the CALLER holds the token, which is the whole of what a
+    // token can prove.
     //
     // Several shapes accepted because clients disagree about which header an
     // "API key" belongs in, and the failure mode is an opaque 401 with no way to
@@ -567,7 +569,7 @@ const OAUTH_ONLY = /^\/(mcp|authorize|oauth\/|\.well-known\/oauth-)/;
 export default {
   async fetch(req, env, ctx) {
     // Fails OPEN into the surface that existed before the second door did
-    // (ADR-0021 §5). An instance with no grant store is the ADR-0007 surface
+    // (ADR-0021 §5). An instance with no grant store is the header-door surface
     // exactly — not one advertising a door it cannot open.
     if (!env.OAUTH_KV) return headerDoor.fetch(req, env, ctx);
 

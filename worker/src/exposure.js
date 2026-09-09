@@ -17,11 +17,12 @@
  * ## Staleness is the real hazard
  *
  * An isolate outlives a publish. If a grade is tightened — an account made
- * private, a zone reclassified — a warm isolate holding the old file would serve
- * newly-private material under public caps, which is the one direction of error
- * this whole axis exists to prevent. So the cache is bounded by wall clock, not
- * only by etag: after TTL_MS we ask R2 whether the object changed, and only
- * re-download when it did. Cheap, and bounded rather than indefinite.
+ * private, a zone reclassified — a warm isolate holding the old file would keep
+ * stamping newly-private material as public, and a caller reading the stamp
+ * would quote onward what should have been handed back quietly. So the cache
+ * is bounded by wall clock, not only by etag: after TTL_MS we ask R2 whether
+ * the object changed, and only re-download when it did. Cheap, and bounded
+ * rather than indefinite.
  */
 
 /** Ordered least public first, because "least public wins" is the rule at every level. */
@@ -101,19 +102,17 @@ export function gradeOf(zones, reads) {
 }
 
 /**
- * The most public a tool can ever be, for the ceiling `tools/list` advertises.
+ * The most public a tool can ever be.
  *
  * A tool with per-call reads has no single grade — `backlog` is `profile` for a
  * Goodreads shelf and `private` for a Raindrop collection, decided by an
- * argument the schema is written before anyone supplies. So the schema states
- * the best case and the runtime clamps to the real one.
+ * argument nobody has supplied yet when the question is asked about the TOOL
+ * rather than about a call. This is the best case; `gradeOf` over `readsFor`
+ * is what a call actually gets stamped with, and it can only be tighter.
  *
- * That direction is chosen deliberately. Advertising the worst case would make a
- * strict client reject `limit: 100` as out of range on a call that could have
- * honoured it — a valid question refused by a number. Advertising the best case
- * costs nothing: a caller who asks for more than a private call may return gets
- * what it may return, plus `has_more` saying so, which is the same contract
- * every capped answer already carries.
+ * Nothing on the surface sizes anything by it any more (ADR-0028): the stamp
+ * is information for the caller, not a control on the answer. Kept so the
+ * tests can assert that per-call narrowing only ever narrows.
  */
 export function bestGradeOf(zones, tool) {
   if (!tool?.readsFor) return gradeOf(zones, tool?.reads);

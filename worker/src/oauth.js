@@ -8,7 +8,7 @@
  *
  * The split of responsibilities:
  *
- *   /            the header door, untouched (ADR-0007). Poke and Claude Code.
+ *   /            the header door, untouched (ADR-0021). Poke and Claude Code.
  *   /mcp         the same surface behind a grant. Claude web, ChatGPT, anything
  *                that speaks the MCP authorization spec.
  *   /authorize   the login and consent screen, gated on AUTH_TOKEN
@@ -30,8 +30,9 @@ const html = (body, status = 200) =>
 
 /**
  * Guessing is the threat a login page has and an API token does not, so it gets
- * the control ADR-0007 refused for exfiltration. Ten attempts per IP per minute,
- * counted in the grant store because that is the only mutable thing here.
+ * a rate limit, which nothing else on this surface needs. Ten attempts per IP
+ * per minute, counted in the grant store because that is the only mutable
+ * thing here.
  *
  * Fails OPEN on a KV error, deliberately: this defends against a guesser, and a
  * store hiccup locking the owner out of their own record is the worse failure.

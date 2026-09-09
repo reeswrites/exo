@@ -766,9 +766,10 @@ echo "== done: $DB now matches this bundle — $WRITTEN rows written, $SKIPPED t
 # D1 keeps its own bookkeeping in the same database. Reconciliation drops
 # anything not served, so these prefixes must be protected or the first import
 # destroys the database it is loading into.
-# `wh_` is worker-owned state (the wh_audit call log). It is not in the
-# published set, so without this the first reconcile would delete the only
-# record of who called what.
+# `wh_` is worker-owned state: the wh_audit call log and the wh_callers rollup,
+# the telemetry that says what was asked, by which door, from where
+# (ADR-0028). It is not in the published set, so without this the first
+# reconcile would delete the only record of how the surface is actually used.
 _PROTECTED_PREFIXES = ("sqlite_", "_cf_", "d1_", "wh_")
 
 
