@@ -128,6 +128,9 @@ TOOL_ZONES: dict[str, Reads] = {
     # `t0_music` costs the exclusion and the play counts, not the tool — which
     # is exactly what `enriches` means, and the same split `collection` uses.
     "releases": Reads(required=("t0_release",), enriches=("t0_music", "t1_collection")),
+    # The film pool. `t0_film` is the exclusion (never offer what was watched),
+    # so holding it costs the removal, not the tool — same split as `releases`.
+    "streaming": Reads(required=("t0_film_offer",), enriches=("t0_film",)),
     "taste_profile": Reads(required=("t1_taste",)),
     # ── cross-domain ──────────────────────────────────────────────────────────
     # Every one of these is parameterised over the surface rather than part of
@@ -191,6 +194,7 @@ TOOL_DOMAINS: dict[str, str] = {
     "events": "world",
     "criticism": "culture",
     "releases": "culture",
+    "streaming": "culture",
     "taste_profile": "world",
     "around_the_time": "*",
     "backlog": "*",

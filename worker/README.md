@@ -388,6 +388,7 @@ Adding one is a decision about exposure, not a feature increment.
 | `criticism` | culture | world | text | What the music press is publishing — titles, bylines, dates and the outlet's own blurb, from the underground outlets the owner follows, with the link to the piece. |
 | `releases` | culture | world | entity | Records that came out lately in the scenes the owner listens to, with what they have NOT already heard removed. |
 | `reviews` | culture | authored | text | The owner's written film reviews from Letterboxd — 115 of them, in their own words, each with a link. |
+| `streaming` | culture | world | entity | Films the owner can stream RIGHT NOW on a service they subscribe to, with what they have already watched removed. |
 | `taste` | culture | revealed | event | What the owner actually listens to, straight off the scrobble stream — revealed preference, as distinct from what they say. |
 | `verdicts` | culture | authored | text | The owner's written opinions on books, films, tv and music — in their own words, with reasoning. |
 | `watching` | culture | revealed | entity | What the owner started and has not finished, per show: episodes watched, how long since the last one, and an episode total where one is known. |

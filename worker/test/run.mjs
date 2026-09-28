@@ -932,6 +932,35 @@ if (!rel.rows.length && /no crawl has landed/.test(rel.note ?? "")) {
      "an empty answer is explained");
 }
 
+console.log("\n── streaming: what they can press play on ──");
+const str = await hasZone("t0_film_offer")
+  ? await TOOLS.streaming.run(env, {}, { exposure: "private" })
+  : { rows: [], note: "no catalogue has landed yet" };
+if (!str.rows.length && /no catalogue has landed/.test(str.note ?? "")) {
+  console.log("   (no film pool — skipping)");
+} else {
+  ok(str.rows.length > 0, `streaming -> ${str.rows.length} films`);
+  ok(str.rows.every((r) => r.title && /^https?:\/\//.test(r.url ?? "")), "every film is nameable and linkable");
+  ok(str.rows.every((r) => !r.watched), "the default answer never offers what was watched");
+
+  const all = await TOOLS.streaming.run(env, { include_watched: true }, { exposure: "private" });
+  ok(all.rows.length >= str.rows.length, "include_watched only ever widens the answer");
+  ok(!/already watched/.test(all.note ?? ""), "and stops claiming a removal it did not make");
+
+  const going = await TOOLS.streaming.run(env, { order: "leaving" }, { exposure: "private" });
+  const days = going.rows.map((r) => r.leaves_in_days).filter((d) => d != null);
+  ok(going.order === "leaving" && days.every((d, i) => i === 0 || days[i - 1] <= d),
+     "order=leaving puts the soonest departure first");
+
+  ok(str.rows.every((r) => !r.episode), "the default answer is films, not series episodes");
+
+  const short = await TOOLS.streaming.run(env, { max_minutes: 90 }, { exposure: "private" });
+  ok(short.rows.every((r) => r.minutes == null || r.minutes <= 90), "max_minutes is a ceiling");
+
+  const none = await TOOLS.streaming.run(env, { topic: "zzzznotafilmzzzz" }, { exposure: "private" });
+  ok(none.rows.length === 0 && /matched|empty/.test(none.note ?? ""), "an empty answer is explained");
+}
+
 console.log("\n── criticism: somebody else's writing ──");
 // Skipped rather than failed when the zone is absent: an instance that has not
 // run `fetch-criticism` is not a broken instance, and this suite is run against
