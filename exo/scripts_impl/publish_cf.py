@@ -409,10 +409,11 @@ case "$SCOPE" in
 esac
 
 LIVE="$(mktemp)"
+PRESENT="$(mktemp)"
 PROBE="$(mktemp)"
 RELOAD="$(mktemp)"
 ACTUAL=""; MISMATCH=""; REPAIR="$(mktemp)"
-trap 'rm -f "$LIVE" "$PROBE" "$RELOAD" "$REPAIR" "$ACTUAL" "$MISMATCH"' EXIT
+trap 'rm -f "$LIVE" "$PRESENT" "$PROBE" "$RELOAD" "$REPAIR" "$ACTUAL" "$MISMATCH"' EXIT
 
 # ── what D1 already matches ────────────────────────────────────────────────────
 # The load's entire cost is re-inserting rows that did not move. On 2026-09-01 a
@@ -441,18 +442,45 @@ esac
 echo "== asking $DB what it already matches =="
 SKIPPED=0
 PROBED=no
+# Ask only about tables D1 actually has. A scalar subquery over a table that does
+# not exist fails the WHOLE query, so probing with verify.sql as-is meant one new
+# zone forced every table to reload: on 2026-09-28 the first night t0_film_offer
+# was published, "no such table" rewrote 88,479 rows to add one. A table missing
+# from D1 is simply one that moved — it comes back from this probe with no
+# answer, and the loop below reloads it as "absent".
 if [ "$LOAD" = "full" ]; then
   echo "  EXO_D1_LOAD=full — rewriting every table without asking"
-elif $WRANGLER d1 execute "$DB" --remote --json \
-       --command "$(cat "$HERE/verify.sql")" > "$PROBE" 2>&1; then
-  PROBED=yes
-else
+elif ! $WRANGLER d1 execute "$DB" --remote --json \
+       --command "SELECT name FROM sqlite_master WHERE type='table'" > "$LIVE" 2>&1; then
   # Fail closed. An unreadable base is not a matching base, so every table
-  # reloads and the run costs what it always did. A brand new database lands
-  # here by design: verify.sql names every served table, and a scalar subquery
-  # over a table that does not exist fails the whole query.
+  # reloads and the run costs what it always did.
   echo "  could not read the current state — rewriting every table. wrangler said:"
-  sed 's/^/    /' "$PROBE"
+  sed 's/^/    /' "$LIVE"
+else
+  sed -n 's/.*"name" *: *"\([^"]*\)".*/\1/p' "$LIVE" > "$PRESENT"
+  # probe-terms.txt is `table|<scalar subquery> AS "table"`, one per line — the
+  # same terms verify.sql is built from.
+  TERMS=""
+  while IFS= read -r line; do
+    t=${line%%|*}
+    grep -qxF "$t" "$PRESENT" || continue
+    TERMS="${TERMS:+$TERMS,
+}${line#*|}"
+  done < "$HERE/probe-terms.txt"
+  if [ -z "$TERMS" ]; then
+    # A brand new database. Nothing to ask; every table is absent.
+    : > "$PROBE"
+    PROBED=yes
+  elif $WRANGLER d1 execute "$DB" --remote --json \
+         --command "SELECT
+$TERMS;" > "$PROBE" 2>&1; then
+    PROBED=yes
+  else
+    # Still fail closed: a table that exists but cannot answer (an old shape
+    # with no row hash, say) is not evidence that anything matches.
+    echo "  could not read the current state — rewriting every table. wrangler said:"
+    sed 's/^/    /' "$PROBE"
+  fi
 fi
 
 : > "$RELOAD"
@@ -655,7 +683,7 @@ rm -f "$BATCH"
 echo "== verifying rows and digest =="
 ACTUAL="$(mktemp)"
 MISMATCH="$(mktemp)"
-trap 'rm -f "$LIVE" "$PROBE" "$RELOAD" "$REPAIR" "$ACTUAL" "$MISMATCH"' EXIT
+trap 'rm -f "$LIVE" "$PRESENT" "$PROBE" "$RELOAD" "$REPAIR" "$ACTUAL" "$MISMATCH"' EXIT
 
 read_counts() {
   # --command, NOT --file. `--file` is the bulk IMPORT path: it uploads the SQL
@@ -834,11 +862,15 @@ def _emit_reconcile(out, tables: dict[str, dict], scope: str) -> None:
     # already proved — 34 scalar subqueries, not 68 — because the limit that bit
     # here once was a limit on how many terms D1 would take, and there is no
     # reason to go back and find the next one.
+    terms = {t: f'  (SELECT count(*) || \'|\' || COALESCE(sum("{ROW_HASH}"), 0) '
+                f'FROM "{t}") AS "{t}"' for t in served_tables}
     (out / "verify.sql").write_text(
-        "SELECT\n" + ",\n".join(
-            f'  (SELECT count(*) || \'|\' || COALESCE(sum("{ROW_HASH}"), 0) '
-            f'FROM "{t}") AS "{t}"' for t in served_tables
-        ) + ";\n", encoding="utf-8")
+        "SELECT\n" + ",\n".join(terms.values()) + ";\n", encoding="utf-8")
+    # The same terms, keyed by table, for the pre-load probe. That one asks only
+    # about the tables D1 already has, because a table that does not exist yet
+    # fails the whole query, and a new zone is not a reason to reload the rest.
+    (out / "probe-terms.txt").write_text(
+        "".join(f"{t}|{terms[t]}\n" for t in served_tables), encoding="utf-8")
 
     script = IMPORT_SH
     sh = out / "import.sh"

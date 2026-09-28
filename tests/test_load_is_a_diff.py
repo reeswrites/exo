@@ -169,11 +169,10 @@ def test_the_first_load_writes_everything_and_verifies(tmp_path, d1):
     bundle, _ = _bundle(tmp_path)
     proc = _import(bundle, d1)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    # An empty database cannot answer verify.sql at all — a scalar subquery over
-    # a table that does not exist fails the whole query — so the probe fails and
-    # the run falls back to writing everything. That is the fail-closed default
-    # and a fresh database is the ordinary case for it.
-    assert "could not read the current state" in proc.stdout
+    # An empty database holds none of the bundle's tables, so the probe asks
+    # about nothing and every table reloads as absent — not as a failure.
+    assert "could not read the current state" not in proc.stdout
+    assert "reload t0_music  (absent)" in proc.stdout, proc.stdout
     assert _written(proc) == 3, proc.stdout
     assert "every table matches the bundle" in proc.stdout
     live = sqlite3.connect(d1["db"])
@@ -359,14 +358,43 @@ def test_an_unrecognised_load_mode_refuses_rather_than_guessing(tmp_path, d1):
     assert not d1["db"].exists(), "it must refuse before it writes"
 
 
-def test_an_unreadable_base_reloads_everything(tmp_path, d1):
-    """Fail closed. An unanswerable probe is not a matching base."""
+def test_a_table_not_yet_in_d1_reloads_alone(tmp_path, d1):
+    """A new zone's first night must not cost every other zone a rewrite.
+
+    The probe used to be verify.sql verbatim, and a scalar subquery over a table
+    that does not exist fails the whole query — so on 2026-09-28, the first night
+    t0_film_offer was published, "no such table" sent the run to its fail-closed
+    fallback and it rewrote 88,479 rows to add one table. A table D1 does not
+    have yet is a table that moved, and nothing more.
+    """
     bundle, _ = _bundle(tmp_path)
     assert _import(bundle, d1).returncode == 0
     d1["sql"].unlink()
-    # A table vanishing under the bundle is what a hand-DROP or a half-finished
-    # earlier run looks like. verify.sql names every served table, so the whole
-    # probe fails rather than one entry going missing.
+
+    grown = dict(ZONES)
+    grown["t0_film_offer"] = [("f1", "mubi.json", "Stalker")]
+    bundle, _ = _bundle(tmp_path, grown)
+    proc = _import(bundle, d1)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "could not read the current state" not in proc.stdout, proc.stdout
+    assert "reload t0_film_offer  (absent)" in proc.stdout, proc.stdout
+    assert "2 table(s) already match this bundle" in proc.stdout, proc.stdout
+    applied = d1["sql"].read_text()
+    assert 'INSERT INTO "t0_film_offer"' in applied
+    assert 'INSERT INTO "t0_music"' not in applied
+    assert 'INSERT INTO "t1_notes"' not in applied
+    assert _written(proc) == 1, proc.stdout
+    assert "every table matches the bundle" in proc.stdout
+    live = sqlite3.connect(d1["db"])
+    assert live.execute('SELECT count(*) FROM "t0_film_offer"').fetchone()[0] == 1
+
+
+def test_a_table_dropped_from_under_the_bundle_reloads_alone(tmp_path, d1):
+    """A hand-DROP or a half-finished earlier run: the same case from the other
+    side. The one table is absent; the rest still match and are left alone."""
+    bundle, _ = _bundle(tmp_path)
+    assert _import(bundle, d1).returncode == 0
+    d1["sql"].unlink()
     live = sqlite3.connect(d1["db"])
     live.executescript('DROP TABLE "t1_notes";')
     live.commit()
@@ -374,7 +402,38 @@ def test_an_unreadable_base_reloads_everything(tmp_path, d1):
 
     proc = _import(bundle, d1)
     assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "reload t1_notes  (absent)" in proc.stdout, proc.stdout
+    applied = d1["sql"].read_text()
+    assert 'INSERT INTO "t1_notes"' in applied
+    assert 'INSERT INTO "t0_music"' not in applied
+
+
+def test_an_unreadable_base_reloads_everything(tmp_path, d1):
+    """Fail closed. An unanswerable probe is not a matching base.
+
+    D1 rejects the probe query once — a timeout, a limit, anything — and the run
+    writes everything rather than guessing what matched."""
+    bundle, _ = _bundle(tmp_path)
+    assert _import(bundle, d1).returncode == 0
+    d1["sql"].unlink()
+
+    once = tmp_path / "reject-probe-once"
+    once.touch()
+    flaky = tmp_path / "flaky-wrangler"
+    flaky.write_text(
+        '#!/bin/sh\n'
+        'case "$*" in *COALESCE*)\n'
+        f'  if [ -e "{once}" ]; then rm -f "{once}"; '
+        'echo "D1_ERROR: the probe was refused" >&2; exit 1; fi ;;\n'
+        'esac\n'
+        f'exec "{d1["wrangler"]}" "$@"\n', encoding="utf-8")
+    flaky.chmod(0o755)
+
+    proc = _import(bundle, d1, WRANGLER=str(flaky))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "could not read the current state" in proc.stdout
+    assert "the probe was refused" in proc.stdout
+    assert not once.exists(), "the probe has to have been asked and refused"
     applied = d1["sql"].read_text()
     for t in ZONES:
         assert f'INSERT INTO "{t}"' in applied or not ZONES[t]
