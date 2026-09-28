@@ -7,8 +7,8 @@
    "my_rating": 4,
    "avg_rating": 4.05,
    "shelf": "read",
-   "date_read": "2026-07-19",
-   "date_added": "2026-06-30"
+   "date_read": "2026-09-08",
+   "date_added": "2026-08-20"
   },
   {
    "book_id": 9014,
@@ -18,7 +18,7 @@
    "avg_rating": 3.83,
    "shelf": "to-read",
    "date_read": null,
-   "date_added": "2026-08-01"
+   "date_added": "2026-09-21"
   },
   {
    "book_id": 9007,
@@ -27,8 +27,8 @@
    "my_rating": 5,
    "avg_rating": 4.44,
    "shelf": "read",
-   "date_read": "2026-06-18",
-   "date_added": "2026-04-09"
+   "date_read": "2026-08-08",
+   "date_added": "2026-05-30"
   }
  ]
 }

@@ -9,8 +9,8 @@ needs:
 abort_when:
   - "the week has fewer than three saves — say the week was quiet, do not pad it"
   - "consumption reports a source more than ten days stale — say which, then stop"
-revised: 2026-08-19
-verified: 2026-08-19
+revised: 2026-10-09
+verified: 2026-10-09
 serve: true
 ---
 

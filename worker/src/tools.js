@@ -1416,6 +1416,132 @@ export const TOOLS = {
     },
   },
 
+  // The film half of the candidate pool. `releases` answers "what exists";
+  // this answers the sharper "what can they press play on tonight" — a
+  // streaming catalogue, crawled whole by the instance, with what they have
+  // already watched removed. Which service and which country are instance
+  // facts; the engine only knows the rows carry `service` and `region`.
+  streaming: {
+    class: "world", domain: "culture", kind: "entity",
+    reads: ["t0_film_offer", "t0_film"],
+    description:
+      "Films the owner can stream RIGHT NOW on a service they subscribe to, with what they have already watched removed. Taste-blind: the pool is the service's whole catalogue for their country, not films chosen for resembling ones they rated, so it reaches what a similarity recommender cannot — and it does NOT rank by preference. It attaches the facts a caller ranks on (the service's audience rating and count, critic score, runtime, days until it leaves) and leaves the judgement to you; pair with `ratings`/`taste_profile` for what they like. order='leaving' is the use-it-or-lose-it axis.",
+    schema: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "Match against title, director or synopsis." },
+        genre: { type: "string", description: "One genre word, e.g. 'documentary' or 'horror'." },
+        country: { type: "string", description: "Production country, e.g. 'japan'." },
+        from_year: { type: "number", description: "Released in or after this year." },
+        to_year: { type: "number", description: "Released in or before this year." },
+        max_minutes: { type: "number", description: "Runtime ceiling — 'something under two hours'." },
+        leaving_within: { type: "number", description: "Only films whose availability ends within N days." },
+        kind: {
+          type: "string",
+          description: "film (default) | episode | any. Services list series episodes as titles of their own ('Pilot', 'Part 1'); they are left out unless asked for, and an episode row names its series.",
+        },
+        include_watched: {
+          type: "boolean",
+          description: "Keep films already in their watch record. Off by default; the count removed is reported either way.",
+        },
+        order: {
+          type: "string",
+          description: "rated (default: audience rating, weighted toward films many have rated) | leaving (soonest to go first) | new (most recently added) | critic | popular | oldest (release year ascending)",
+        },
+      },
+    },
+    async run(env, args, ctx) {
+      const { topic, genre, country, from_year, to_year, max_minutes, leaving_within, include_watched, order } = args;
+      const want = String(args.kind ?? "film").toLowerCase();
+      const k = ["film", "episode", "any"].includes(want) ? want : "film";
+      const by = ordering(order, {
+        // A 9.1 from 12 ratings is noise; shrink toward 7 by rating count
+        // (a Bayesian average) so the default top of the pool is trustworthy.
+        rated: "score DESC, title, url",
+        leaving: "leaves_sort ASC, score DESC, title, url",
+        new: "available_at DESC, title, url",
+        critic: "critic_sort DESC, score DESC, title, url",
+        popular: "popularity DESC, title, url",
+        oldest: "year_sort ASC, title, url",
+      });
+      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const g = genre ? `%${genre.toLowerCase()}%` : null;
+      const c = country ? `%${country.toLowerCase()}%` : null;
+      const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+      const [fy, ty, mm, lw] = [num(from_year), num(to_year), num(max_minutes), num(leaving_within)];
+      const POOL = `
+        WITH watched AS (
+          SELECT DISTINCT lower(trim(title)) AS t, CAST(year AS INTEGER) AS y FROM t0_film
+        ), pool AS (
+          SELECT o.title, o.kind, o.series, o.episode, o.year, o.directors, o.genres, o.countries, o.language,
+                 o.minutes, o.rating, o.ratings, o.critic, o.popularity, o.url,
+                 o.service, o.available_at, o.synopsis,
+                 -- a far-future end date is the service's "permanent"; only a
+                 -- real departure is worth a number
+                 CASE WHEN o.ends_at IS NOT NULL
+                       AND julianday(o.ends_at) - julianday('now') < 1825
+                      THEN CAST(julianday(o.ends_at) - julianday('now') AS INTEGER) END AS leaves_in,
+                 (COALESCE(o.rating, 0) * COALESCE(o.ratings, 0) + 7.0 * 200)
+                   / (COALESCE(o.ratings, 0) + 200) AS score,
+                 EXISTS (
+                   SELECT 1 FROM watched w
+                   WHERE (w.t = lower(trim(o.title)) OR w.t = lower(trim(COALESCE(o.original_title, ''))))
+                     AND (w.y IS NULL OR o.year IS NULL OR abs(w.y - o.year) <= 1)
+                 ) AS seen
+          FROM t0_film_offer o
+          WHERE (o.ends_at IS NULL OR julianday(o.ends_at) > julianday('now'))
+            AND (? = 'any' OR COALESCE(o.kind, 'film') = ?)
+            AND (? IS NULL OR lower(o.title) LIKE ? OR lower(COALESCE(o.directors, '')) LIKE ?
+                           OR lower(COALESCE(o.series, '')) LIKE ?
+                           OR lower(COALESCE(o.synopsis, '')) LIKE ?
+                           OR lower(COALESCE(o.original_title, '')) LIKE ?)
+            AND (? IS NULL OR lower(COALESCE(o.genres, '')) LIKE ?)
+            AND (? IS NULL OR lower(COALESCE(o.countries, '')) LIKE ?)
+            AND (? IS NULL OR o.year >= ?)
+            AND (? IS NULL OR o.year <= ?)
+            AND (? IS NULL OR o.minutes <= ?)
+        )`;
+      const binds = [k, k, like, like, like, like, like, like, g, g, c, c, fy, fy, ty, ty, mm, mm];
+      const rows = await q(
+        env,
+        `${POOL}, kept AS (
+           SELECT *, COALESCE(leaves_in, 1000000) AS leaves_sort,
+                  COALESCE(critic, -1) AS critic_sort, COALESCE(year, 0) AS year_sort
+           FROM pool
+           WHERE (? = 1 OR seen = 0)
+             AND (? IS NULL OR leaves_in <= ?)
+         )
+         SELECT title,
+                CASE WHEN kind = 'episode' THEN series END AS series,
+                CASE WHEN kind = 'episode' THEN episode END AS episode,
+                year, directors, genres, minutes,
+                round(rating, 1) AS rating, ratings,
+                CASE WHEN critic IS NOT NULL THEN round(critic, 1) END AS critic_of_5,
+                countries, language, leaves_in AS leaves_in_days,
+                substr(available_at, 1, 10) AS added, service, url,
+                substr(synopsis, 1, 280) AS synopsis,
+                CASE WHEN seen = 1 THEN 1 END AS watched
+         FROM kept
+         ORDER BY ${by.sql}
+         LIMIT ?`,
+        ...binds, include_watched ? 1 : 0, lw, lw, probe(ctx)
+      );
+      const [{ n: removed }] = await q(env, `${POOL} SELECT count(*) AS n FROM pool WHERE seen = 1`, ...binds);
+      const notes = [];
+      if (!include_watched && removed) notes.push(`${removed} already watched, removed`);
+      if (!rows.length) {
+        const [{ n }] = await q(env, `SELECT count(*) AS n FROM t0_film_offer`);
+        return {
+          rows: [], returned_count: 0, has_more: false, order: by.order,
+          note: [n ? `nothing in ${n} streamable films matched` : "the film pool is empty — no catalogue has landed yet",
+                 ...notes].join(" · "),
+        };
+      }
+      const out = ordered(cap(rows, ctx), by);
+      return { ...out, note: [out.note, ...notes].filter(Boolean).join(" · ") };
+    },
+  },
+
   // The empty cell ADR-0015's grid left in `culture`: every culture tool reads
   // something he did or owns, and nothing said what the world was saying about
   // any of it. `events` was the only `class: "world"` tool on the surface.

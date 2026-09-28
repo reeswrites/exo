@@ -29,6 +29,10 @@ for (const [table, cols] of Object.entries({
   t0_taste_derived: ["id", "kind", "text", "created"],
   t0_release: ["id", "artist", "title", "release_date", "url", "label", "art", "mbid",
                "mb_status", "scenes", "scene_count", "listings", "medium", "created"],
+  t0_film_offer: ["id", "title", "kind", "series", "episode", "original_title", "year", "directors", "genres", "countries",
+                  "language", "minutes", "rating", "ratings", "critic", "popularity", "url",
+                  "service", "available_at", "ends_at", "synopsis", "created"],
+  t0_film: ["id", "title", "year", "rating", "avg_rating", "first_seen", "created"],
   t0_criticism: ["id", "outlet", "outlet_slug", "title", "byline", "published", "url",
                  "summary", "chars", "tags", "medium", "created"],
   // An instance that has never dropped a MyAnimeList export into raw/ still has

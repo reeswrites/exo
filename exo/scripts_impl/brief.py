@@ -451,6 +451,15 @@ def build(served_counts: dict[str, int] | None = None,
           "return a record nobody has scrobbled, and this pool never asked. It does not "
           "rank by preference — it carries the play counts and leaves the judgement to "
           "you. Absence from it means the crawl never looked, never that it was rejected.")
+    # The film half. Without it an assistant asked "what should I watch
+    # tonight" answers from the ratings, and cannot say whether any of it is
+    # actually streamable.
+    offer_n = counts.get("t0_film_offer", 0)
+    if offer_n:
+        A(f"- **films streamable right now** — {offer_n:,} titles, the whole catalogue of a "
+          f"service {config.OWNER} subscribes to, with anything already watched removed and "
+          "the days until each one leaves. Taste-blind like the record pool: it carries the "
+          "audience and critic scores and leaves the judgement to you (`streaming`).")
     crit_n = counts.get("t0_criticism", 0)
     if crit_n:
         outlets = _one(con, f"SELECT count(DISTINCT outlet) FROM {P('t0_criticism')}", default=0)
