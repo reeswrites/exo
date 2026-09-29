@@ -88,6 +88,9 @@ def main(argv: list[str] | None = None) -> int:
     ssr = sub.add_parser("search"); ssr.add_argument("query"); ssr.add_argument("--k", type=int, default=10)
     sub.add_parser("fetch-goodreads")
     sub.add_parser("fetch-lastfm")
+    sap = sub.add_parser("fetch-album-pool")
+    sap.add_argument("--budget", type=int, default=None,
+                     help="max Last.fm calls this run (default 800)")
     smt = sub.add_parser("fetch-music-tags")
     smt.add_argument("--budget", type=int, default=None,
                      help="max Last.fm calls this run (default 800)")
@@ -228,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "fetch-lastfm":
         from .scripts_impl import fetch_lastfm
         return fetch_lastfm.run()
+    elif args.cmd == "fetch-album-pool":
+        from .scripts_impl import fetch_album_pool
+        return fetch_album_pool.run(args.budget)
     elif args.cmd == "fetch-music-tags":
         from .scripts_impl import fetch_music_tags
         return fetch_music_tags.run(args.budget)

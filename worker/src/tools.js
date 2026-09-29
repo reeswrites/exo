@@ -844,6 +844,131 @@ export const TOOLS = {
     },
   },
 
+  unheard: {
+    class: "world", domain: "culture", kind: "entity",
+    // The pool is the subject; the stream and the shelf only subtract. The
+    // pool is private (its selection is a description of taste), so every
+    // answer is, and nothing here is worth a readsFor split.
+    reads: ["t0_album_pool", "t0_music", "t0_music_tag", "t1_collection"],
+    description:
+      "Records the owner has NOT played, for 'something I haven't heard'. Built from two Last.fm lists: `back_catalog` is the top albums of the acts they play most — unheard records by artists already loved, the safest bet — and `scene` is the top albums of the scenes their listening is densest in, which can reach acts they have never played. Anything already scrobbled or owned on vinyl is removed. Each row carries the same kind of crowd `tags` as `albums` (the album's own, else the artist's, else the scene it was found under; `tag_source` says which) and `artist_plays`, how much they already play that act — 0 means a new artist. Match a mood with `tags` using the words `albums(vocabulary:true)` shows, or call this with vocabulary:true. It does not rank by preference: order='familiar' leads with loved acts, 'unfamiliar' with new ones, 'ranked' with Last.fm's own chart position. Not new releases — that is `releases`.",
+    schema: {
+      type: "object",
+      properties: {
+        tags: { type: "string", description: "Comma-separated tags; a record matches if ANY appears in its tags (substring)." },
+        artist: { type: "string", description: "One act, matched anywhere in the name." },
+        found_via: { type: "string", description: "back_catalog | scene" },
+        new_artists: { type: "boolean", description: "Only acts the owner has never played." },
+        order: { type: "string", description: "familiar (default, most-played acts first) | unfamiliar (least-played first) | ranked (Last.fm chart position)" },
+        vocabulary: { type: "boolean", description: "Return the tags across the pool instead of records. Honours the other filters." },
+      },
+    },
+    async run(env, { tags, artist, found_via, new_artists, order, vocabulary }, ctx) {
+      const like = artist ? `%${artist.toLowerCase()}%` : null;
+      const via = ["back_catalog", "scene"].includes(found_via) ? `%${found_via}%` : null;
+      const wanted = String(tags ?? "")
+        .split(",").map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 12);
+
+      // The loader already dropped what was heard as of the last ingest, on a
+      // loose match that forgives edition suffixes. This drops what was played
+      // since, exactly, and what is on the shelf.
+      const base = `
+        WITH heard AS (
+          SELECT DISTINCT lower(trim(artist)) AS la, lower(trim(album)) AS lal
+          FROM t0_music WHERE album IS NOT NULL AND trim(album) <> ''
+        ),
+        ap AS (SELECT lower(trim(artist)) AS la, count(*) AS plays FROM t0_music GROUP BY 1),
+        q AS (
+          SELECT p.artist, p.album, p.found_via, p.scenes, p.rank,
+                 CASE WHEN p.tag_status = 'ok' THEN p.tags
+                      WHEN tr.status = 'ok' THEN tr.tags
+                      WHEN p.scenes <> '' THEN p.scenes END AS tags,
+                 CASE WHEN p.tag_status = 'ok' THEN 'album'
+                      WHEN tr.status = 'ok' THEN 'artist'
+                      WHEN p.scenes <> '' THEN 'scene' END AS tag_source,
+                 COALESCE(ap.plays, 0) AS artist_plays,
+                 p.artist_key || char(31) || p.album_key AS id
+          FROM t0_album_pool p
+          LEFT JOIN heard h ON h.la = p.artist_key AND h.lal = p.album_key
+          LEFT JOIN t1_collection c ON c.kind = 'vinyl'
+            AND lower(trim(c.creator)) = p.artist_key AND lower(trim(c.title)) = p.album_key
+          LEFT JOIN t0_music_tag tr ON tr.artist_key = p.artist_key AND tr.level = 'artist'
+          LEFT JOIN ap ON ap.la = p.artist_key
+          WHERE h.la IS NULL AND c.id IS NULL
+            AND (? IS NULL OR lower(p.artist) LIKE ?)
+            AND (? IS NULL OR p.found_via LIKE ?)
+        )`;
+      const binds = [like, like, via, via];
+      const where = [
+        ...(new_artists ? ["q.artist_plays = 0"] : []),
+        ...(wanted.length ? [`(${wanted.map(() => "q.tags LIKE ?").join(" OR ")})`] : []),
+      ];
+      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+      const tagBinds = wanted.map((w) => `%${w}%`);
+
+      const [scope] = await q(
+        env,
+        `${base} SELECT count(*) AS n,
+                        sum(q.found_via LIKE '%back_catalog%') AS catalog,
+                        sum(q.found_via LIKE '%scene%') AS scene,
+                        sum(q.artist_plays = 0) AS new_acts,
+                        sum(q.tags IS NULL) AS untagged
+                 FROM q`,
+        ...binds
+      );
+      if (!scope?.n) {
+        return {
+          rows: [], returned_count: 0, has_more: false, scope: "0 unheard records matched",
+          note: artist
+            ? `no unheard record by anything matching '${artist}' in the pool — the pool holds the top albums of the most-played acts and the densest scenes, so absence means it was never listed, not that nothing exists`
+            : "the pool is empty for that filter — it fills nightly from Last.fm",
+        };
+      }
+      const scopeText = `${scope.n} unheard records (${scope.catalog} from loved acts' catalogs, ${scope.scene} from scenes; ${scope.new_acts} by acts never played; ${scope.untagged} untagged)`;
+
+      if (vocabulary) {
+        const all = await q(env, `${base} SELECT q.tags FROM q ${whereSql}`, ...binds, ...tagBinds);
+        const count = new Map();
+        for (const r of all) {
+          for (const tag of String(r.tags ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
+            count.set(tag, (count.get(tag) ?? 0) + 1);
+          }
+        }
+        const rows = [...count.entries()].map(([tag, records]) => ({ tag, records }))
+          .sort((x, y) => y.records - x.records || (x.tag < y.tag ? -1 : 1));
+        return { ...cap(rows, ctx), order: "records", scope: `${rows.length} distinct tags across ${scopeText}` };
+      }
+
+      const by = ordering(order, {
+        familiar: "q.artist_plays DESC, COALESCE(q.rank, 999) ASC",
+        unfamiliar: "q.artist_plays ASC, COALESCE(q.rank, 999) ASC",
+        ranked: "COALESCE(q.rank, 999) ASC, q.artist_plays DESC",
+      });
+      const rows = await q(
+        env,
+        `${base}
+         SELECT q.artist, q.album, q.artist_plays, q.found_via, q.scenes, q.rank, q.tags, q.tag_source
+         FROM q ${whereSql}
+         ORDER BY ${by.sql}, q.id
+         LIMIT ?`,
+        ...binds, ...tagBinds, probe(ctx)
+      );
+      const out = rows.map((r) => Object.fromEntries(
+        Object.entries(r).filter(([, v]) => v !== null && v !== "")
+      ));
+      const capped = cap(out, ctx);
+      const notes = [capped.note];
+      if (wanted.length && scope.untagged) {
+        notes.push(`${scope.untagged} records carry no tags yet and could not match`);
+      }
+      if (!out.length && wanted.length) {
+        notes.push("no unheard record carries those tags — call with vocabulary:true for the words the pool uses");
+      }
+      const note = notes.filter(Boolean).join(" · ");
+      return ordered({ ...capped, scope: scopeText, ...(note ? { note } : {}) }, by);
+    },
+  },
+
   agenda: {
     class: "intent", domain: "commitments", kind: "pointer",
     reads: ["t1_item"],

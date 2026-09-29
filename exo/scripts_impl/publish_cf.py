@@ -83,6 +83,7 @@ _INDEXES = {
     # builds a transient automatic index for that join per query at no billed
     # cost, while a stored one is ~3,800 more writes on every import of it.
     "t0_music_tag": [],
+    "t0_album_pool": [],   # same reasoning: a few thousand rows, auto-indexed per join
     "t1_open_thread": [],
     # Every project tool filters or groups by repo first, and the commit table is
     # the only one big enough for that to matter.
