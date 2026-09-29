@@ -308,7 +308,7 @@ ok(widened.length === 0, `readsFor only ever narrows (${widened.join("; ") || "n
 // which the scan above already holds.
 const UNION_PROBES = [
   { kind: "zzz", medium: "zzz" },
-  { kind: "zzz", medium: "zzz", with_mentions: "zzz" },
+  { kind: "zzz", medium: "zzz", with_mentions: "zzz", owned: "zzz" },
 ];
 for (const [name, t] of Object.entries(TOOLS)) {
   if (!t.readsFor) continue;
@@ -576,6 +576,59 @@ ok(miss.rows.length === 0 && /never scrobbled/.test(miss.note ?? ""),
    "and a miss says what absence means rather than implying they have never heard it");
 const windowed = await TOOLS.taste.run(env, { since: "1970-01-01", until: "1970-12-31" }, { exposure: "profile" });
 ok(windowed.rows.length === 0 && !!windowed.note, "an empty window is explained, not returned bare");
+
+console.log("\n── albums: records by what they sound like ──");
+{
+  // Graded on what it is about. The shelf join is opt-in for the same reason
+  // taste's mentions are: a private colour column must not drag every album
+  // question down to twenty rows.
+  const grades = await loadExposure(env);
+  ok(TOOLS.albums.readsFor({}).join() === "t0_music,t0_music_tag",
+     "albums reads the scrobbles and the tags by default");
+  ok(TOOLS.albums.readsFor({ owned: true }).includes("t1_collection"),
+     "and the shelf only when ownership is asked for");
+  const albumGrade = gradeOf(grades, TOOLS.albums.readsFor({}));
+  ok(albumGrade === gradeOf(grades, TOOLS.taste.readsFor({})),
+     `so it grades like taste (${albumGrade}), not like the inventory`);
+
+  const al = await TOOLS.albums.run(env, {}, { exposure: albumGrade });
+  ok(al.rows.length > 0 && al.rows.length <= ROW_CAP[albumGrade], `albums -> ${al.rows.length} rows under the ${albumGrade} cap`);
+  ok(al.rows.every((r) => r.artist && r.album && r.plays >= 1 && r.first_played && r.last_played),
+     "every row is one album with its plays and span");
+  ok(/\d+ albums, \d+ plays/.test(al.scope ?? "") && /untagged/.test(al.scope ?? ""),
+     `and the scope names the population and its tag coverage ("${al.scope}")`);
+  ok(al.order === "played", "defaulting to most played");
+  ok(al.rows.every((r, i, xs) => i === 0 || xs[i - 1].plays >= r.plays), "in plays order");
+
+  // The order must be total, or a cap boundary silently drops or repeats rows
+  // between two calls (ADR-0007 §3).
+  const again = await TOOLS.albums.run(env, {}, { exposure: albumGrade });
+  ok(JSON.stringify(again.rows) === JSON.stringify(al.rows), "two identical calls return identical lists");
+
+  const tagged = al.rows.find((r) => r.tags);
+  if (tagged) {
+    ok(["album", "artist"].includes(tagged.tag_source), "a tagged row says which level its tags came from");
+    const vocab = await TOOLS.albums.run(env, { vocabulary: true }, { exposure: albumGrade });
+    ok(vocab.rows.length > 0 && vocab.rows.every((v) => v.tag && v.albums >= 1),
+       `vocabulary lists the tags in use (${vocab.rows.slice(0, 3).map((v) => v.tag).join(", ")}…)`);
+    const word = vocab.rows[0].tag;
+    const hit = await TOOLS.albums.run(env, { tags: word }, { exposure: albumGrade });
+    ok(hit.rows.length > 0 && hit.rows.every((r) => (r.tags ?? "").includes(word)),
+       `a tag filter returns only albums carrying it ('${word}')`);
+    ok(hit.rows.every((r) => !r.owned_vinyl), "and marks nothing owned unless asked");
+  } else {
+    console.log("  (no tags in this bundle — tag assertions skipped)");
+  }
+  const none = await TOOLS.albums.run(env, { tags: "zzzznotatagzzzz" }, { exposure: albumGrade });
+  ok(none.rows.length === 0 && /vocabulary:true/.test(none.note ?? ""),
+     "a tag nothing carries points at the vocabulary rather than returning bare");
+  const miss = await TOOLS.albums.run(env, { artist: "zzzznotanartistzzzz" }, { exposure: albumGrade });
+  ok(miss.rows.length === 0 && /never scrobbled/.test(miss.note ?? ""), "an unknown artist explains the absence");
+  const stale = await TOOLS.albums.run(env, { unplayed_since: "1970-01-01" }, { exposure: albumGrade });
+  ok(stale.rows.length === 0, "nothing has gone unplayed since before the record began");
+  const owned = await TOOLS.albums.run(env, { owned: true, order: "played" }, { exposure: "private" });
+  ok(owned.rows.length <= ROW_CAP.private, "owned:true answers under the private cap");
+}
 
 // around_the_time hands back four or five rows per medium by necessity. It must
 // not let four artists stand for a month of listening.
@@ -1682,7 +1735,7 @@ console.log("\n── documentation ──");
     ? new URL(`file://${process.env.EXO_HOME}/zones/_serve/brief.md`)
     : new URL("../../zones/_serve/brief.md", import.meta.url);
   const brief = readFileSync(briefPath, "utf8");
-  const SHOULD_ADVERTISE = ["agenda", "recipes", "medium", "backlog", "around_the_time", "drafts"];
+  const SHOULD_ADVERTISE = ["agenda", "recipes", "medium", "backlog", "around_the_time", "drafts", "albums"];
   const unadvertised = SHOULD_ADVERTISE.filter((n) => !brief.includes(n));
   ok(unadvertised.length === 0, `the brief names the tools it should${unadvertised.length ? " — missing: " + unadvertised : ""}`);
 }

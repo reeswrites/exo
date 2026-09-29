@@ -384,6 +384,7 @@ Adding one is a decision about exposure, not a feature increment.
 
 | tool | domain | class | kind | answers |
 |---|---|---|---|---|
+| `albums` | culture | revealed | event | The records the owner has played, one row per album, with what other listeners call each one. |
 | `collection` | culture | possession | entity | What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. |
 | `criticism` | culture | world | text | What the music press is publishing — titles, bylines, dates and the outlet's own blurb, from the underground outlets the owner follows, with the link to the piece. |
 | `releases` | culture | world | entity | Records that came out lately in the scenes the owner listens to, with what they have NOT already heard removed. |

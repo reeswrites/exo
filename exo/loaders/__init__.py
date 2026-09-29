@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Callable
 
 from .. import plugins
-from . import anime, chat, csv_sources, meal, raindrop, tv
+from . import anime, chat, csv_sources, meal, music_tags, raindrop, tv
 
 
 def t0_loaders() -> dict[str, list[tuple[str, Callable]]]:
@@ -22,6 +22,9 @@ def t0_loaders() -> dict[str, list[tuple[str, Callable]]]:
     """
     core: dict[str, Callable] = {
         **csv_sources.REGISTRY,      # music, film, book, beer
+        # What other listeners call those records — the only place "sounds
+        # like" enters a record that otherwise knows only what was played.
+        "music_tag": music_tags.load,
         "raindrop": raindrop.load,
         "meal_event": meal.events,   # what you ate (ADR-0003)
         "meal_rating": meal.ratings, # how it turned out
