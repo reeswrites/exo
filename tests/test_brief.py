@@ -38,7 +38,7 @@ from exo.scripts_impl import brief
 # can cost the budget. If an entry is added behind a new count, add it here, or
 # this test measures an index smaller than the one that ships.
 _EVERYTHING = {z: 12_345_678 for z in (
-    "t1_notes", "t2_atom", "t0_music", "t0_music_tag", "t0_film", "t0_tv",
+    "t1_notes", "t2_atom", "t0_music", "t0_music_tag", "t0_album_pool", "t0_film", "t0_tv",
     "t0_beer", "t1_verdicts", "t1_open_thread", "t1_post", "t1_project",
     "t1_project_commit", "t1_project_doc", "t1_visits", "t1_item",
     "t1_item_event", "t1_draft", "t1_recipe", "t0_chat_topic", "t0_raindrop",
@@ -52,7 +52,7 @@ _EVERYTHING = {z: 12_345_678 for z in (
 # particular is withheld on an instance with no film pool, so only this test
 # sees whether its entry still renders.
 _ENGINE_TOOLS = (
-    "whats_relevant", "notes_on", "albums", "consumption", "taste", "ratings",
+    "whats_relevant", "notes_on", "albums", "unheard", "consumption", "taste", "ratings",
     "facets", "watching", "reviews", "verdicts", "open_threads", "posts",
     "projects", "project_activity", "project_docs", "project_open", "places",
     "agenda", "history", "drafts", "recipes", "medium", "backlog",

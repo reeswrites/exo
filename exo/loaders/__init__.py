@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Callable
 
 from .. import plugins
-from . import anime, chat, csv_sources, meal, music_tags, raindrop, tv
+from . import album_pool, anime, chat, csv_sources, meal, music_tags, raindrop, tv
 
 
 def t0_loaders() -> dict[str, list[tuple[str, Callable]]]:
@@ -25,6 +25,9 @@ def t0_loaders() -> dict[str, list[tuple[str, Callable]]]:
         # What other listeners call those records — the only place "sounds
         # like" enters a record that otherwise knows only what was played.
         "music_tag": music_tags.load,
+        # Records that exist and have not been played: the candidates for
+        # "something I haven't heard". Not t0_release, which is what came OUT.
+        "album_pool": album_pool.load,
         "raindrop": raindrop.load,
         "meal_event": meal.events,   # what you ate (ADR-0003)
         "meal_rating": meal.ratings, # how it turned out

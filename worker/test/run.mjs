@@ -630,6 +630,48 @@ console.log("\n── albums: records by what they sound like ──");
   ok(owned.rows.length <= ROW_CAP.private, "owned:true answers under the private cap");
 }
 
+console.log("\n── unheard: records that exist and have not been played ──");
+{
+  const grades = await loadExposure(env);
+  ok(gradeOf(grades, TOOLS.unheard.reads) === "private",
+     "the pool is graded private: its selection describes a taste");
+  const un = await TOOLS.unheard.run(env, {}, { exposure: "private" });
+  if (!un.rows.length) {
+    console.log("  (no pool in this bundle — unheard assertions skipped)");
+  } else {
+    ok(un.rows.length <= ROW_CAP.private, `unheard -> ${un.rows.length} rows under the private cap`);
+    ok(/unheard records/.test(un.scope ?? "") && /never played/.test(un.scope ?? ""),
+       `and names the pool it drew from ("${un.scope}")`);
+    ok(un.order === "familiar" && un.rows.every((r, i, xs) => i === 0 || xs[i - 1].artist_plays >= r.artist_plays),
+       "defaulting to the most-played acts first");
+
+    // The one answer this tool must never give: a record already in the stream.
+    const heard = await TOOLS.albums.run(env, {}, { exposure: "profile", limit: 100 });
+    const played = new Set(heard.rows.map((r) => `${r.artist.toLowerCase()}|${r.album.toLowerCase()}`));
+    const leaked = un.rows.filter((r) => played.has(`${r.artist.toLowerCase()}|${r.album.toLowerCase()}`));
+    ok(leaked.length === 0, `no heard record comes back as unheard${leaked.length ? ": " + leaked.map((r) => r.album) : ""}`);
+
+    const again = await TOOLS.unheard.run(env, {}, { exposure: "private" });
+    ok(JSON.stringify(again.rows) === JSON.stringify(un.rows), "two identical calls return identical lists");
+
+    const fresh = await TOOLS.unheard.run(env, { new_artists: true }, { exposure: "private" });
+    ok(fresh.rows.every((r) => r.artist_plays === 0), "new_artists:true returns only acts never played");
+    const cat = await TOOLS.unheard.run(env, { found_via: "back_catalog" }, { exposure: "private" });
+    ok(cat.rows.every((r) => /back_catalog/.test(r.found_via) && r.artist_plays > 0),
+       "back_catalog records are by acts already played");
+
+    const vocab = await TOOLS.unheard.run(env, { vocabulary: true }, { exposure: "private" });
+    if (vocab.rows.length) {
+      const word = vocab.rows[0].tag;
+      const hit = await TOOLS.unheard.run(env, { tags: word }, { exposure: "private" });
+      ok(hit.rows.length > 0 && hit.rows.every((r) => (r.tags ?? "").includes(word)),
+         `a tag filter returns only records carrying it ('${word}')`);
+    }
+    const none = await TOOLS.unheard.run(env, { tags: "zzzznotatagzzzz" }, { exposure: "private" });
+    ok(none.rows.length === 0 && /vocabulary:true/.test(none.note ?? ""), "a tag nothing carries points at the vocabulary");
+  }
+}
+
 // around_the_time hands back four or five rows per medium by necessity. It must
 // not let four artists stand for a month of listening.
 // Named apart from the `win` further down: both are around_the_time at module

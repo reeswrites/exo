@@ -534,6 +534,12 @@ def build(served_counts: dict[str, int] | None = None,
     if releases_n:
         A(f"- **records that just came out** — {releases_n:,} candidates, crawled by "
           "scene, already-heard and already-owned removed, unranked (`releases`)")
+    # Not new, just missed: "an album I haven't heard" at any age. The scrobbles
+    # cannot answer it and `releases` only reaches the last few months.
+    pool_n = counts.get("t0_album_pool", 0)
+    if pool_n:
+        A(f"- **records not yet heard** — {pool_n:,} from the catalogs of the most-played "
+          "acts and the densest scenes, heard and owned removed, with crowd tags (`unheard`)")
     # The film half. Without it an assistant asked "what should I watch
     # tonight" answers from the ratings, and cannot say whether any of it is
     # actually streamable.

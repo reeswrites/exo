@@ -73,7 +73,7 @@ def is_noise(tag: str, artist: str = "") -> bool:
     """True for a tag that says nothing about how a record sounds. Shared with
     the loader, so tightening the list cleans the existing cache on the next
     ingest instead of waiting STALE_DAYS for every record to be re-asked."""
-    return (not tag or tag in NOISE or bool(_YEAR.match(tag))
+    return (not tag or tag in NOISE or bool(_YEAR.match(tag)) or tag.startswith("best of")
             or tag == artist.strip().lower())
 
 

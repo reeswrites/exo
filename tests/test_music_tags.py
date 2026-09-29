@@ -17,6 +17,7 @@ def test_fold_matches_sqlite_lower_trim():
 def test_noise_is_dropped_but_sound_words_are_kept():
     assert fmt.is_noise("2025")
     assert fmt.is_noise("seen live")
+    assert fmt.is_noise("best of 2023")
     assert fmt.is_noise("bladee", "Bladee")
     assert not fmt.is_noise("rage")
     assert not fmt.is_noise("2000s")   # a decade is a sound; a year is a date
