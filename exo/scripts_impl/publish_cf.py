@@ -78,6 +78,10 @@ _INDEXES = {
     # 41,294 writes on every full import — a third of the whole daily free
     # budget, spent on a sort. See ADR-0026, which is about the rewrite itself.
     "t0_music": [],
+    # This one earns its writes (~3,800 per import, one per row): `albums`
+    # joins every album group to its tags by EQUALITY on the pre-folded key —
+    # no lower(), no leading % — twice per call, so it is a real lookup.
+    "t0_music_tag": ["artist_key"],
     "t1_open_thread": [],
     # Every project tool filters or groups by repo first, and the commit table is
     # the only one big enough for that to matter.

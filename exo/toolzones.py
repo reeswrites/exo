@@ -99,6 +99,9 @@ TOOL_ZONES: dict[str, Reads] = {
     # and, being a notes join, would otherwise decide the whole tool's grade
     # (ADR-0023 §2). Held, `taste` still says what he listens to.
     "taste": Reads(required=("t0_music",), enriches=("t2_affinity",)),
+    # Without tags it is still every album with its plays; the tags are what
+    # make "sounds like" answerable, and the shelf only marks ownership.
+    "albums": Reads(required=("t0_music",), enriches=("t0_music_tag", "t1_collection")),
     # What he owns is the answer; play counts are colour on it.
     "collection": Reads(required=("t1_collection",), enriches=("t0_music",)),
     # Required rather than any_of, and t0_tv cannot stand in for it. The
@@ -181,6 +184,7 @@ TOOL_DOMAINS: dict[str, str] = {
     "verdicts": "culture",
     "reviews": "culture",
     "taste": "culture",
+    "albums": "culture",
     "collection": "culture",
     "watching": "culture",
     "places": "table",

@@ -442,6 +442,15 @@ def build(served_counts: dict[str, int] | None = None,
     # it knows what came out last week, so an assistant asked "anything new I'd
     # like" will answer from the scrobbles — which is the one question the
     # scrobbles structurally cannot answer.
+    # The scrobbles say what was played and never what it sounds like, so a
+    # mood question ("something high-energy") had nothing to match against.
+    tags_n = counts.get("t0_music_tag", 0)
+    if tags_n:
+        A("- **records by what they sound like** — `albums` lists every album played, "
+          "with plays, first and last listen, and Last.fm's crowd tags (genre and scene "
+          "words, the album's own where it has any, else the artist's). Translate a mood "
+          "into tags and pass them; `albums(vocabulary:true)` shows which tags this record "
+          "actually uses. `unplayed_since` reaches what fell out of rotation.")
     releases_n = counts.get("t0_release", 0)
     if releases_n:
         A(f"- **records that just came out** — {releases_n:,} candidates, crawled by SCENE "

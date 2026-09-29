@@ -16,6 +16,7 @@
   ],
   "zones": {
     "t0_music": "serve",
+    "t0_music_tag": "serve",
     "t0_book": "serve",
     "t0_film": "serve",
     "t0_beer": "serve",

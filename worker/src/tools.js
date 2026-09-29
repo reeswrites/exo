@@ -694,6 +694,156 @@ export const TOOLS = {
     },
   },
 
+  albums: {
+    class: "revealed", domain: "culture", kind: "event",
+    reads: ["t0_music", "t0_music_tag", "t1_collection"],
+    // The scrobbles and the tags are both profile-grade; the shelf is private.
+    // Ownership is colour on a listening answer, so it costs its own call and
+    // a tighter cap rather than dragging every album question down to twenty.
+    readsFor: ({ owned }) =>
+      owned ? ["t0_music", "t0_music_tag", "t1_collection"] : ["t0_music", "t0_music_tag"],
+    description:
+      "The records the owner has played, one row per album, with what other listeners call each one. `tags` are Last.fm's crowd tags — genre and scene words like rage, hardcore, ambient, shoegaze — from the album itself where it has any and from the artist otherwise; `tag_source` says which, and an artist's tags are coarse (a quiet record by a loud act inherits the loud tags). Use it to find records by what they SOUND like: translate a mood ('high energy', 'something to focus to') into tags, pass them as `tags`, and judge the candidates yourself. Call with vocabulary:true first to see which tags this record actually uses — a word outside it cannot match. `unplayed_since` reaches what fell out of rotation; `min_plays` drops one-listen records. Plays with no album string are not here; `taste` counts them by artist.",
+    schema: {
+      type: "object",
+      properties: {
+        tags: { type: "string", description: "Comma-separated tags; an album matches if ANY of them appears in its tags (substring, so 'punk' matches 'hardcore punk')." },
+        artist: { type: "string", description: "One act, matched anywhere in the name." },
+        since: { type: "string", description: "ISO date; count only plays on or after it." },
+        until: { type: "string", description: "ISO date; count only plays on or before it." },
+        min_plays: { type: "integer", description: "Only albums played at least this many times in the window." },
+        unplayed_since: { type: "string", description: "ISO date; only albums not played on or after it — what has been sitting." },
+        order: { type: "string", description: "played (default, most plays first) | recent (last played) | oldest (longest since played)" },
+        owned: { type: "boolean", description: "Mark albums owned on vinyl. Reads the owner's inventory, so the call is graded private and returns fewer rows." },
+        vocabulary: { type: "boolean", description: "Return the tags themselves — how many albums and plays carry each — instead of albums. Honours the other filters." },
+      },
+    },
+    async run(env, { tags, artist, since, until, min_plays, unplayed_since, order, owned, vocabulary }, ctx) {
+      const like = artist ? `%${artist.toLowerCase()}%` : null;
+      const wanted = String(tags ?? "")
+        .split(",").map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 12);
+      const floor = Number.isInteger(min_plays) && min_plays > 1 ? min_plays : 1;
+
+      // Album first, artist second, and the row says which answered. Folding the
+      // fallback into the record would hide which claim a row is making.
+      const EFFECTIVE = `CASE WHEN ta.status = 'ok' THEN ta.tags WHEN tr.status = 'ok' THEN tr.tags END`;
+      const SOURCE = `CASE WHEN ta.status = 'ok' THEN 'album' WHEN tr.status = 'ok' THEN 'artist' END`;
+      // Grouped on the folded strings so casing variants of one record are one
+      // row. The tag zone stores its keys pre-folded the same way (SQLite's
+      // ASCII-only lower, space-only trim), so the join is an index lookup
+      // rather than a fold of both sides per pair.
+      const base = `
+        WITH a AS (
+          SELECT min(artist) AS artist, min(album) AS album,
+                 lower(trim(artist)) AS la, lower(trim(album)) AS lal,
+                 count(*) AS plays,
+                 substr(min(created),1,10) AS first_played,
+                 substr(max(created),1,10) AS last_played,
+                 -- One row per group key, so this is the total-order tiebreak.
+                 lower(trim(artist)) || char(31) || lower(trim(album)) AS id
+          FROM t0_music
+          WHERE album IS NOT NULL AND trim(album) <> ''
+            AND (? IS NULL OR lower(artist) LIKE ?)
+            AND (? IS NULL OR substr(created,1,10) >= ?)
+            AND (? IS NULL OR substr(created,1,10) <= ?)
+          GROUP BY 3, 4
+          HAVING count(*) >= ?
+        ),
+        t AS (
+          SELECT a.*, ${EFFECTIVE} AS tags, ${SOURCE} AS tag_source
+          FROM a
+          LEFT JOIN t0_music_tag ta
+            ON ta.artist_key = a.la AND ta.album_key = a.lal AND ta.level = 'album'
+          LEFT JOIN t0_music_tag tr
+            ON tr.artist_key = a.la AND tr.level = 'artist'
+          WHERE (? IS NULL OR a.last_played < ?)
+        )`;
+      const binds = [like, like, since ?? null, since ?? null, until ?? null, until ?? null,
+                     floor, unplayed_since ?? null, unplayed_since ?? null];
+      const tagWhere = wanted.length
+        ? `WHERE (${wanted.map(() => "t.tags LIKE ?").join(" OR ")})` : "";
+      const tagBinds = wanted.map((w) => `%${w}%`);
+
+      // What the rows were drawn FROM (ADR-0023 §1): how many albums the window
+      // holds, and how many of them no tag filter could ever reach.
+      const [scope] = await q(
+        env,
+        `${base} SELECT count(*) AS albums, sum(t.plays) AS plays,
+                        sum(t.tag_source = 'album') AS by_album,
+                        sum(t.tag_source = 'artist') AS by_artist,
+                        sum(t.tag_source IS NULL) AS untagged
+                 FROM t`,
+        ...binds
+      );
+      if (!scope?.albums) {
+        return {
+          rows: [], returned_count: 0, has_more: false, scope: "0 albums matched",
+          note: artist
+            ? `no album by anything matching '${artist}' in that window — this is one service's stream, so absence means never scrobbled with an album name, not never heard`
+            : "no albums in that window — check last_logged from consumption, the exports lag",
+        };
+      }
+      const coverage = `${scope.by_album} tagged by album, ${scope.by_artist} by artist only, ${scope.untagged} untagged`;
+
+      if (vocabulary) {
+        // Split in JS: SQLite has no string_split, and a recursive CTE over a
+        // few thousand short strings is more machinery than it saves.
+        const all = await q(env, `${base} SELECT t.tags, t.plays FROM t ${tagWhere}`, ...binds, ...tagBinds);
+        const count = new Map();
+        for (const r of all) {
+          for (const tag of String(r.tags ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
+            const c = count.get(tag) ?? { tag, albums: 0, plays: 0 };
+            c.albums += 1; c.plays += r.plays;
+            count.set(tag, c);
+          }
+        }
+        const rows = [...count.values()].sort((x, y) => y.albums - x.albums || y.plays - x.plays || (x.tag < y.tag ? -1 : 1));
+        return {
+          ...cap(rows, ctx),
+          order: "albums",
+          scope: `${rows.length} distinct tags across ${scope.albums} albums (${coverage})`,
+          note: "genre and scene words, not moods — Last.fm listeners rarely tag energy directly, so map a mood onto the scenes that carry it",
+        };
+      }
+
+      const by = ordering(order, {
+        played: "t.plays DESC, t.last_played DESC",
+        recent: "t.last_played DESC, t.plays DESC",
+        oldest: "t.last_played ASC, t.plays DESC",
+      });
+      const rows = await q(
+        env,
+        `${base}
+         SELECT t.artist, t.album, t.plays, t.first_played, t.last_played, t.tags, t.tag_source
+                ${owned ? ", (c.id IS NOT NULL) AS owned_vinyl" : ""}
+         FROM t
+         ${owned ? `LEFT JOIN t1_collection c ON c.kind = 'vinyl'
+                      AND lower(trim(c.creator)) = t.la AND lower(trim(c.title)) = t.lal` : ""}
+         ${tagWhere}
+         ORDER BY ${by.sql}, t.id
+         LIMIT ?`,
+        ...binds, ...tagBinds, probe(ctx)
+      );
+      const out = rows.map((r) => Object.fromEntries(
+        Object.entries(r).filter(([k, v]) => v !== null && v !== "" && !(k === "owned_vinyl" && !v))
+      ));
+      const capped = cap(out, ctx);
+      const notes = [capped.note];
+      if (wanted.length && scope.untagged) {
+        notes.push(`${scope.untagged} of the ${scope.albums} albums in range carry no tags at all and could not match — a record missing here may simply be untagged`);
+      }
+      if (!out.length && wanted.length) {
+        notes.push("no album carries those tags — call with vocabulary:true for the words this record actually uses");
+      }
+      const note = notes.filter(Boolean).join(" · ");
+      return ordered({
+        ...capped,
+        scope: `${scope.albums} albums, ${scope.plays} plays (${coverage})`,
+        ...(note ? { note } : {}),
+      }, by);
+    },
+  },
+
   agenda: {
     class: "intent", domain: "commitments", kind: "pointer",
     reads: ["t1_item"],
