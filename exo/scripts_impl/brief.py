@@ -49,6 +49,63 @@ MAX_BYTES = 9000  # a brief that does not fit in a system prompt is not a brief
 # first thing a too-long brief dropped was the part that says how far to trust
 # it. Those two are assembled separately below and always survive; the growing
 # middle is what gets clipped, and it says so.
+#
+# And then the middle turned out to be the wrong thing to clip too. The index of
+# what a caller can ask for sits below the prose sections, so a slice off the
+# bottom of the middle took the index first — at 9,000 bytes on the real
+# instance it stopped after `events`, and `releases`, the music press and the
+# film pool never reached a caller. ADR-0013 §2: publishing is not offering; a
+# capability the brief does not name is unshipped, and this one was unshipped
+# by arithmetic rather than by anyone's decision. Worse, an entry near the clip
+# line flickered in and out as the sections above it grew and shrank — `albums`
+# had to be hidden inside the scrobbles line to stay visible at all.
+#
+# So the budget is split by what each part is FOR, not by where it sits:
+#
+#   protected — the title and hard constraints, the capability index, and the
+#     guarded tail. These are the brief's contract: what must never be violated,
+#     what exists, and how far to trust the rest. None of them is recoverable by
+#     asking, because each is what tells a caller there is something to ask.
+#   yielding  — the prose sections: open questions, projects, listening,
+#     verbatim verdicts, rhythm, recently-added. Every one is a PREVIEW of a tool
+#     the index names, so dropping one costs a caller one call, not a capability.
+#
+# Yielding sections leave whole, in _YIELD_ORDER, and the brief says which went
+# and which tool holds them. Whole, never sliced: a byte cut through the
+# verdicts section ends a verbatim quote mid-sentence and still reads as a
+# quote, which is the one thing an arrangement of the owner's own words must
+# not do. The old byte clip survives only as a last resort, for an instance
+# whose protected parts alone overrun — and tests/test_brief.py fails if the
+# fixture or the live instance ever gets there.
+#
+# The index was also made to fit rather than just protected. Its entries had
+# grown to 400-700 bytes each of rationale — why beer returns matter, why the
+# workshop has no code — that the tool's own description already carries, and
+# every client already has those descriptions from tools/list. The brief's job
+# is to NAME each capability with enough of a hook to be reached for; the
+# rationale lives with the tool. Where an entry keeps a sentence of instruction,
+# it is one a caller would get wrong without it (quote the press as the
+# outlet's, answer the blog with a link, never read an assistant turn as the
+# owner's words).
+
+# Which prose section leaves first when the brief is over budget, and which tool
+# a caller asks to get it back. Rhythm goes last: the freshness stamp in the
+# guarded tail points at its per-source dates as the authoritative ones.
+# Recently-added goes late because it is the only thing that tells a client
+# with a stale tool list that its list is stale.
+_YIELD_ORDER: tuple[tuple[str, str, str], ...] = (
+    ("listening", "top artists", "`taste`"),
+    ("verdicts", "verbatim verdicts", "`verdicts`"),
+    ("building", "what is being built", "`projects`"),
+    ("questions", "open questions", "`open_threads`"),
+    ("recent", "recently added", "your tool list"),
+    ("rhythm", "rhythm", "`consumption`"),
+)
+
+# Printed when the protected parts alone overrun and the index itself has to
+# be sliced. tests/test_brief.py asserts it never appears in a built brief.
+CLIPPED_MARKER = ("…(this brief was clipped in the middle to fit; the sections above "
+                  "are complete, the index of what you can ask for may not be)")
 
 
 
@@ -115,9 +172,18 @@ def build(served_counts: dict[str, int] | None = None,
     def P(name: str) -> str:
         return f"read_parquet('{srv}/{name}.parquet')"
 
-    out: list[str] = []
-    A = out.append
+    # The body is a list of named parts rather than one list of lines, so the
+    # budget can drop a whole section by name (see _YIELD_ORDER) instead of
+    # slicing bytes off wherever the end happens to fall.
+    parts: list[tuple[str, list[str]]] = []
 
+    def section(key: str) -> None:
+        parts.append((key, []))
+
+    def A(line: str) -> None:
+        parts[-1][1].append(line)
+
+    section("head")
     A(f"# {config.OWNER} — standing context")
     A("")
     A(f"Generated from {config.OWNER_POSSESSIVE} own records. Quoted lines are "
@@ -183,6 +249,7 @@ def build(served_counts: dict[str, int] | None = None,
         ORDER BY created DESC NULLS LAST LIMIT 5
     """)
     if threads:
+        section("questions")
         A("## Currently open questions")
         for (question,) in threads:
             A(f"- {_clip(question, 150)}")
@@ -207,6 +274,7 @@ def build(served_counts: dict[str, int] | None = None,
     """)
     if live:
         total = _one(con, f"SELECT count(*) FROM {P('t1_project')}")
+        section("building")
         A(f"## What {config.OWNER} is building")
         A(f"{total} repos on disk. Most-worked in the last 90 days, by commit volume:")
         for name, n, desc in live:
@@ -216,6 +284,7 @@ def build(served_counts: dict[str, int] | None = None,
     # ── taste, with evidence ──────────────────────────────────────────────────
     art = _q(con, f"SELECT artist, plays FROM {P('t2_affinity')} ORDER BY plays DESC LIMIT 6")
     if art:
+        section("listening")
         A("## Listening")
         A(", ".join(f"{a} ({p:,})" for a, p in art) + " — plays, all-time.")
         A("")
@@ -227,6 +296,7 @@ def build(served_counts: dict[str, int] | None = None,
         ) WHERE rn = 1 ORDER BY length(note) DESC LIMIT 3
     """)
     if verdicts:
+        section("verdicts")
         A(f"## How {config.OWNER} judges things (verbatim)")
         for subj, kind, rating, note in verdicts:
             star = f" · {rating}/5" if rating else ""
@@ -241,6 +311,7 @@ def build(served_counts: dict[str, int] | None = None,
     # Rates are quoted against each source's OWN last-logged date, because the
     # exports lag by months and "per month" measured from today would read as
     # "they stopped".
+    section("rhythm")
     A("## Rhythm")
     # `where` narrows a medium to what was actually consumed. t0_book carries
     # the whole Goodreads library — 436 of its rows are to-read and 38
@@ -284,16 +355,26 @@ def build(served_counts: dict[str, int] | None = None,
     A("")
 
     # ── what the assistant may ask for ────────────────────────────────────────
+    # Protected (see the MAX_BYTES note): this part is never yielded, so every
+    # entry here reaches every caller. The corollary is a discipline on the
+    # entries themselves — one line each, the capability, its count, and the
+    # tool that serves it in backticks. worker/test/run.mjs checks that every
+    # tool the instance offers is named here; a tool nobody is told about is a
+    # tool nobody calls (ADR-0013 §2).
+    #
+    # The long-form reasons each entry used to carry now live in the comments
+    # beside it and in the tool descriptions, which every client already holds.
     counts = served_counts or {}
     # t0_book is the whole library; only the read shelf is consumption.
     read_n = _one(con, f"SELECT count(*) FROM {P('t0_book')} WHERE shelf = 'read'")
     toread_n = _one(con, f"SELECT count(*) FROM {P('t0_book')} WHERE shelf = 'to-read'")
 
+    section("index")
     A("## What you can ask this surface for")
-    A("Ask by meaning, not by table. Available:")
-    A(f"- **{config.OWNER_POSSESSIVE} notes** — {counts.get('t1_notes', 0):,} of them, "
-      f"searchable by idea, plus {counts.get('t2_atom', 0):,} quotable spans lifted "
-      "from them")
+    A("Ask by meaning, not by table. Each tool's own description says more. Available:")
+    A(f"- **{config.OWNER_POSSESSIVE} notes** — {counts.get('t1_notes', 0):,} of them plus "
+      f"{counts.get('t2_atom', 0):,} quotable spans; `whats_relevant` searches both by "
+      "idea, `notes_on` maps what exists on a topic")
     # Beer rows are check-ins, not beers: 1,952 visits across 1,935 distinct
     # beers. Films are one row per film now that the merge keys on title+year
     # (it keyed on the permalink, and Letterboxd issues a different one per
@@ -301,84 +382,85 @@ def build(served_counts: dict[str, int] | None = None,
     beers_distinct = _one(con, f"SELECT count(DISTINCT lower(beer_name)) FROM {P('t0_beer')}")
     # The gap between those two numbers, named rather than left to be subtracted.
     # Almost every check-in is a beer never drunk before, so a return is the
-    # rarest judgement in this record and the one worth the most.
+    # rarest judgement in this record and the one worth the most. Beer rows carry
+    # brewery, style, abv and venue, which is what `facets` rolls up by.
     beers_repeat = _one(con, f"""SELECT count(*) FROM (
         SELECT count(*) AS c FROM {P('t0_beer')} GROUP BY lower(beer_name)) WHERE c > 1""")
     reviews_n = _one(con, f"SELECT count(*) FROM {P('t1_film_review')}")
-
-    # The scrobbles say what was played and never what it sounds like, so a
-    # mood question ("something high-energy") had nothing to match against.
-    # A clause on this line rather than an entry of its own: the index below
-    # overruns MAX_BYTES and is clipped from the bottom, and an entry placed
-    # down there came and went with the byte count of everything above it.
-    albums = (" (`albums` breaks them out by record with Last.fm crowd tags — ask by "
-              "sound; `vocabulary:true` lists the tags)"
+    episodes = _one(con, f"SELECT sum(episodes_watched) FROM {P('t0_tv')}")
+    # `taste` is the scrobble stream as revealed preference; `albums` is the
+    # same plays by record, with Last.fm crowd tags, because the scrobbles say
+    # what was played and never what it sounds like — a mood question
+    # ("something high-energy") had nothing to match against. It used to hide
+    # as a clause on this line to stay above the clip; the index is protected
+    # now, so it is named like everything else.
+    albums = (" (`albums` by record, with crowd tags — ask by sound)"
               if counts.get("t0_music_tag", 0) else "")
-    A(f"- **what has been consumed** — {counts.get('t0_music', 0):,} scrobbles{albums}, "
-      f"{read_n:,} books read and {toread_n:,} shelved to-read, "
-      f"{counts.get('t0_film', 0):,} films, "
-      f"{counts.get('t0_tv', 0):,} tv shows ({_one(con, f'SELECT sum(episodes_watched) FROM {P("t0_tv")}'):,} episodes), "
-      f"{beers_distinct:,} beers across {counts.get('t0_beer', 0):,} check-ins "
-      f"(only {beers_repeat:,} of those beers were ever drunk twice — novelty is the "
-      "point, so a return says more than a high score does). Beer rows carry the "
-      "brewery, style, abv and venue; `facets` rolls them up by style family, "
-      "brewery or venue, which twenty rating rows cannot.")
+    A(f"- **what has been consumed** — {counts.get('t0_music', 0):,} scrobbles"
+      f"{albums}, {read_n:,} books read and {toread_n:,} shelved to-read, "
+      f"{counts.get('t0_film', 0):,} films, {counts.get('t0_tv', 0):,} tv shows "
+      f"({episodes:,} episodes), {beers_distinct:,} beers across "
+      f"{counts.get('t0_beer', 0):,} check-ins (only {beers_repeat:,} drunk twice — "
+      "a return says more than a score). `consumption` for shape, `taste` for "
+      "plays, `ratings` for scores, `facets` to roll ratings up by style, brewery "
+      "or venue, `watching` for what was started and not finished.")
     # Television is the one medium whose consumption line cannot say how far
     # anything got: Trakt counts episodes watched and never episodes existing.
-    # The anime list is where the denominator is, so the shelf and the tool that
-    # divides by it are advertised together — a tool nobody is told about is a
-    # tool nobody calls, and the brief is the only thing a client reads without
-    # being asked.
+    # The anime list is where the denominator is (ADR-0024), and Trakt carries
+    # no ratings, so this is also the only rating television has.
     anime_n = _one(con, f"SELECT count(*) FROM {P('t0_anime')} WHERE status <> 'plan_to_watch'")
     if anime_n:
         anime_rated = _one(con, f"SELECT count(*) FROM {P('t0_anime')} WHERE score > 0")
         anime_queued = _one(con, f"SELECT count(*) FROM {P('t0_anime')} WHERE status = 'plan_to_watch'")
-        A(f"- **the anime shelf** — {anime_n:,} titles watched or watching and "
-          f"{anime_queued:,} queued, {anime_rated:,} of them scored 1-10 on "
-          "MyAnimeList. The only part of the record carrying episode TOTALS, so "
-          "`watching` can say what was left unfinished and `ratings(medium:'anime')` "
-          "is the only rating television has — Trakt has none.")
-    A(f"- **{config.OWNER_POSSESSIVE} own criticism** — {reviews_n:,} written film "
-      f"reviews with links, plus {counts.get('t1_verdicts', 0):,} longer verdicts "
-      f"across media. These are verbatim \u2014 {config.OWNER_POSSESSIVE} sentences, "
-      "not a summary of them, which is what makes them worth more than the "
-      "ratings.")
+        A(f"- **the anime shelf** — {anime_n:,} watched or watching, {anime_queued:,} "
+          f"queued, {anime_rated:,} scored 1-10; the only record with episode totals "
+          "and the only television ratings (`ratings(medium:'anime')`)")
+    # Verbatim, which is what makes them worth more than the ratings.
+    A(f"- **{config.OWNER_POSSESSIVE} own criticism** — {reviews_n:,} written film reviews "
+      f"(`reviews`) and {counts.get('t1_verdicts', 0):,} longer verdicts (`verdicts`), "
+      f"verbatim — {config.OWNER_POSSESSIVE} sentences, not a summary")
     A(f"- **open threads** — {counts.get('t1_open_thread', 0):,} questions raised and "
-      "not closed")
+      "not closed (`open_threads`)")
     # The blog is the only pile here that is already public, and the only one
     # where the right answer is a LINK rather than a quote. Say so explicitly:
     # an assistant that treats it like the notes will paraphrase a finished
-    # essay back at the person who wrote and published it.
+    # essay back at the person who wrote and published it. The same idea may
+    # sit in both piles at different stages — the posts are the finished
+    # public version of what the notes hold in draft.
     post_n = counts.get("t1_post", 0)
     if post_n:
+        # `kind` breaks ties so the brief is a function of the record: two
+        # publishes of the same projection must produce the same bytes, or a
+        # diff of the brief reports news that is only DuckDB's hash order.
         kinds = _q(con, f"""SELECT kind, count(*) FROM {P('t1_post')}
-                            GROUP BY kind ORDER BY count(*) DESC LIMIT 4""")
+                            GROUP BY kind ORDER BY count(*) DESC, kind LIMIT 4""")
         shape = ", ".join(f"{n:,} {k}" for k, n in kinds)
-        A(f"- **{config.OWNER_POSSESSIVE} published blog** — {post_n:,} posts "
-          f"at {_blog_host()} ({shape}), "
-          "full text, searchable by meaning. Every hit carries its live URL. This is "
-          "the finished public version of thinking the notes hold in draft \u2014 the "
-          "posts are public and the notes are not, so the same idea may appear in "
-          "both at different stages.")
+        A(f"- **{config.OWNER_POSSESSIVE} published blog** — {post_n:,} posts at "
+          f"{_blog_host()} ({shape}), searchable by meaning (`posts`). Public and "
+          "finished: answer with the live URL each hit carries, not a paraphrase.")
+    # Prose and metadata only — no source code is in this store (the workshop
+    # zones, ADR-0013). Four tools because the questions differ: what is live,
+    # what was done when, what a project argued, what is left unfinished.
     proj_n = counts.get("t1_project", 0)
     if proj_n:
-        A(f"- **the workshop** — {proj_n:,} repos with "
-          f"{counts.get('t1_project_commit', 0):,} dated commits and "
-          f"{counts.get('t1_project_doc', 0):,} README/CONTEXT/ADR documents. Ask what is "
-          "live, what stalled, which project argued for a decision, or what is left "
-          "unfinished. Prose and metadata only — no source code is in this store.")
-    A(f"- **places** — {counts.get('t1_visits', 0):,} restaurant visits with notes")
-    # The item spine has been in production, reachable by nothing, since it was
-    # published. An assistant asked what the owner should be doing answered from
-    # the NOTES about those todos, because that is what this list said existed.
+        A(f"- **the workshop** — {proj_n:,} repos (`projects`), "
+          f"{counts.get('t1_project_commit', 0):,} dated commits (`project_activity`), "
+          f"{counts.get('t1_project_doc', 0):,} README/CONTEXT/ADR documents "
+          "(`project_docs`), and what is left unfinished (`project_open`). No source "
+          "code.")
+    A(f"- **places** — {counts.get('t1_visits', 0):,} restaurant visits with notes "
+      "(`places`)")
+    # The item spine was in production, reachable by nothing, for days after it
+    # was published. An assistant asked what the owner should be doing answered
+    # from the NOTES about those todos, because that is what this list said
+    # existed. The write path stays on the owner's machine — say so, or a
+    # caller offers to tick things off.
     items = counts.get("t1_item", 0)
     if items:
-        A(f"- **what is committed to** — {items:,} items on the spine "
-          f"{config.OWNER_POSSESSIVE} scheduler reads: tasks with due dates, habits "
-          f"with streaks, open time slots, and standing constraints, plus "
-          f"{counts.get('t1_item_event', 0):,} logged status changes behind them. Ask "
-          "`agenda` for what is live and `history` for how it got there. Marking "
-          f"anything done happens on {config.OWNER_POSSESSIVE} machine, not here.")
+        A(f"- **what is committed to** — {items:,} tasks, habits, slots and "
+          f"constraints (`agenda`) and {counts.get('t1_item_event', 0):,} status "
+          f"changes behind them (`history`). Marking done happens on "
+          f"{config.OWNER_POSSESSIVE} machine, not here.")
     # The middle of the writing axis. Notes are thinking, posts are the finished
     # argument, and this is the state between — the one the owner is most likely
     # to forget starting, which is the whole reason this surface exists.
@@ -389,107 +471,100 @@ def build(served_counts: dict[str, int] | None = None,
     drafts_n = counts.get("t1_draft", 0)
     if drafts_n:
         A(f"- **what is being written right now** — {drafts_n:,} longform drafts in "
-          "progress, with word counts and when each was last touched. Between "
-          f"{config.OWNER_POSSESSIVE} private notes and the published blog. `drafts` "
-          "lists them; ask with stale_days to find the ones that have gone cold.")
+          "progress, between the notes and the blog (`drafts`; stale_days finds the "
+          "cold ones)")
     else:
-        A(f"- **what is being written right now** — `drafts` covers longform pieces in "
-          f"progress, between {config.OWNER_POSSESSIVE} private notes and the published "
-          "blog. None are open at the moment; that is the actual state, not a gap in "
-          "what you can see.")
+        A("- **what is being written right now** — `drafts` covers longform pieces in "
+          "progress. None are open; that is the actual state, not a gap in what you "
+          "can see.")
+    # Small and real rather than a recipe database: ones they made and posted.
     recipes_n = counts.get("t1_recipe", 0)
     if recipes_n:
-        A(f"- **what they cook** — {recipes_n:,} recipes they wrote up and published, "
-          "with ingredients, steps and the post each came from. Small and real rather "
-          "than a recipe database.")
-    A("- **one medium at a time** — `medium` answers 'what is liked about film' in "
-      "a single call: how much they have consumed, how they rate it on that medium's "
-      "own scale, what they own, and what they have written about it. Four tools' worth "
-      "of answer without needing to know the four tools.")
-    A("- **what they queued and have not done** — `backlog` spans to-read, half-read, "
-      "want-to-make and want-to-buy. `around_the_time` asks the same corpus by period "
-      "instead of by topic: what they wrote, played, read and watched in a given "
-      "window.")
+        A(f"- **what they cook** — {recipes_n:,} recipes they wrote up and published "
+          "(`recipes`)")
+    # The lenses: no rows of their own, each answers across zones in one call,
+    # so a caller need not know which four tools to combine.
+    A("- **across the record** — `medium` for everything about one medium in one "
+      "call; `backlog` for what was queued and not done; `around_the_time` for a "
+      "period rather than a topic")
     # Ownership is invisible unless advertised: an assistant will not guess that
-    # a personal-context server knows what is on the owner's shelves.
+    # a personal-context server knows what is on the owner's shelves. Owning is a
+    # stronger signal than playing once.
     coll = _q(con, f"""SELECT kind, count(*) FROM {P('t1_collection')}
-                       GROUP BY kind ORDER BY count(*) DESC""")
+                       GROUP BY kind ORDER BY count(*) DESC, kind""")
     if coll:
         A("- **what they own** — " + ", ".join(f"{n:,} {k.replace('_',' ')}" for k, n in coll)
-          + " (owning is a stronger signal than playing once)")
+          + " (`collection`)")
     # Conversations, saves, events and the taste verticals were published for
     # days and never once asked for — the audit log shows recent_topics, reviews,
     # ratings and taste_summary at zero calls while whats_relevant ran 21 times.
     # An assistant asked about the owner's LLM conversations answered from the
-    # NOTES about them, because this list is what it believes exists. A tool nobody is
-    # told about is a tool nobody calls; publishing is not the same as offering.
+    # NOTES about them, because this list is what it believes exists.
+    #
+    # Turn count is the signal (300 turns is a preoccupation, 3 a passing
+    # look) — the tool description says so. Two things stay here: that the
+    # longer threads carry a machine distillation beside the owner's closing
+    # words (nothing else tells a caller the distillations exist, and it should
+    # check one against the other), and the one instruction whose absence
+    # misattributes — an assistant line in a thread is another model's output.
     topics_n = counts.get("t0_chat_topic", 0)
     if topics_n:
         newest = _one(con, f"SELECT max(last_seen) FROM {P('t0_chat_topic')}", default=None)
         A(f"- **what they have been working through in conversation** — {topics_n:,} "
-          f"threads with titles and turn counts, most recent {newest}. Fresher than "
-          f"{config.OWNER_POSSESSIVE} notes, which lag a deliberate act of capture. "
-          "Turn count is the signal: 300 turns is a preoccupation, 3 is a passing "
-          "look. The longer ones carry a machine-written distillation of where "
-          f"{config.OWNER_POSSESSIVE} thinking landed, alongside "
-          f"{config.OWNER_POSSESSIVE} own closing words verbatim — check one against "
-          "the other rather than trusting the summary. Full dialogue for one thread "
-          "is available on request, speaker-tagged — lines from the assistant are "
-          f"another model's output, context for reading {config.OWNER} rather than "
-          f"fact, and never {config.OWNER_POSSESSIVE} words.")
+          f"threads, newest {newest} (`recent_topics`); one in full with `thread`. "
+          "Longer ones carry a machine distillation beside "
+          f"{config.OWNER_POSSESSIVE} closing words — check one against the other. "
+          f"Assistant lines are another model's output, never {config.OWNER_POSSESSIVE} words.")
     saves_n = counts.get("t0_raindrop", 0)
     if saves_n:
-        A(f"- **saved links** — {saves_n:,} bookmarks, filterable by platform or tag")
+        A(f"- **saved links** — {saves_n:,} bookmarks, by platform or tag (`saves`)")
     events_n = counts.get("t0_event", 0)
     if events_n:
-        A(f"- **events they could go to** — {events_n:,} upcoming in DC, merged from "
-          f"eight sources. Judge fit against {config.OWNER_POSSESSIVE} taste rather "
-          "than listing them.")
-    # The two discovery zones. Both are pure gain for an assistant and pure
-    # invisibility without this: nothing about a personal-context server suggests
-    # it knows what came out last week, so an assistant asked "anything new I'd
-    # like" will answer from the scrobbles — which is the one question the
-    # scrobbles structurally cannot answer.
+        A(f"- **events they could go to** — {events_n:,} upcoming in DC (`events`). "
+          f"Judge fit against {config.OWNER_POSSESSIVE} taste rather than listing them.")
+    # The discovery zones. All pure gain for an assistant and pure invisibility
+    # without this: nothing about a personal-context server suggests it knows
+    # what came out last week, so an assistant asked "anything new I'd like"
+    # will answer from the scrobbles — the one question the scrobbles
+    # structurally cannot answer. The record pool is crawled by SCENE, not by
+    # similarity, so it can name an artist nobody has scrobbled; it is unranked
+    # by design, and absence from it means the crawl never looked, not that
+    # anything was rejected — the tool description carries all of that.
     releases_n = counts.get("t0_release", 0)
     if releases_n:
-        A(f"- **records that just came out** — {releases_n:,} candidates, crawled by SCENE "
-          f"rather than by similarity to what {config.OWNER} already plays, with anything "
-          "already heard or already owned removed. This is the one thing "
-          "here that can name an artist with no listeners yet: a similarity API cannot "
-          "return a record nobody has scrobbled, and this pool never asked. It does not "
-          "rank by preference — it carries the play counts and leaves the judgement to "
-          "you. Absence from it means the crawl never looked, never that it was rejected.")
+        A(f"- **records that just came out** — {releases_n:,} candidates, crawled by "
+          "scene, already-heard and already-owned removed, unranked (`releases`)")
     # The film half. Without it an assistant asked "what should I watch
     # tonight" answers from the ratings, and cannot say whether any of it is
     # actually streamable.
     offer_n = counts.get("t0_film_offer", 0)
     if offer_n:
-        A(f"- **films streamable right now** — {offer_n:,} titles, the whole catalogue of a "
-          f"service {config.OWNER} subscribes to, with anything already watched removed and "
-          "the days until each one leaves. Taste-blind like the record pool: it carries the "
-          "audience and critic scores and leaves the judgement to you (`streaming`).")
+        A(f"- **films streamable right now** — {offer_n:,} titles on a service "
+          f"{config.OWNER} subscribes to, already-watched removed, with days until "
+          "each leaves (`streaming`)")
+    # SOMEBODY ELSE'S writing — the only thing here that says what anyone other
+    # than the owner thinks. The attribution instruction stays in the brief
+    # because a caller that quotes it as the owner's has invented an opinion.
     crit_n = counts.get("t0_criticism", 0)
     if crit_n:
         outlets = _one(con, f"SELECT count(DISTINCT outlet) FROM {P('t0_criticism')}", default=0)
         A(f"- **what the music press is publishing** — {crit_n:,} pieces from {outlets} "
-          f"underground outlet{'' if outlets == 1 else 's'}, with headlines, bylines "
-          "and links. SOMEBODY ELSE'S "
-          f"writing, never {config.OWNER_POSSESSIVE}: quote it as the outlet's and answer "
-          "with the link. It is the only thing here that says what anyone other than "
-          f"{config.OWNER} thinks about any of this.")
+          f"outlet{'' if outlets == 1 else 's'} (`criticism`). Somebody else's writing, "
+          f"never {config.OWNER_POSSESSIVE}: quote it as the outlet's, with the link.")
+    # Stated, distinct from revealed. Where the two disagree is usually the
+    # interesting part.
     taste_n = counts.get("t1_taste", 0)
     if taste_n:
         A(f"- **what they SAY they like** — {taste_n:,} stated preferences across "
-          "events, outings, travel and dining, distinct from what they actually do. "
-          "Where the two disagree is usually the interesting part.")
+          "events, outings, travel and dining (`taste_profile`), distinct from what "
+          "they do")
     # Gated on EITHER half, because the two kinds now come from different places:
     # the dining and cluster documents are taste-engine's, mirrored; the beer one
     # is computed by the surface from the check-in log. An instance with beer and
     # no taste-engine still has a calibration to advertise.
     if counts.get("t0_taste_derived") or counts.get("t0_beer"):
-        cal = [f"- **how to read {config.OWNER_POSSESSIVE} ratings** — scale calibration "
-               "per medium, from `taste_summary`. Read it before interpreting any "
-               "number."]
+        cal = [f"- **how to read {config.OWNER_POSSESSIVE} ratings** — per-medium scale "
+               "calibration (`taste_summary`); read it before interpreting any number."]
         if counts.get("t0_taste_derived"):
             # Sentence-initial, and the possessive is configured per instance —
             # `capitalize()` would lowercase the tail of a name-shaped one.
@@ -501,18 +576,16 @@ def build(served_counts: dict[str, int] | None = None,
             # that stops being true the next time they drink something, and the
             # claim it supports ("a 4 is not high") is only true of some
             # distributions — so the numbers go in and the adjective does not.
-            beer_cal = _q(con, f"""SELECT median(r), avg(r),
+            beer_cal = _q(con, f"""SELECT median(r),
                                           sum(CASE WHEN r >= 4 THEN 1 ELSE 0 END) * 1.0 / count(*)
                                    FROM (SELECT CAST(rating_score AS DOUBLE) AS r
                                          FROM {P('t0_beer')}
                                          WHERE nullif(rating_score, '') IS NOT NULL
                                            AND CAST(rating_score AS DOUBLE) > 0)""")
             if beer_cal and beer_cal[0][0] is not None:
-                med, avg, at4 = beer_cal[0]
-                cal.append(f" The beer scale is 0-5 with a median of {med:g} and a mean "
-                           f"of {avg:.2f}, and {at4:.0%} of rated check-ins are at 4.0 or "
-                           "above — call `taste_summary(kind:'beer')` before reading a 4 "
-                           "as praise.")
+                med, at4 = beer_cal[0]
+                cal.append(f" Beer is 0-5 with a median of {med:g}, and {at4:.0%} of "
+                           "rated check-ins are 4.0 or above.")
         A("".join(cal))
 
     A("")
@@ -528,6 +601,7 @@ def build(served_counts: dict[str, int] | None = None,
         cutoff = (_d.date.today() - _d.timedelta(days=30)).isoformat()
         fresh = [h for h in history if h["since"] >= cutoff]
         if fresh:
+            section("recent")
             A("## Recently added to this surface")
             for h in fresh[:8]:
                 A(f"- `{h['zone']}` — since {h['since']}")
@@ -584,9 +658,44 @@ def build(served_counts: dict[str, int] | None = None,
     con.close()
 
     tail_text = "\n".join(tail).rstrip() + "\n"
-    body = "\n".join(out).rstrip() + "\n"
-    clipped = "\n…(this brief was clipped in the middle to fit; the sections above "
-    clipped += "are complete, the index of what you can ask for may not be)\n\n"
+    return _fit(parts, tail_text)
+
+
+def _fit(parts: list[tuple[str, list[str]]], tail_text: str) -> str:
+    """Assemble the brief within MAX_BYTES, yielding prose before capability.
+
+    Whole prose sections leave in _YIELD_ORDER until the rest fits, and a line
+    above the index says which went and where to ask for them — a brief that
+    drops a section silently reads as complete, which is the failure the
+    guarded tail exists to prevent. Only if the protected parts alone overrun
+    does the old byte clip run, and then it says so in CLIPPED_MARKER.
+    """
+    def render(ps: list[tuple[str, list[str]]]) -> str:
+        return "\n".join(line for _, lines in ps for line in lines).rstrip() + "\n"
+
+    def over(ps: list[tuple[str, list[str]]]) -> bool:
+        return len((render(ps) + "\n" + tail_text).encode()) > MAX_BYTES
+
+    def with_note(kept: list[tuple[str, list[str]]], gone: list[tuple[str, str]]):
+        if not gone:
+            return kept
+        note = ("…(left out to fit: "
+                + "; ".join(f"{label} — ask {where}" for label, where in gone)
+                + ". The index below is complete.)")
+        at = next(i for i, (k, _) in enumerate(kept) if k == "index")
+        return kept[:at] + [("note", [note, ""])] + kept[at:]
+
+    kept = list(parts)
+    gone: list[tuple[str, str]] = []
+    for key, label, where in _YIELD_ORDER:
+        if not over(with_note(kept, gone)):
+            break
+        if any(k == key for k, _ in kept):
+            kept = [(k, ls) for k, ls in kept if k != key]
+            gone.append((label, where))
+
+    body = render(with_note(kept, gone))
+    clipped = "\n" + CLIPPED_MARKER + "\n\n"
     budget = MAX_BYTES - len(tail_text.encode()) - len(clipped.encode())
     if len(body.encode()) > budget:
         body = body.encode()[:budget].decode("utf-8", "ignore").rstrip() + clipped

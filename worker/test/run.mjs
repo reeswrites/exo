@@ -1735,9 +1735,39 @@ console.log("\n── documentation ──");
     ? new URL(`file://${process.env.EXO_HOME}/zones/_serve/brief.md`)
     : new URL("../../zones/_serve/brief.md", import.meta.url);
   const brief = readFileSync(briefPath, "utf8");
-  const SHOULD_ADVERTISE = ["agenda", "recipes", "medium", "backlog", "around_the_time", "drafts", "albums"];
-  const unadvertised = SHOULD_ADVERTISE.filter((n) => !brief.includes(n));
-  ok(unadvertised.length === 0, `the brief names the tools it should${unadvertised.length ? " — missing: " + unadvertised : ""}`);
+  // Every tool, not a hand-picked few. The list used to be the seven tools
+  // that had each gone missing once, which meant the eighth — `releases`, the
+  // music press, the film pool — could vanish off the end of a clipped brief
+  // and this stayed green (ADR-0013 §2: publishing is not offering). Now the
+  // capability index is protected from the byte budget (brief.py, _fit), so
+  // the brief can promise to name everything the instance offers, and this
+  // holds it to that.
+  //
+  // Filtered by `offered`, the surface.json list above: a tool withheld because
+  // its zones are empty (`streaming` on an instance with no subscription pool)
+  // is correctly absent from the brief too, and requiring it would demand the
+  // brief advertise something tools/list refuses.
+  //
+  // Matched in backticks, not as a bare substring. "events", "places" and
+  // "history" occur in ordinary prose, so a substring check passed for them
+  // whether or not the index named the tool.
+  const SHOULD_ADVERTISE = Object.keys(TOOLS).filter((n) => offered.includes(n));
+  const unadvertised = SHOULD_ADVERTISE.filter((n) => !brief.includes("`" + n + "`") && !brief.includes("`" + n + "("));
+  ok(unadvertised.length === 0,
+     `the brief names every offered tool (${SHOULD_ADVERTISE.length})${unadvertised.length ? " — missing: " + unadvertised : ""}`);
+
+  // Named is not enough if the name can fall off the end. Neither budget
+  // fallback may have fired on this instance: the last-resort byte clip means
+  // the index itself was sliced, and a yielded section means the brief is
+  // within one growth spurt of it — both are a signal to trim, not to ship.
+  ok(!brief.includes("was clipped in the middle to fit"), "the brief's capability index was not clipped");
+  ok(!brief.includes("(left out to fit:"), "the brief fits without yielding a prose section");
+  // The budget read from brief.py rather than restated here — two spellings of
+  // one number drift, and this one has moved three times already.
+  const briefCap = Number(readFileSync(new URL("../../exo/scripts_impl/brief.py", import.meta.url), "utf8")
+    .match(/^MAX_BYTES = (\d+)/m)[1]);
+  const briefBytes = Buffer.byteLength(brief, "utf8");
+  ok(briefBytes <= briefCap, `the brief is within its byte budget (${briefBytes} of ${briefCap})`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
