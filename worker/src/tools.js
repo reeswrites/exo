@@ -730,8 +730,8 @@ export const TOOLS = {
       const SOURCE = `CASE WHEN ta.status = 'ok' THEN 'album' WHEN tr.status = 'ok' THEN 'artist' END`;
       // Grouped on the folded strings so casing variants of one record are one
       // row. The tag zone stores its keys pre-folded the same way (SQLite's
-      // ASCII-only lower, space-only trim), so the join is an index lookup
-      // rather than a fold of both sides per pair.
+      // ASCII-only lower, space-only trim), so the join is plain equality
+      // SQLite can auto-index, rather than a fold of both sides per pair.
       const base = `
         WITH a AS (
           SELECT min(artist) AS artist, min(album) AS album,

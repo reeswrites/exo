@@ -306,7 +306,15 @@ def build(served_counts: dict[str, int] | None = None,
         SELECT count(*) AS c FROM {P('t0_beer')} GROUP BY lower(beer_name)) WHERE c > 1""")
     reviews_n = _one(con, f"SELECT count(*) FROM {P('t1_film_review')}")
 
-    A(f"- **what has been consumed** — {counts.get('t0_music', 0):,} scrobbles, "
+    # The scrobbles say what was played and never what it sounds like, so a
+    # mood question ("something high-energy") had nothing to match against.
+    # A clause on this line rather than an entry of its own: the index below
+    # overruns MAX_BYTES and is clipped from the bottom, and an entry placed
+    # down there came and went with the byte count of everything above it.
+    albums = (" (`albums` breaks them out by record with Last.fm crowd tags — ask by "
+              "sound; `vocabulary:true` lists the tags)"
+              if counts.get("t0_music_tag", 0) else "")
+    A(f"- **what has been consumed** — {counts.get('t0_music', 0):,} scrobbles{albums}, "
       f"{read_n:,} books read and {toread_n:,} shelved to-read, "
       f"{counts.get('t0_film', 0):,} films, "
       f"{counts.get('t0_tv', 0):,} tv shows ({_one(con, f'SELECT sum(episodes_watched) FROM {P("t0_tv")}'):,} episodes), "
@@ -442,15 +450,6 @@ def build(served_counts: dict[str, int] | None = None,
     # it knows what came out last week, so an assistant asked "anything new I'd
     # like" will answer from the scrobbles — which is the one question the
     # scrobbles structurally cannot answer.
-    # The scrobbles say what was played and never what it sounds like, so a
-    # mood question ("something high-energy") had nothing to match against.
-    tags_n = counts.get("t0_music_tag", 0)
-    if tags_n:
-        A("- **records by what they sound like** — `albums` lists every album played, "
-          "with plays, first and last listen, and Last.fm's crowd tags (genre and scene "
-          "words, the album's own where it has any, else the artist's). Translate a mood "
-          "into tags and pass them; `albums(vocabulary:true)` shows which tags this record "
-          "actually uses. `unplayed_since` reaches what fell out of rotation.")
     releases_n = counts.get("t0_release", 0)
     if releases_n:
         A(f"- **records that just came out** — {releases_n:,} candidates, crawled by SCENE "
