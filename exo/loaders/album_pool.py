@@ -12,8 +12,18 @@ Visions" against "Cold Visions (Deluxe)", "WELCOME HOME - EP" against "Welcome
 Home". An exact match would offer a record back to the person who played it
 749 times, which is the one answer this pool must never give. So heard is
 decided here on a loose key — bracketed suffixes, edition words and punctuation
-stripped — and the `unheard` tool excludes exact matches again at read time for
-what was played since the last ingest.
+stripped. The `unheard` tool trusts it and does not re-check against
+`t0_music` at read time: D1's `t0_music` is written by the same nightly load as
+this pool, so "played since the last ingest" is always empty there, and the
+re-check — two aggregates over the whole stream, evaluated twice per call —
+read ~4M rows a call, most of D1's free daily allowance.
+
+## Plays, counted here
+
+`artist_plays` is how much the stream already plays the act, counted on
+`fold(artist)` — the same fold the worker's joins use — over every scrobble,
+album or not. Counted at ingest for the same reason: it cannot change between
+loads, and counting it per call cost the other half of those reads.
 
 `grounds=False`, `author=external`: the pool is Last.fm's lists, not his record.
 Held PRIVATE: which artists and scenes it was built from is a description of
@@ -22,6 +32,7 @@ his taste, the same reasoning `t0_release` is graded on.
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from .. import config
 from ..provenance import Row, stable_id
@@ -45,10 +56,19 @@ def loose(artist: str, album: str) -> str:
     return f"{_NON_ALNUM.sub('', artist.lower())}\x1f{_NON_ALNUM.sub('', a)}"
 
 
-def _heard() -> set[str]:
+def _stream() -> tuple[set[str], Counter[str]]:
+    """One pass over the scrobbles: the loose keys of every record heard, and
+    the plays per folded artist."""
     from . import csv_sources
-    return {loose(r.payload.get("artist") or "", r.payload.get("album") or "")
-            for r in csv_sources.lastfm() if (r.payload.get("album") or "").strip()}
+    heard: set[str] = set()
+    plays: Counter[str] = Counter()
+    for r in csv_sources.lastfm():
+        artist = r.payload.get("artist") or ""
+        album = r.payload.get("album") or ""
+        plays[fold(artist)] += 1
+        if album.strip():
+            heard.add(loose(artist, album))
+    return heard, plays
 
 
 def load() -> list[Row]:
@@ -61,7 +81,7 @@ def load() -> list[Row]:
         return []
 
     tags = {e["key"]: e for e in entries if e.get("kind") == "tags"}
-    heard = _heard()
+    heard, plays = _stream()
     pool: dict[str, dict] = {}
     for e in entries:
         kind = e.get("kind")
@@ -99,6 +119,7 @@ def load() -> list[Row]:
                 "found_via": ", ".join(sorted(c["via"])),
                 "scenes": ", ".join(sorted(c["scenes"])),
                 "rank": c["rank"],
+                "artist_plays": plays.get(fold(c["artist"]), 0),
                 # `pending` = not asked yet; `none` = asked, Last.fm has no tags.
                 "tag_status": ("ok" if clean else "none") if t else "pending",
                 "tags": ", ".join(clean),

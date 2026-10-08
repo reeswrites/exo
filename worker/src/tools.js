@@ -846,10 +846,12 @@ export const TOOLS = {
 
   unheard: {
     class: "world", domain: "culture", kind: "entity",
-    // The pool is the subject; the stream and the shelf only subtract. The
-    // pool is private (its selection is a description of taste), so every
-    // answer is, and nothing here is worth a readsFor split.
-    reads: ["t0_album_pool", "t0_music", "t0_music_tag", "t1_collection"],
+    // The pool is the subject; the shelf only subtracts. The stream is already
+    // folded in at ingest (what was heard is dropped, artist_plays is counted),
+    // so this never touches t0_music. The pool is private (its selection is a
+    // description of taste), so every answer is, and nothing here is worth a
+    // readsFor split.
+    reads: ["t0_album_pool", "t0_music_tag", "t1_collection"],
     description:
       "Records the owner has NOT played, for 'something I haven't heard'. Built from two Last.fm lists: `back_catalog` is the top albums of the acts they play most — unheard records by artists already loved, the safest bet — and `scene` is the top albums of the scenes their listening is densest in, which can reach acts they have never played. Anything already scrobbled or owned on vinyl is removed. Each row carries the same kind of crowd `tags` as `albums` (the album's own, else the artist's, else the scene it was found under; `tag_source` says which) and `artist_plays`, how much they already play that act — 0 means a new artist. Match a mood with `tags` using the words `albums(vocabulary:true)` shows, or call this with vocabulary:true. It does not rank by preference: order='familiar' leads with loved acts, 'unfamiliar' with new ones, 'ranked' with Last.fm's own chart position. Not new releases — that is `releases`.",
     schema: {
@@ -869,16 +871,14 @@ export const TOOLS = {
       const wanted = String(tags ?? "")
         .split(",").map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 12);
 
-      // The loader already dropped what was heard as of the last ingest, on a
-      // loose match that forgives edition suffixes. This drops what was played
-      // since, exactly, and what is on the shelf.
+      // The loader already dropped what was heard, on a loose match that
+      // forgives edition suffixes, and counted artist_plays. Re-deriving either
+      // from t0_music here is no fresher — D1's stream is written by the same
+      // nightly load as the pool — and it cost ~4M row reads a call, enough
+      // for two calls to exhaust D1's free daily allowance and fail the nightly.
+      // This only drops what is on the shelf.
       const base = `
-        WITH heard AS (
-          SELECT DISTINCT lower(trim(artist)) AS la, lower(trim(album)) AS lal
-          FROM t0_music WHERE album IS NOT NULL AND trim(album) <> ''
-        ),
-        ap AS (SELECT lower(trim(artist)) AS la, count(*) AS plays FROM t0_music GROUP BY 1),
-        q AS (
+        WITH q AS (
           SELECT p.artist, p.album, p.found_via, p.scenes, p.rank,
                  CASE WHEN p.tag_status = 'ok' THEN p.tags
                       WHEN tr.status = 'ok' THEN tr.tags
@@ -886,15 +886,17 @@ export const TOOLS = {
                  CASE WHEN p.tag_status = 'ok' THEN 'album'
                       WHEN tr.status = 'ok' THEN 'artist'
                       WHEN p.scenes <> '' THEN 'scene' END AS tag_source,
-                 COALESCE(ap.plays, 0) AS artist_plays,
+                 COALESCE(p.artist_plays, 0) AS artist_plays,
                  p.artist_key || char(31) || p.album_key AS id
           FROM t0_album_pool p
-          LEFT JOIN heard h ON h.la = p.artist_key AND h.lal = p.album_key
-          LEFT JOIN t1_collection c ON c.kind = 'vinyl'
-            AND lower(trim(c.creator)) = p.artist_key AND lower(trim(c.title)) = p.album_key
           LEFT JOIN t0_music_tag tr ON tr.artist_key = p.artist_key AND tr.level = 'artist'
-          LEFT JOIN ap ON ap.la = p.artist_key
-          WHERE h.la IS NULL AND c.id IS NULL
+          -- NOT IN, not a LEFT JOIN: SQLite cannot index lower(trim(...)), so a
+          -- join re-scans the shelf for every pool row (~176k rows read per
+          -- evaluation). The list subquery is built once.
+          WHERE p.artist_key || char(31) || p.album_key NOT IN (
+                  SELECT lower(trim(creator)) || char(31) || lower(trim(title))
+                  FROM t1_collection
+                  WHERE kind = 'vinyl' AND creator IS NOT NULL AND title IS NOT NULL)
             AND (? IS NULL OR lower(p.artist) LIKE ?)
             AND (? IS NULL OR p.found_via LIKE ?)
         )`;
