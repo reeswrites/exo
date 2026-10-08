@@ -21,12 +21,12 @@ unheard record is searchable with the same words as a heard one.
 `t0_release` is what just came OUT, crawled from label rosters. This is what
 EXISTS and was missed, at any age. Different question, different tool.
 
-## Heard is decided at read time, and again at load
+## Heard is decided at load
 
 The pool keeps whatever the sources list. The loader drops records already in
-the stream (matched loosely — "Cold Visions (Deluxe)" is Cold Visions), and the
-`unheard` tool excludes exact matches again at read time, so a record played
-this afternoon is not offered back tonight.
+the stream (matched loosely — "Cold Visions (Deluxe)" is Cold Visions). The
+`unheard` tool does not re-check at read time: the served stream only changes
+on the same nightly load, and the re-check cost most of D1's daily read quota.
 
 ## Budgeted like the tag fetcher
 

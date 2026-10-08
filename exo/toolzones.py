@@ -102,10 +102,11 @@ TOOL_ZONES: dict[str, Reads] = {
     # Without tags it is still every album with its plays; the tags are what
     # make "sounds like" answerable, and the shelf only marks ownership.
     "albums": Reads(required=("t0_music",), enriches=("t0_music_tag", "t1_collection")),
-    # The pool is the answer; the stream and the shelf only remove what is
-    # already heard or owned, and the artist tags fill in an untagged record.
+    # The pool is the answer, already stripped of what was heard at ingest; the
+    # shelf only removes what is owned, and the artist tags fill in an untagged
+    # record. No t0_music: reading the stream per call exhausted D1's quota.
     "unheard": Reads(required=("t0_album_pool",),
-                     enriches=("t0_music", "t0_music_tag", "t1_collection")),
+                     enriches=("t0_music_tag", "t1_collection")),
     # What he owns is the answer; play counts are colour on it.
     "collection": Reads(required=("t1_collection",), enriches=("t0_music",)),
     # Required rather than any_of, and t0_tv cannot stand in for it. The

@@ -53,3 +53,17 @@ def test_pool_rows_are_not_grounds(tmp_path, monkeypatch):
          "albums": [{"artist": "A", "album": "B", "rank": 1}]}]}))
     (row,) = album_pool.load()
     assert row.grounds is False and row.author == "external"
+
+
+def test_artist_plays_counts_every_scrobble_on_the_worker_fold(tmp_path, monkeypatch):
+    # The worker no longer counts plays per call — this column is the whole answer.
+    monkeypatch.setattr(config, "EXPORTS", tmp_path)
+    _scrobbles(monkeypatch, [("Bladee", "Cold Visions"), ("bladee", ""), ("Bladee ", "Crest"),
+                             ("Ecco2k", "E")])
+    (tmp_path / fap.CACHE).write_text(json.dumps({"entries": [
+        {"key": "scene\x1frage", "kind": "scene", "name": "rage",
+         "albums": [{"artist": "Bladee", "album": "Exeter", "rank": 1},
+                    {"artist": "Summrs", "album": "Fallen Raven", "rank": 2}]}]}))
+    rows = {r.payload["album"]: r.payload for r in album_pool.load()}
+    assert rows["Exeter"]["artist_plays"] == 3, "album-less and case/space variants all count"
+    assert rows["Fallen Raven"]["artist_plays"] == 0
