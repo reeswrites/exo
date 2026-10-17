@@ -576,7 +576,23 @@ export default {
       // doors back out of this file. A dynamic import defers the edge past
       // module evaluation, so the cycle never has to resolve mid-initialisation.
       const { oauthProvider } = await import("./oauth.js");
-      return await oauthProvider(req, env).fetch(req, env, ctx);
+      const res = await oauthProvider(req, env).fetch(req, env, ctx);
+
+      // The provider answers /oauth/token and /oauth/register itself, which
+      // means those requests never reach recordCaller and never reach the log.
+      // That gap has a shape: a REFRESH is the one exchange that happens with
+      // nobody watching, hours after the login, and a client whose refresh
+      // fails goes quiet in exactly the way a client that was never called goes
+      // quiet. Asked "did it disconnect?", the log could not tell the two
+      // apart. Now it can.
+      const path = new URL(req.url).pathname;
+      if (path === "/oauth/token" || path === "/oauth/register") {
+        const what = path.slice(7);
+        const observed = recordCaller(env, req, `${res.ok ? "ok" : "denied"}:${what}`);
+        if (ctx?.waitUntil) ctx.waitUntil(observed);
+        else await observed;
+      }
+      return res;
     } catch (err) {
       // A misconfigured second door must not close the first one. Found the
       // honest way: an invalid issuer URL threw inside the constructor, and
