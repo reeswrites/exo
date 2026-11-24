@@ -193,12 +193,17 @@ ok(ordering("a DESC; DROP TABLE t0_film", { rated: "a" }).sql === "a",
 // capped twenty means the top twenty on one axis and the last twenty on the
 // other, and has_more cannot tell those apart.
 const desc = (rows, f) => rows.every((r, i, a) => i === 0 || f(a[i - 1]) >= f(r));
+const asc = (rows, f) => rows.every((r, i, a) => i === 0 || f(a[i - 1]) <= f(r));
 const num = (v) => (v === null || v === undefined || v === "" ? -Infinity : parseFloat(v));
 const day = (v) => v ?? "";
 
 const oFilmsRated = await TOOLS.ratings.run(env, { medium: "films" });
 ok(oFilmsRated.order === "rated", "ratings answers on the rated axis by default");
 ok(desc(oFilmsRated.rows, (r) => num(r.rating)), "and the ratings actually descend");
+const oFilmsLow = await TOOLS.ratings.run(env, { medium: "films", order: "lowest" });
+ok(oFilmsLow.order === "lowest", "ratings order=lowest is an axis, not a silent fallback");
+ok(asc(oFilmsLow.rows, (r) => num(r.rating)), "and the ratings actually ascend");
+ok(oFilmsLow.rows.every((r) => r.rating > 0), "lowest-first never surfaces unrated rows as zeros");
 const oFilmsRecent = await TOOLS.ratings.run(env, { medium: "films", order: "recent" });
 ok(oFilmsRecent.order === "recent" && desc(oFilmsRecent.rows, (r) => day(r.when_)),
    "ratings order=recent reaches what was watched lately, which the top twenty never showed");

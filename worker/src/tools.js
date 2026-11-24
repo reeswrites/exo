@@ -2140,13 +2140,13 @@ export const TOOLS = {
       beer: ["t0_beer"], restaurants: ["t1_visits"], anime: ["t0_anime"],
     })[medium] ?? ["t0_anime", "t0_beer", "t0_book", "t0_film", "t1_visits"],
     description:
-      "For 'what did I think of…', 'my favourite films or books or beers', and anything that has to skip what they already know. For 'have I seen / read / had X?' pass `title`: it searches every logged item in that medium (or all of them), rated or not, and says plainly when nothing matches. Check each candidate this way before recommending it, because a top-twenty answer that lacks X does NOT mean they haven't seen X. What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
+      "For 'what did I think of…', 'my favourite films or books or beers', 'what did I dislike' (order='lowest'), and anything that has to skip what they already know. For 'have I seen / read / had X?' pass `title`: it searches every logged item in that medium (or all of them), rated or not, and says plainly when nothing matches. Check each candidate this way before recommending it, because a top-twenty answer that lacks X does NOT mean they haven't seen X. What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
     schema: {
       type: "object",
       properties: {
         medium: { type: "string", description: "films | books | beer | restaurants | anime" },
         min_rating: { type: "number", description: "Only at or above this, on that medium's own scale." },
-        order: { type: "string", description: "rated (default, highest first) | recent" },
+        order: { type: "string", description: "rated (default, highest first) | lowest (lowest-rated first: what they disliked) | recent" },
         title: { type: "string", description: "Look up one title (substring, case-insensitive) instead of ranking. Returns every logged match, rated or not; books carry their shelf, so 'to-read' means not read yet." },
       },
     },
@@ -2171,6 +2171,10 @@ export const TOOLS = {
         const floor = min_rating ?? 0;
         const by = ordering(order, {
           rated:  `CAST(${d.col} AS REAL) DESC, created DESC`,
+          // Unrated rows are already excluded above (0 means unrated, never
+          // "rated zero"), so this is the bottom of what they actually rated:
+          // 'what did I dislike', which the top-first default can never reach.
+          lowest: `CAST(${d.col} AS REAL) ASC, created DESC`,
           recent: `created DESC, CAST(${d.col} AS REAL) DESC`,
         });
         axis = by.order;
