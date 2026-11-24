@@ -917,6 +917,19 @@ ok(bk.total < 500, `books total counts finished only (${bk.total}, not the 920-r
 ok(bk.to_read_backlog > 0, `to-read backlog reported separately (${bk.to_read_backlog})`);
 ok(bk.total_label === "finished", "the total says what it counts");
 
+// title lookup: "have I seen X" is one bounded question, not a top-twenty page
+{
+  const top = (await TOOLS.ratings.run(env, { medium: "films" })).rows[0];
+  const hit = await TOOLS.ratings.run(env, { medium: "films", title: top.label.toUpperCase() });
+  ok(hit.rows.some((r) => r.label === top.label), "ratings(title:) finds a film by title, case-insensitively");
+  const miss = await TOOLS.ratings.run(env, { title: "zzqx-no-such-title" });
+  ok(miss.rows.length === 0 && /Not in the record/.test(miss.note), "a miss says so instead of returning nothing silently");
+  const wild = await TOOLS.ratings.run(env, { title: "%" });
+  ok(wild.rows.every((r) => r.label.includes("%")), "LIKE wildcards in a title are literal");
+  const shelf = await TOOLS.ratings.run(env, { medium: "books", title: "a" });
+  ok(shelf.rows.every((r) => "status" in r), "book matches carry their shelf, so to-read is not read as read");
+  ok(shelf.rows.every((r) => r.rating === null || r.rating > 0), "unrated rows report null, never zero");
+}
 const bratings = await TOOLS.ratings.run(env, { medium: "books" });
 ok(bratings.rows.length > 0, `book ratings -> ${bratings.rows.length}`);
 
