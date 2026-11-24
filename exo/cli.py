@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     snn = sub.add_parser("nn"); snn.add_argument("atom_id"); snn.add_argument("--k", type=int, default=6)
     ssr = sub.add_parser("search"); ssr.add_argument("query"); ssr.add_argument("--k", type=int, default=10)
     sub.add_parser("fetch-goodreads")
+    sub.add_parser("fetch-reading-log")
     sub.add_parser("fetch-lastfm")
     sap = sub.add_parser("fetch-album-pool")
     sap.add_argument("--budget", type=int, default=None,
@@ -236,6 +237,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "fetch-goodreads":
         from .scripts_impl import fetch_goodreads
         return fetch_goodreads.run()
+    elif args.cmd == "fetch-reading-log":
+        from .scripts_impl import fetch_reading_log
+        return fetch_reading_log.run()
     elif args.cmd == "fetch-lastfm":
         from .scripts_impl import fetch_lastfm
         return fetch_lastfm.run()
