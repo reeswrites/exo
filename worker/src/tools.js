@@ -510,16 +510,16 @@ export const DOMAINS = ["culture", "table", "mind", "workshop", "commitments", "
 export const KINDS = ["event", "judgement", "text", "entity", "pointer", "vector", "mixed"];
 
 const RATINGS_SRC = {
-  films:       { table: "t0_film",   label: "title",      col: "rating",       scale: "0-5", url: "origin_ref" },
-  books:       { table: "t0_book",   label: "title",      col: "my_rating",    scale: "0-5", status: "shelf", where: "AND shelf IN ('read','partly-read')" },
-  beer:        { table: "t0_beer",   label: "beer_name",  col: "rating_score", scale: "0-5", extra: BEER_META },
-  restaurants: { table: "t1_visits", label: "restaurant", col: "rating",       scale: "0-10" },
-  // Television's only ratings. Trakt has none, so before the MAL list
-  // landed the honest answer for the whole medium was "he does not rate
-  // it" \u2014 true of Trakt and false of him. MAL's 0 means unrated
-  // rather than terrible, which the shared `> 0` filter already reads
-  // correctly.
-  anime:       { table: "t0_anime",  label: "title",      col: "score",        scale: "1-10", url: "url" },
+    films:       { table: "t0_film",   label: "title",      col: "rating",       scale: "0-5", url: "origin_ref" },
+    books:       { table: "t0_book",   label: "title",      col: "my_rating",    scale: "0-5", status: "shelf", where: "AND shelf IN ('read','partly-read')" },
+    beer:        { table: "t0_beer",   label: "beer_name",  col: "rating_score", scale: "0-5", extra: BEER_META },
+    restaurants: { table: "t1_visits", label: "restaurant", col: "rating",       scale: "0-10" },
+    // Television's only ratings. Trakt has none, so before the MAL list
+    // landed the honest answer for the whole medium was "he does not rate
+    // it" \u2014 true of Trakt and false of him. MAL's 0 means unrated
+    // rather than terrible, which the shared `> 0` filter already reads
+    // correctly.
+    anime:       { table: "t0_anime",  label: "title",      col: "score",        scale: "1-10", url: "url" },
 };
 
 /**
