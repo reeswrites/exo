@@ -6,7 +6,8 @@
  * named question with a bounded answer, so adding one is a decision about
  * exposure rather than a feature increment.
  *
- * Caps: at most MAX_ROWS rows AND MAX_BYTES of payload, whichever binds first.
+ * Caps: at most MAX_ROWS rows AND MAX_BYTES of payload, whichever binds first
+ * (ADR-0007, as moved by ADR-0019 and ADR-0028).
  * The point is not to make exfiltration impossible — an authenticated caller is
  * indistinguishable from an injected one, and a patient one simply loops. The
  * point is to convert "one quiet call takes everything" into "hundreds of calls,
@@ -37,7 +38,10 @@ import { peerFor } from "./surface.js";
  * narrow rows — titles, artists, slugs — which is exactly where twenty was most
  * obviously too few.
  */
-export const ROW_CAP = { private: 20, profile: 100, published: 200 };
+// ADR-0028 (2026-11-24): private 20 -> 50 once the outbound step became
+// approval-gated; profile and published 100/200 -> 1,000, which in practice
+// leaves only the byte budget. Finite only because probe() feeds a SQL LIMIT.
+export const ROW_CAP = { private: 50, profile: 1000, published: 1000 };
 
 // The floor, and the default for anything ungraded. Kept under its old name
 // because it is load-bearing in tests and in ADR-0007's text.

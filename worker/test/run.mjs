@@ -332,7 +332,7 @@ ok(bestGradeOf(grades, TOOLS.notes_on) === gradeOf(grades, TOOLS.notes_on.reads)
    "a tool without per-call reads advertises exactly its grade");
 
 console.log("\n── the row cap follows the axis, the byte cap does not ──");
-ok(ROW_CAP.private === MAX_ROWS, "private is the floor, and the floor is ADR-0007's twenty");
+ok(ROW_CAP.private === MAX_ROWS, "private is the floor (ADR-0007, raised to fifty by ADR-0028)");
 ok(ROW_CAP.profile > ROW_CAP.private && ROW_CAP.published >= ROW_CAP.profile,
    `ceilings rise with publicity (${ROW_CAP.private}/${ROW_CAP.profile}/${ROW_CAP.published})`);
 ok(pageSize({ exposure: "published" }) === ROW_CAP.published, "a published tool may return more");
@@ -358,7 +358,7 @@ ok(JSON.stringify(cap(wide, { exposure: "published" }).rows).length <= MAX_BYTES
 const over = Array.from({ length: probe({ exposure: "profile" }) }, (_, i) => ({ i }));
 ok(cap(over, { exposure: "profile" }).returned_count === ROW_CAP.profile, "profile returns its ceiling");
 ok(cap(over, { exposure: "profile" }).has_more === true, "and still says there is more");
-ok(cap(over).returned_count === MAX_ROWS, "the same rows with no context stay at twenty");
+ok(cap(over).returned_count === MAX_ROWS, "the same rows with no context stay at the private floor");
 
 // Every tool survives being called with and without a context. A tool that
 // destructured `ctx` in a branch nobody exercised would throw only in
