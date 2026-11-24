@@ -514,7 +514,7 @@ export const TOOLS = {
     class: "derived", domain: "mind", kind: "vector",
     reads: ["t2_atom", "t1_notes", "t1_post"],
     description:
-      "What has the owner written that bears on a topic? Searches their notes and the verbatim spans lifted from them, by meaning. Use this first when you want to know their thinking on something.",
+      "What has the owner written that bears on a topic? Searches their notes and the verbatim spans lifted from them, by meaning. Use this first when you want to know their thinking on something. Not for consumption questions: what they listened to, watched, read, rated, saved or own lives in the culture tools (`ratings`, `albums`, `around_the_time`, `saves`, `collection`, `places`), and notes only hold what they wrote about it.",
     schema: {
       type: "object",
       properties: { topic: { type: "string", description: "A topic, question, or phrase." } },
@@ -541,7 +541,7 @@ export const TOOLS = {
     class: "authored", domain: "mind", kind: "text",
     reads: ["t1_notes"],
     description:
-      "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents. Pass full:true for the entire text of the single best match.",
+      "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents. Pass full:true for the entire text of the single best match. Not for consumption questions: what they played, watched, read, rated, saved or own is answered by the culture tools (`ratings`, `albums`, `around_the_time`, `saves`, `collection`, `places`), not by notes.",
     schema: {
       type: "object",
       properties: {
@@ -635,7 +635,7 @@ export const TOOLS = {
     readsFor: ({ with_mentions }) =>
       with_mentions ? ["t0_music", "t2_affinity"] : ["t0_music"],
     description:
-      "What the owner actually listens to, straight off the scrobble stream \u2014 revealed preference, as distinct from what they say. The tail is long and quiet: this counts every artist the record has ever heard, most of them played a handful of times, and a truncated answer is the TOP of that list rather than the whole of it. Do not read a short answer as a narrow taste \u2014 `scope` says how many artists it was drawn from, and the ones you did not get are the quiet ones. Pass `artist` to ask whether one act is in there at all, `since`/`until` for a period instead of a lifetime, and order='recent' for what they have been reaching for lately, which is a different list from the all-time count.",
+      "What the owner actually listens to, straight off the scrobble stream \u2014 revealed preference, as distinct from what they say. The tail is long and quiet: this counts every artist the record has ever heard, most of them played a handful of times, and a truncated answer is the TOP of that list rather than the whole of it. Do not read a short answer as a narrow taste \u2014 `scope` says how many artists it was drawn from, and the ones you did not get are the quiet ones. Pass `artist` to ask whether one act is in there at all, `since`/`until` for a period instead of a lifetime, and order='recent' for what they have been reaching for lately, which is a different list from the all-time count. For recommendations or 'which albums', use `albums` or `unheard`. Don't make one call per artist to compare several acts: one unfiltered call already ranks every act, with `since` for a period.",
     schema: {
       type: "object",
       properties: {
@@ -1090,7 +1090,7 @@ export const TOOLS = {
     class: "authored", domain: "table", kind: "text",
     reads: ["t1_recipe"],
     description:
-      "What the owner actually cooks \u2014 recipes they wrote up and published, with their source links. Small and real: these are ones they made and posted, not a recipe database. Newest publication first \u2014 the undated seed templates sort last, behind everything actually written. Pass full:true for the ingredients and steps of the best match.",
+      "For 'what have I cooked' and 'that recipe I made'. A short list of their own write-ups, not a source of new ideas: when asked for meal ideas, use it to learn what they like making and then go beyond it rather than quoting it back. What the owner actually cooks \u2014 recipes they wrote up and published, with their source links. Small and real: these are ones they made and posted, not a recipe database. Newest publication first \u2014 the undated seed templates sort last, behind everything actually written. Pass full:true for the ingredients and steps of the best match.",
     schema: {
       type: "object",
       properties: {
@@ -1401,7 +1401,7 @@ export const TOOLS = {
       beer: ["t0_beer"], tv: ["t0_tv"],
     })[medium] ?? ["t0_beer", "t0_book", "t0_film", "t0_music", "t0_tv"],
     description:
-      "Shape and recency of what the owner consumes, per medium: how much, and how current the record is. Returns aggregates, not a list of titles.",
+      "Counts and freshness only, NO titles. Use it for 'how much do I read, watch or listen' and 'how current is the record'. For 'what am I reading or watching', 'have I seen X' or 'what should I pick', go to `medium`, `ratings`, `watching` or `backlog` instead. Shape and recency of what the owner consumes, per medium: how much, and how current the record is. Returns aggregates, not a list of titles.",
     schema: {
       type: "object",
       properties: { medium: { type: "string", description: "music | books | films | beer" } },
@@ -1611,7 +1611,7 @@ export const TOOLS = {
     class: "world", domain: "culture", kind: "entity",
     reads: ["t0_release", "t0_music", "t1_collection"],
     description:
-      "Records that came out lately in the scenes the owner listens to, with what they have NOT already heard removed. This is the one tool that can surface an artist with no listeners yet: the pool is crawled by SCENE — a tag, a label roster, a critic's byline, whichever the instance uses — rather than by similarity to what they already play, so it reaches releases a `getSimilar` recommendation structurally cannot. It does NOT rank by preference and will not tell you what they would like \u2014 it attaches the measured facts (their lifetime plays of that artist, whether they own anything by it, how many scenes surfaced it) and leaves the judgement to you. order='unfamiliar' is the discovery axis; order='familiar' is new work by artists already in heavy rotation.",
+      "For 'what's new in the scenes I like' and 'new records from <scene>'. Records that came out lately in the scenes the owner listens to, with what they have NOT already heard removed. This is the one tool that can surface an artist with no listeners yet: the pool is crawled by SCENE — a tag, a label roster, a critic's byline, whichever the instance uses — rather than by similarity to what they already play, so it reaches releases a `getSimilar` recommendation structurally cannot. It does NOT rank by preference and will not tell you what they would like \u2014 it attaches the measured facts (their lifetime plays of that artist, whether they own anything by it, how many scenes surfaced it) and leaves the judgement to you. order='unfamiliar' is the discovery axis; order='familiar' is new work by artists already in heavy rotation.",
     schema: {
       type: "object",
       properties: {
@@ -1851,7 +1851,7 @@ export const TOOLS = {
     class: "world", domain: "culture", kind: "text",
     reads: ["t0_criticism"],
     description:
-      "What the music press is publishing \u2014 titles, bylines, dates and the outlet's own blurb, from the underground outlets the owner follows, with the link to the piece. SOMEBODY ELSE'S WRITING, never his: quote it as the outlet's, and answer with the link rather than a paraphrase. Use it for what is being said about a scene or an artist right now, which is the one thing this record cannot answer from his own consumption. Pair with `taste` for whether he already plays what is being written about.",
+      "For 'what's being written about <scene or artist>' and 'what's happening in a scene right now'. Pair it with `releases` for what came out of that scene. What the music press is publishing \u2014 titles, bylines, dates and the outlet's own blurb, from the underground outlets the owner follows, with the link to the piece. SOMEBODY ELSE'S WRITING, never his: quote it as the outlet's, and answer with the link rather than a paraphrase. Use it for what is being said about a scene or an artist right now, which is the one thing this record cannot answer from his own consumption. Pair with `taste` for whether he already plays what is being written about.",
     schema: {
       type: "object",
       properties: {
@@ -1951,7 +1951,7 @@ export const TOOLS = {
     class: "lens", domain: "*", kind: "mixed",
     reads: ["t0_book", "t0_film", "t0_music", "t0_tv", "t1_notes"],
     description:
-      "What was going on around a period: what the owner wrote, listened to, read or watched. Answers 'what were they thinking about in March' — a window, not a topic. Periods are forgotten more easily than subjects, so this is often the useful lens.",
+      "For any question framed by TIME rather than by topic: 'what was I up to last week', 'the week of Nov 8–14', 'in March', 'lately', 'has my listening or watching dropped since September' (one call per window, then compare). One call spans writing, listening, reading and watching, so reach for it before `consumption`, several single-medium calls, or a local `git log` (`project_activity` adds the commits). What was going on around a period: what the owner wrote, listened to, read or watched. Answers 'what were they thinking about in March' — a window, not a topic. Periods are forgotten more easily than subjects, so this is often the useful lens.",
     schema: {
       type: "object",
       properties: {
@@ -2079,7 +2079,7 @@ export const TOOLS = {
       beer: ["t0_beer"], restaurants: ["t1_visits"], anime: ["t0_anime"],
     })[medium] ?? ["t0_anime", "t0_beer", "t0_book", "t0_film", "t1_visits"],
     description:
-      "What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
+      "For 'what did I think of…', 'my favourite films or books or beers', and anything that has to skip what they already know. It cannot look up a single title, and a top-twenty answer that lacks X does NOT mean they haven't seen X, so before recommending against what they have seen, also pull order='recent' and say plainly what you could not check. What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
     schema: {
       type: "object",
       properties: {
@@ -2155,7 +2155,7 @@ export const TOOLS = {
     class: "revealed", domain: "*", kind: "judgement",
     reads: ["t0_beer"],
     description:
-      "How the owner rates a medium BROKEN DOWN by a facet of the thing itself \u2014 for beer: by style family, by full style, by brewery, by venue, or by the beer. One row per group with how many check-ins, how many carried a rating, the mean, the best and the last. `ratings` returns twenty rows out of 1,906 and so cannot answer 'which styles do they rate highest'; this can, because a rollup is a summary rather than a page of a set. Ordered by how often they reached for it, which is the honest default \u2014 a mean over two check-ins is not a preference. Pass min_n:2 with by:'beer' for the beers they went back to, which is the rarest thing in this record.",
+      "For drinking questions: 'which beer styles do I rate highest', 'which breweries do I keep going back to', 'where in DC have I checked in most' or 'where can I get beer near X'. by:'venue' is the only record of the bars, taprooms and bottle shops they actually drink at, because `places` holds restaurants only. How the owner rates a medium BROKEN DOWN by a facet of the thing itself \u2014 for beer: by style family, by full style, by brewery, by venue, or by the beer. One row per group with how many check-ins, how many carried a rating, the mean, the best and the last. `ratings` returns twenty rows out of 1,906 and so cannot answer 'which styles do they rate highest'; this can, because a rollup is a summary rather than a page of a set. Ordered by how often they reached for it, which is the honest default \u2014 a mean over two check-ins is not a preference. Pass min_n:2 with by:'beer' for the beers they went back to, which is the rarest thing in this record.",
     schema: {
       type: "object",
       properties: {
@@ -2328,7 +2328,7 @@ export const TOOLS = {
     class: "possession", domain: "culture", kind: "entity",
     reads: ["t0_music", "t1_collection"],
     description:
-      "What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes. Most recently acquired first; order='oldest' reaches what has been on the shelf longest, and order='played' ranks vinyl by scrobbles \u2014 owning a record and wearing it out are different claims. Every answer carries the `genres` vocabulary, which is a few coarse buckets the owner typed into their own inventory rather than a taxonomy: read a genre this shelf has no bucket for as unrecorded, never as absent.",
+      "For 'what do I own' and decisions about it: 'help me pick a fragrance from what I have', 'which records should I sell or never play' (order='played'), 'what board games do we have'. What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes. Most recently acquired first; order='oldest' reaches what has been on the shelf longest, and order='played' ranks vinyl by scrobbles \u2014 owning a record and wearing it out are different claims. Every answer carries the `genres` vocabulary, which is a few coarse buckets the owner typed into their own inventory rather than a taxonomy: read a genre this shelf has no bucket for as unrecorded, never as absent.",
     schema: {
       type: "object",
       properties: {
@@ -3023,7 +3023,7 @@ export const TOOLS = {
       : kind === "dining" || kind === "clusters" ? ["t0_taste_derived"]
       : ["t0_taste_derived", "t0_beer"],
     description:
-      "Derived summaries of the owner's taste: how their rating scales actually behave, and the clusters their loved items fall into. Read the dining one BEFORE interpreting any restaurant rating \u2014 that 0-10 scale has a median of 8.1, so an 8 is average, not a rave. The beer one does the same job for the 0-5 beer scale and is computed from the check-in log rather than mirrored from anywhere, so it is always current: median, deciles, and the count at every quarter step the record actually uses.",
+      "Read this before quoting ANY rating number: a restaurant 9.9 or a beer 3.75 means nothing without its scale. Derived summaries of the owner's taste: how their rating scales actually behave, and the clusters their loved items fall into. Read the dining one BEFORE interpreting any restaurant rating \u2014 that 0-10 scale has a median of 8.1, so an 8 is average, not a rave. The beer one does the same job for the 0-5 beer scale and is computed from the check-in log rather than mirrored from anywhere, so it is always current: median, deciles, and the count at every quarter step the record actually uses.",
     schema: {
       type: "object",
       properties: { kind: { type: "string", description: "dining | clusters | beer" } },
@@ -3077,7 +3077,7 @@ export const TOOLS = {
     class: "authored", domain: "table", kind: "entity",
     reads: ["t1_visits"],
     description:
-      "Restaurants the owner has been to, with their own notes and ratings. Filter by city or cuisine. Best-rated first on their own 0-10 scale, which runs high \u2014 read taste_summary(kind:'dining') before calling an 8 praise. Pass order='recent' for where they have been eating lately; every row now carries the date of the visit.",
+      "For 'where should I eat', 'restaurants I've liked in a neighbourhood', 'which of these Restaurant Week spots would I like', and dietary fit across places they have actually been. Restaurants only: bars and shops live in `facets` (by:'venue'), and there is no want-to-try list here. Restaurants the owner has been to, with their own notes and ratings. Filter by city or cuisine. Best-rated first on their own 0-10 scale, which runs high \u2014 read taste_summary(kind:'dining') before calling an 8 praise. Pass order='recent' for where they have been eating lately; every row now carries the date of the visit.",
     schema: {
       type: "object",
       properties: {
@@ -3200,7 +3200,7 @@ export const TOOLS = {
     class: "revealed", domain: "workshop", kind: "event",
     reads: ["t1_project_commit"],
     description:
-      "What the owner actually worked on, dated — commit subjects from their own repos. This is the closest thing in the store to a work log, and unlike their notes it cannot be stale: a commit is written at the moment of the work. Use it to answer what they have been doing lately, when a project came alive or died, or what was happening around a date. With no repo it returns per-repo totals for the window; with a repo it returns the subjects themselves. Subjects only — never a diff, and no source code is in this store.",
+      "For 'what have I been working or coding on', 'what did I do last week' and 'reconstruct my week'. One call covers every repo; use it instead of running `git log` in a local checkout, which sees one repo. What the owner actually worked on, dated — commit subjects from their own repos. This is the closest thing in the store to a work log, and unlike their notes it cannot be stale: a commit is written at the moment of the work. Use it to answer what they have been doing lately, when a project came alive or died, or what was happening around a date. With no repo it returns per-repo totals for the window; with a repo it returns the subjects themselves. Subjects only — never a diff, and no source code is in this store.",
     schema: {
       type: "object",
       properties: {
@@ -3249,7 +3249,7 @@ export const TOOLS = {
     class: "authored", domain: "workshop", kind: "text",
     reads: ["t1_project_doc"],
     description:
-      "The prose those repos carry: READMEs, CONTEXT glossaries, architecture decision records and plan documents. This is where a project states what it is FOR and why it was built the way it was — an ADR is the owner arguing with themselves and recording who won, which is the same category of writing as their notes and usually more decided. Search by topic to find which project already settled a question, or pass a repo to read what it says about itself. Returns matching excerpts; ask with full=true and a title to read one whole document.",
+      "For 'where does <project> stand', 'update the roadmap or plan for X' and 'did I already decide this'. Read it before writing any plan, roadmap or summary of one of their projects. The prose those repos carry: READMEs, CONTEXT glossaries, architecture decision records and plan documents. This is where a project states what it is FOR and why it was built the way it was — an ADR is the owner arguing with themselves and recording who won, which is the same category of writing as their notes and usually more decided. Search by topic to find which project already settled a question, or pass a repo to read what it says about itself. Returns matching excerpts; ask with full=true and a title to read one whole document.",
     schema: {
       type: "object",
       properties: {
