@@ -131,13 +131,26 @@ def main(argv: list[str]) -> int:
               f"published sections window on {WINDOW_DAYS} days.\n"
               f"Run: uv run python fixtures/refresh-dates.py")
         return 1
-    # Land the newest item a few days back rather than exactly today: "today"
+    # Staleness is judged by the stalest section (`top`), but the shift is sized
+    # by the freshest one. Sizing it by the stalest pushed every fresher section
+    # past today: on 2026-11-24 chat logs were 60 days old and workshop commits
+    # 47, and a 57-day shift dated the newest commit 2026-12-04. A fixture with
+    # future dates stops exercising "on or before today" filters.
+    #
+    # Land the freshest item a few days back rather than exactly today: "today"
     # in a fixture reads as a coincidence, and a few days of slack keeps the
     # relative shapes (this week vs last week) honest.
-    days = age - 3
+    freshest = max(windowed().values())
+    days = (today - freshest).days - 3
+    if days <= 0:
+        print(f"cannot refresh: the freshest section is already from {freshest}, and "
+              f"the stalest is {age} days old — the sections are more than "
+              f"{STALE_AFTER_DAYS} days apart, so the fixture itself needs new material")
+        return 1
     touched = shift(days)
     print(f"shifted every date forward {days} days across {touched} files; "
-          f"newest is now {top + dt.timedelta(days=days)}")
+          f"newest is now {freshest + dt.timedelta(days=days)}, "
+          f"stalest section {top + dt.timedelta(days=days)}")
     print("rebuild the fixture: EXO_HOME=fixtures/instance uv run exo rebuild")
     return 0
 

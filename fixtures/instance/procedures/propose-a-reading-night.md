@@ -15,8 +15,8 @@ acts:
     target: "Reading"
     reversible: true
     dedupe: "reading-night-{month}"
-revised: 2026-10-02
-verified: 2026-09-19
+revised: 2026-11-15
+verified: 2026-11-02
 serve: false
 ---
 
