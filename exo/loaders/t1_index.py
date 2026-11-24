@@ -160,7 +160,11 @@ def notes() -> list[Row]:
             + "\nPoint EXO_VAULT at the notes tree to finish the cutover, or land "
               "the source somewhere the vault does not already have."
         )
-    return rows
+    # Notion writing, if this instance fetches it: adopts archive pages onto
+    # their vault rows, drops superseded edit versions, adds the rest. A no-op
+    # without raw/notion-writing/pages.json (loaders/notion_writing.py).
+    from .notion_writing import overlay
+    return overlay(rows)
 
 
 def verdicts() -> list[Row]:

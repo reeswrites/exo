@@ -43,9 +43,10 @@ def _page(pid="p1", title="On caching", created="2024-03-01T19:40:00.000Z",
 
 
 def _note(ref="raw/import/2024-03-01-on-caching.md", title="On caching",
-          created="2024-03-01", folder="Drafts", body="hello  world"):
+          created="2024-03-01", folder="Drafts", body="hello  world", uuid=None,
+          modified="", version=1):
     return {"origin_ref": ref, "title": title, "created": created, "folder": folder,
-            "uuid": "U", "body": body}
+            "uuid": uuid or ref, "body": body, "modified": modified, "version": version}
 
 
 @pytest.fixture
@@ -53,7 +54,8 @@ def root(tmp_path, monkeypatch):
     monkeypatch.setattr(fw.config, "ROOT", tmp_path)
     monkeypatch.setattr(fw.config, "setting", lambda s, k, d=None: d)
     monkeypatch.setattr(api, "_same_minute", lambda edited, now=None: False)
-    for v in ("EXO_NOTION_WRITING_SKIP", "EXO_NOTION_WRITING_ADOPT"):
+    for v in ("EXO_NOTION_WRITING_SKIP", "EXO_NOTION_WRITING_ADOPT",
+              "EXO_NOTION_WRITING_MIXED", "EXO_NOTION_WRITING_EXCLUDE"):
         monkeypatch.delenv(v, raising=False)
     return tmp_path
 
@@ -275,7 +277,8 @@ def test_vault_notes_reads_the_import_tree(tmp_path):
         encoding="utf-8")
     [n] = fw.vault_notes(tmp_path)
     assert n == {"origin_ref": "raw/import/2024-03-01-x.md", "title": "X",
-                 "created": "2024-03-01", "folder": "Drafts", "uuid": "U", "body": "body\n"}
+                 "created": "2024-03-01", "folder": "Drafts", "uuid": "U", "modified": "", "version": 1,
+                 "body": "body\n"}
 
 
 # ─────────────────────────────── run ───────────────────────────────
@@ -303,3 +306,51 @@ def test_run_without_a_connection_keeps_the_cache_and_fails(root, monkeypatch):
         raise api.NotionError("Notion rejected the token (401).")
     monkeypatch.setattr(api, "_paged", boom)
     assert fw.run() == 1
+
+
+# ─────────────────────────── versions & tie-breaks ───────────────────────────
+
+
+def test_edit_versions_fold_onto_the_newest_and_the_page_adopts_it():
+    notes = [_note(ref="raw/import/a.md", uuid="U", modified="2026-08-17T23:00"),
+             _note(ref="raw/import/a-v2.md", uuid="U", modified="2026-08-18T00:26", version=2),
+             _note(ref="raw/import/a-v3.md", uuid="U", modified="2026-08-18T01:24", version=3)]
+    r = fw.match([_entry()], notes)
+    assert r["map"] == {"p1": "raw/import/a-v3.md"}
+    assert r["superseded_refs"] == ["raw/import/a-v2.md", "raw/import/a.md"]
+    assert r["vault_unmatched"] == 0
+
+
+def test_the_plain_file_wins_when_it_is_the_newer_edit():
+    notes = [_note(ref="raw/import/a.md", uuid="U", modified="2026-09-01T00:00"),
+             _note(ref="raw/import/a-v2.md", uuid="U", modified="2026-08-18T00:26", version=2)]
+    assert fw.match([_entry()], notes)["map"] == {"p1": "raw/import/a.md"}
+
+
+def test_two_notes_one_title_split_by_exact_creation_day():
+    notes = [_note(ref="raw/import/a.md", created="2024-03-01"),
+             _note(ref="raw/import/b.md", created="2024-03-02")]
+    r = fw.match([_entry(pid="p1", created="2024-03-01T10:00:00.000Z"),
+                  _entry(pid="p2", created="2024-03-02T10:00:00.000Z")], notes)
+    assert r["map"] == {"p1": "raw/import/a.md", "p2": "raw/import/b.md"}
+
+
+def test_two_notes_one_title_and_day_split_by_body():
+    notes = [_note(ref="raw/import/a.md", body="the cat sat on the mat all day"),
+             _note(ref="raw/import/b.md", body="filter people out by being loud")]
+    r = fw.match([_entry(pid="p1", body="filter people out by being loud!")], notes)
+    assert r["map"] == {"p1": "raw/import/b.md"}
+
+
+def test_a_declared_subtree_is_mixed_unless_a_decision_says_otherwise(root, monkeypatch):
+    monkeypatch.setenv("EXO_NOTION_WRITING_MIXED", "Research Log")
+    e = _entry(body="plain")
+    e["path"] = "Home/Research Log"
+    assert fw.authorship(e, {}) == "mixed"
+    assert fw.authorship(e, {"p1": {"author": "human"}}) == "human"
+
+
+def test_under_matches_folder_prefixes_and_path_segments():
+    assert fw.under({"folder": "Private/Shopping", "path": ""}, ["Private"])
+    assert fw.under({"folder": "", "path": "Home/Private/People"}, ["Private"])
+    assert not fw.under({"folder": "Privateish", "path": "Home/Notes"}, ["Private"])
