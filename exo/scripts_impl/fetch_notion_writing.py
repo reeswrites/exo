@@ -113,7 +113,8 @@ def _load_users() -> None:
         for u in api._paged("/users"):
             _USERS[api._norm_id(u.get("id", ""))] = u.get("type", "")
     except api.NotionError as exc:
-        print(f"  users: {exc} — created_by types will read 'unknown'")
+        # Expected for a read-content-only integration; not an error.
+        print("  users: no 'Read user information' capability — created_by types read 'unknown'")
 
 
 def _who(obj: dict) -> dict:
@@ -177,7 +178,10 @@ def suspicion(entry: dict) -> list[str]:
     body = entry.get("body") or ""
     n = max(len(body), 1)
     sig = []
-    if entry["created_by"]["type"] == "bot":
+    # An integration as creator is only a signal outside the Apple Notes archive:
+    # every archive page was created by the importer bot, and every one is his.
+    # Without "Read user information" the type is "unknown" and this never fires.
+    if entry["created_by"]["type"] == "bot" and not entry.get("apple_notes_id"):
         sig.append("created by an integration")
     if len(_EMDASH.findall(body)) * 1000 / n >= 3:
         sig.append("em-dash density")
