@@ -1,6 +1,7 @@
 """`wh` — drive the store.
 
     wh ingest [source...]   T0 loaders -> zones/t0/*.parquet   (default: all)
+    wh fetch-notion-writing  Notion writing -> raw/notion-writing/ + a match report vs the vault (read-only)
     wh ingest-notes [src]   a note source -> notes/raw/<src>/ (apple|files|notion; ADR-0017)
     wh index                T1: index the note trees + authored records -> zones/t1
     wh derive               T2: run registered derivations (reads via the wall)
@@ -70,6 +71,11 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="exo", description="Exo — one record, write-scoped zones")
     sub = p.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("ingest"); sp.add_argument("source", nargs="*")
+    snw = sub.add_parser("fetch-notion-writing")
+    snw.add_argument("--full", action="store_true", help="ignore the cache; re-read every body")
+    snw.add_argument("--properties-only", action="store_true",
+                     help="skip block reads: properties + match report only (~20 requests)")
+    snw.add_argument("--database", action="append", help="database id (repeatable); overrides config")
     sn = sub.add_parser("ingest-notes")
     sn.add_argument("source", nargs="?", default=None,
                     help="apple|files|notion|<plugin>; omit to run every [notes.sources] entry")
@@ -167,6 +173,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "ingest":
         _ingest(args.source); _build()
+    elif args.cmd == "fetch-notion-writing":
+        from .scripts_impl import fetch_notion_writing
+        return fetch_notion_writing.run(full=args.full, bodies=not args.properties_only,
+                                        database=args.database)
     elif args.cmd == "ingest-notes":
         from . import notes as notes_mod
         try:
