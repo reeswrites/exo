@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { env, corpus } from "./harness.mjs";
-import { TOOLS, CLASSES, DOMAINS, KINDS, cap, probe, pageSize, ordering, ROW_CAP, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
+import { TOOLS, DERIVED_FROM, CLASSES, DOMAINS, KINDS, cap, probe, pageSize, ordering, ROW_CAP, MAX_ROWS, MAX_BYTES } from "../src/tools.js";
 import { GRADES, DEFAULT_GRADE, gradeOf, bestGradeOf, loadExposure, TTL_MS } from "../src/exposure.js";
 import worker from "../src/index.js";
 
@@ -431,8 +431,11 @@ for (const [name, t] of Object.entries(TOOLS)) {
   const src = t.run.toString();
   if (/\b(?:FROM|JOIN)\s+\$\{/.test(src)) unverifiable++;   // table chosen at runtime
   const declared = new Set(t.reads ?? []);
+  // A table the bundle derives from a zone (t0_music_day) is that zone's rows
+  // counted, so it is declared as the zone and graded as it.
   for (const m of src.matchAll(/\b(?:FROM|JOIN)\s+(t[012]_[a-z_]+)/g)) {
-    if (!declared.has(m[1])) drift.push(`${name} queries ${m[1]} and does not declare it`);
+    const zone = DERIVED_FROM[m[1]] ?? m[1];
+    if (!declared.has(zone)) drift.push(`${name} queries ${m[1]} and does not declare ${zone}`);
   }
 }
 ok(drift.length === 0, `reads match the SQL (${drift.join("; ") || "no drift"})`);
