@@ -153,6 +153,9 @@ uv run exo fetch-letterboxd     # film diary (RSS window)
 uv run exo fetch-untappd        # check-ins (RSS window)
 uv run exo fetch-goodreads      # shelves (GOODREADS_USER_ID) — Goodreads retired
                                 #   its RSS in late 2026; this now 404s
+uv run exo fetch-reading-log    # books from a Notion database that replaces it
+                                #   (NOTION_TOKEN, READING_LOG_DATABASE_ID);
+                                #   Goodreads-seeded rows keep their ids
 uv run exo fetch-trakt          # TV + anime watches (TRAKT_CLIENT_ID; a secret
                                 #   only for legacy apps; tokens in
                                 #   secrets/trakt-tokens.json)
