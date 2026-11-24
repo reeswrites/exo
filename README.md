@@ -236,6 +236,7 @@ ones:
 | [0020](docs/adr/0020-the-surface-is-modular-and-a-peer-is-not-a-competitor.md) | the surface is modular, and a peer is not a competitor |
 | [0024](docs/adr/0024-a-denominator-is-a-source.md) | a denominator is a source, not a calculation |
 | [0027](docs/adr/0027-a-skill-ships-with-the-engine-a-procedure-belongs-to-the-owner.md) | a skill ships with the engine; a procedure belongs to the owner |
+| [0028](docs/adr/0028-the-caller-changed-so-the-caps-move.md) | the caller changed, so the caps move |
 
 ## Contributing
 

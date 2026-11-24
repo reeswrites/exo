@@ -51,6 +51,12 @@ Assume a single injection succeeds. Four controls, none of them authentication:
    context one answer consumes, which is true regardless of who may read the
    rows. The two numbers were introduced in one sentence and do different jobs;
    only one of them is a security control.
+
+   *Amended 2026-11-24 (ADR-0028).* The caller this was sized against, an
+   assistant that could reply on its own, is gone. Its successor's outbound
+   actions need the owner's approval. Private rows move to 50; profile and
+   published to 1,000, which leaves only the byte budget. The byte cap still
+   does not move.
 3. **No general-purpose tool.** Fixed semantic tools only — no raw SQL, no
    id-lookup loop, no pagination cursor that can walk the full set. **The tool
    surface is the security boundary**, so every tool added is a decision about
@@ -58,7 +64,9 @@ Assume a single injection succeeds. Four controls, none of them authentication:
 
    *Amended 2026-08-21 (ADR-0019).* Precisely: no cursor that can walk the full
    set **of material that is not already public**. The threat model is unchanged
-   — this states it about the material it was always about.
+   — this states it about the material it was always about. ADR-0028 makes
+   the permission explicit: a tool whose rows are all public may page, once its
+   ordering has a unique tiebreaker.
 
    No cursor exists either way at the time of writing, and the reason is not
    this clause. Reading every tool's `ORDER BY`: three have none at all, and the
