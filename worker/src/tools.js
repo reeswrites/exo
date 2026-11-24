@@ -509,6 +509,63 @@ export const CLASSES = ["revealed", "authored", "intent", "possession", "dialogu
 export const DOMAINS = ["culture", "table", "mind", "workshop", "commitments", "world", "*"];
 export const KINDS = ["event", "judgement", "text", "entity", "pointer", "vector", "mixed"];
 
+const RATINGS_SRC = {
+  films:       { table: "t0_film",   label: "title",      col: "rating",       scale: "0-5", url: "origin_ref" },
+  books:       { table: "t0_book",   label: "title",      col: "my_rating",    scale: "0-5", status: "shelf", where: "AND shelf IN ('read','partly-read')" },
+  beer:        { table: "t0_beer",   label: "beer_name",  col: "rating_score", scale: "0-5", extra: BEER_META },
+  restaurants: { table: "t1_visits", label: "restaurant", col: "rating",       scale: "0-10" },
+  // Television's only ratings. Trakt has none, so before the MAL list
+  // landed the honest answer for the whole medium was "he does not rate
+  // it" \u2014 true of Trakt and false of him. MAL's 0 means unrated
+  // rather than terrible, which the shared `> 0` filter already reads
+  // correctly.
+  anime:       { table: "t0_anime",  label: "title",      col: "score",        scale: "1-10", url: "url" },
+};
+
+/**
+ * `ratings(title:)` — "have I seen X?" as one bounded question.
+ *
+ * The ranked answer is the top twenty, so a title missing from it says nothing,
+ * and assistants kept reading that silence as "not seen" and recommending
+ * things already watched. A lookup is the opposite shape: one named thing per
+ * call, which ADR-0007 already treats as the hardest shape to bulk-extract
+ * with. It drops the rating filter (a film logged without stars was still
+ * seen) and, for books, every shelf, returning the shelf so 'to-read' is not
+ * mistaken for read.
+ */
+async function ratingsLookup(env, { medium, title }, ctx) {
+  const picked = medium ? { [medium]: RATINGS_SRC[medium] } : RATINGS_SRC;
+  const needle = `%${title.toLowerCase().replace(/[\\%_]/g, (c) => "\\" + c)}%`;
+  const out = [];
+  for (const [name, d] of Object.entries(picked)) {
+    if (!d) continue;
+    const urlCol = d.url ? `${d.url} AS url,` : "";
+    const statusCol = d.status ? `${d.status} AS status,` : "";
+    const rows = await q(
+      env,
+      `SELECT ${d.label} AS label, CAST(${d.col} AS REAL) AS rating, ${urlCol} ${statusCol}
+              substr(created,1,10) AS when_${selectMeta(d.extra)}
+       FROM ${d.table}
+       WHERE lower(${d.label}) LIKE ? ESCAPE '\\'
+       ORDER BY created DESC, id
+       LIMIT ?`,
+      needle, probe(ctx)
+    );
+    for (const r of rows) {
+      const row = { medium: name, scale: d.scale, ...withMeta(r, d.extra) };
+      // 0 and NULL both mean "logged, not rated", never "rated zero".
+      if (!(row.rating > 0)) row.rating = null;
+      out.push(row);
+    }
+  }
+  const capped = cap(out, ctx);
+  const where = medium ? medium : "any rated medium (films, books, beer, restaurants, anime)";
+  const note = capped.rows.length
+    ? `title lookup for '${title}' in ${where}; rating null = logged without a rating`
+    : `no title matching '${title}' in ${where}. Not in the record, which is good evidence but not proof: TV outside anime is in \`watching\`, and anything never logged is invisible here.`;
+  return { ...capped, order: "recent", note: [capped.note, note].filter(Boolean).join(" \u00b7 ") };
+}
+
 export const TOOLS = {
   whats_relevant: {
     class: "derived", domain: "mind", kind: "vector",
@@ -2079,32 +2136,25 @@ export const TOOLS = {
       beer: ["t0_beer"], restaurants: ["t1_visits"], anime: ["t0_anime"],
     })[medium] ?? ["t0_anime", "t0_beer", "t0_book", "t0_film", "t1_visits"],
     description:
-      "For 'what did I think of…', 'my favourite films or books or beers', and anything that has to skip what they already know. It cannot look up a single title, and a top-twenty answer that lacks X does NOT mean they haven't seen X, so before recommending against what they have seen, also pull order='recent' and say plainly what you could not check. What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
+      "For 'what did I think of…', 'my favourite films or books or beers', and anything that has to skip what they already know. For 'have I seen / read / had X?' pass `title`: it searches every logged item in that medium (or all of them), rated or not, and says plainly when nothing matches. Check each candidate this way before recommending it, because a top-twenty answer that lacks X does NOT mean they haven't seen X. What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
     schema: {
       type: "object",
       properties: {
         medium: { type: "string", description: "films | books | beer | restaurants | anime" },
         min_rating: { type: "number", description: "Only at or above this, on that medium's own scale." },
         order: { type: "string", description: "rated (default, highest first) | recent" },
+        title: { type: "string", description: "Look up one title (substring, case-insensitive) instead of ranking. Returns every logged match, rated or not; books carry their shelf, so 'to-read' means not read yet." },
       },
     },
-    async run(env, { medium, min_rating, order }, ctx) {
+    async run(env, { medium, min_rating, order, title }, ctx) {
+      if (typeof title === "string" && title.trim()) {
+        return ratingsLookup(env, { medium, title: title.trim() }, ctx);
+      }
       // scale is carried per row because the mediums disagree: Letterboxd and
       // Goodreads are 0-5, the restaurant log is 0-10. Returning a bare 9.5
       // invites an assistant to read it as "off the charts" on a five-point
       // scale, or a 4.5 film as mediocre.
-      const SRC = {
-        films:       { table: "t0_film",   label: "title",      col: "rating",       scale: "0-5", url: "origin_ref" },
-        books:       { table: "t0_book",   label: "title",      col: "my_rating",    scale: "0-5", where: "AND shelf IN ('read','partly-read')" },
-        beer:        { table: "t0_beer",   label: "beer_name",  col: "rating_score", scale: "0-5", extra: BEER_META },
-        restaurants: { table: "t1_visits", label: "restaurant", col: "rating",       scale: "0-10" },
-        // Television's only ratings. Trakt has none, so before the MAL list
-        // landed the honest answer for the whole medium was "he does not rate
-        // it" \u2014 true of Trakt and false of him. MAL's 0 means unrated
-        // rather than terrible, which the shared `> 0` filter already reads
-        // correctly.
-        anime:       { table: "t0_anime",  label: "title",      col: "score",        scale: "1-10", url: "url" },
-      };
+      const SRC = RATINGS_SRC;
       const picked = medium ? { [medium]: SRC[medium] } : SRC;
       const out = [];
       // One axis for the whole answer, but its SQL is per medium: each keeps its
