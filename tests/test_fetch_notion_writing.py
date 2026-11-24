@@ -197,6 +197,26 @@ def test_the_heuristic_only_ever_says_unreviewed():
     assert fw.authorship(e, {}) == "unreviewed"
 
 
+def test_the_archive_importer_bot_is_not_a_signal():
+    e = _entry(author="u-bot", body="x")
+    assert "created by an integration" not in fw.suspicion(e)      # has an Apple Notes ID
+    e["apple_notes_id"] = ""
+    assert "created by an integration" in fw.suspicion(e)
+
+
+def test_no_user_capability_means_unknown_not_failure(root, monkeypatch):
+    pages = [_page("a")]
+    def paged(path, **kw):
+        if path == "/users":
+            raise api.NotionError("Notion 403 on /users: Insufficient permissions")
+        return iter(pages)
+    monkeypatch.setattr(api, "_paged", paged)
+    monkeypatch.setattr(api, "fetch_blocks", lambda pid, depth=0: [{"pid": pid}])
+    monkeypatch.setattr(fw.blockrender, "render", lambda b: ("body", []))
+    fw._USERS.clear()
+    assert fw.sync()["pages"]["a"]["created_by"]["type"] == "unknown"
+
+
 def test_plain_writing_is_human():
     assert fw.authorship(_entry(body="thinking about caching again. lowercase, typos."), {}) == "human"
 
