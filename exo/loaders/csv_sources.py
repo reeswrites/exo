@@ -202,7 +202,51 @@ def goodreads() -> list[Row]:
                      "date_added": b.get("date_added")})
         for b in _cache("goodreads-cache.json").get("books", [])
     ]
-    return _merge(rows, cached, lambda r: r.origin_ref)
+    return _reading_log(_merge(rows, cached, lambda r: r.origin_ref))
+
+
+def _reading_log(books: list[Row]) -> list[Row]:
+    """Overlay the Notion Reading Log (`exo fetch-reading-log`) onto the
+    Goodreads rows, which it supersedes.
+
+    Absent cache: the Goodreads rows unchanged, so an instance without Notion
+    builds exactly what it did before. Present: a Notion entry carrying a
+    Goodreads id EDITS that row in place (`overlay` keeps every field's old
+    spelling unless its meaning changed, so an unedited book keeps its id), and
+    one without is a book logged in Notion, added with its own source.
+
+    A Goodreads row the Reading Log does not mention is kept. Notion was seeded
+    from the full export, so a missing row is far more likely a filter or a
+    page the integration cannot see than a book un-read.
+    """
+    from ..scripts_impl.fetch_reading_log import overlay
+
+    entries = _cache("reading-log-cache.json").get("books", [])
+    if not entries:
+        return books
+    index = {r.origin_ref: i for i, r in enumerate(books)}
+    out = list(books)
+    for e in entries:
+        gid = (e.get("goodreads_id") or "").strip()
+        if gid and gid in index:
+            old = out[index[gid]]
+            payload = overlay(old.payload, e)
+            if payload != old.payload:
+                out[index[gid]] = Row(
+                    tier="t0", zone="book", source="goodreads", author="external",
+                    created=(payload.get("date_read") or payload.get("date_added") or None),
+                    origin_ref=gid, payload=payload)
+            continue
+        src, ref = ("goodreads", gid) if gid else ("reading-log", e.get("page_id", ""))
+        out.append(Row(
+            tier="t0", zone="book", source=src, author="external",
+            created=(e.get("date_read") or e.get("date_added") or None),
+            origin_ref=ref,
+            payload={"title": e.get("title", ""), "book_author": e.get("book_author", ""),
+                     "my_rating": e.get("my_rating") or "0", "avg_rating": "",
+                     "shelf": e.get("shelf", ""),
+                     "date_read": e.get("date_read"), "date_added": e.get("date_added")}))
+    return out
 
 
 def untappd() -> list[Row]:
