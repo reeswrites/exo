@@ -421,6 +421,30 @@ async function beerCalibration(env) {
 const q = (env, sql, ...binds) =>
   env.DB.prepare(sql).bind(...binds).all().then((r) => r.results ?? []);
 
+// The scrobble stream's aggregates, read off its per-day rollup instead of the
+// stream (engine publish_cf.py, `_emit_music_day`). Every statement here used to
+// scan all ~44k rows of t0_music; on 2026-11-24 those scans alone spent over a
+// million of D1's five-million-row daily budget and took the nightly down with
+// them. `t0_music_day` holds one row per day — `plays`, and `artists` as a JSON
+// array of [artist, plays] — so a total reads ~1,100 rows and a window reads only
+// its own days (`day` is indexed). json_each unpacks a day without being billed
+// as rows read. The answers are the old ones exactly: `day` IS
+// substr(created,1,10), the expression those scans filtered on, and
+// tests/test_music_day.py runs both against the same stream to hold that.
+//
+// The tools that use these still declare `reads: t0_music`. The rollup is not a
+// zone; it is the stream counted, and its exposure is the stream's (ADR-0019).
+// DERIVED_FROM says so in one place, and the reads-match-the-SQL check in
+// test/run.mjs reads it: a query on the rollup must declare the stream.
+export const DERIVED_FROM = { t0_music_day: "t0_music" };
+const MUSIC_TOTAL =
+  "SELECT COALESCE(sum(plays), 0) AS n, max(day) AS last_logged FROM t0_music_day";
+const MUSIC_WINDOW_ARTISTS = `
+  SELECT json_extract(j.value, '$[0]') AS artist, sum(json_extract(j.value, '$[1]')) AS plays
+  FROM t0_music_day d, json_each(d.artists) j
+  WHERE d.day BETWEEN ? AND ?
+  GROUP BY 1`;
+
 /**
  * The full text of ONE row, found by meaning rather than by id.
  *
@@ -1210,7 +1234,8 @@ export const TOOLS = {
         anime: { table: "t0_anime",  unit: "titles watched or watching",
                  where: "WHERE status <> 'plan_to_watch'",
                  rate: { col: "score", scale: "1-10", label: "title", url: "url" } },
-        music: { table: "t0_music",  unit: "scrobbles",  verdicts: "music", owns: "vinyl" },
+        music: { table: "t0_music",  unit: "scrobbles",  verdicts: "music", owns: "vinyl",
+                 total: MUSIC_TOTAL },
         beer:  { table: "t0_beer",   unit: "check-ins",
                  rate: { col: "rating_score", scale: "0-5",  label: "beer_name", extra: BEER_META } },
         restaurant: { table: "t1_visits", unit: "visits",
@@ -1226,7 +1251,7 @@ export const TOOLS = {
       // such table" is the only error a bare count over a fixed name can raise.
       // A medium this record does not hold is simply not in the directory.
       const countOf = async (d) => {
-        const rows = await q(env, `SELECT count(*) AS n, max(substr(created,1,10)) AS last_logged
+        const rows = await q(env, d.total ?? `SELECT count(*) AS n, max(substr(created,1,10)) AS last_logged
                                    FROM ${d.table} ${d.where ?? ""}`).catch(() => null);
         return rows?.[0] ?? null;
       };
@@ -1387,7 +1412,7 @@ export const TOOLS = {
       // date_added, so a shelved book looks consumed. Reporting one total said
       // 920 books were read when the number is 443.
       const T = {
-        music: { table: "t0_music", where: "" },
+        music: { table: "t0_music", where: "", total: MUSIC_TOTAL },
         books: { table: "t0_book",  where: "WHERE shelf = 'read'" },
         films: { table: "t0_film",  where: "" },
         tv:    { table: "t0_tv",    where: "" },
@@ -1399,7 +1424,7 @@ export const TOOLS = {
         if (!d) continue;
         const [row] = await q(
           env,
-          `SELECT count(*) AS n, max(substr(created,1,10)) AS last_logged
+          d.total ?? `SELECT count(*) AS n, max(substr(created,1,10)) AS last_logged
            FROM ${d.table} ${d.where}`
         );
         const rec = { medium: name, total: row?.n ?? 0, last_logged: row?.last_logged ?? null };
@@ -1943,11 +1968,12 @@ export const TOOLS = {
          ORDER BY created LIMIT 8`,
         from, to
       );
+      // Ties broken by name, so the five are the same five on every call.
       const music = await q(
         env,
-        `SELECT 'artist' AS kind, artist AS label, count(*) AS plays
-         FROM t0_music WHERE substr(created,1,10) BETWEEN ? AND ?
-         GROUP BY artist ORDER BY plays DESC LIMIT 5`,
+        `SELECT 'artist' AS kind, artist AS label, plays
+         FROM (${MUSIC_WINDOW_ARTISTS})
+         ORDER BY plays DESC, artist LIMIT 5`,
         from, to
       );
       // Ratings ride along: "X was watched" and "X was watched and rated 5"
@@ -2012,11 +2038,14 @@ export const TOOLS = {
       // other statement in this file does not use. Consistency is worth two
       // lines here: the binds are generated, so they cannot fall out of step
       // with the placeholders by hand.
+      //
+      // Music off the per-day rollup, not the stream: the two t0_music scans
+      // here were 88k of the 91k rows this statement read (see MUSIC_TOTAL).
       const IN_WINDOW = "substr(created,1,10) BETWEEN ? AND ?";
       const [held] = await q(
         env,
-        `SELECT (SELECT count(DISTINCT artist) FROM t0_music WHERE ${IN_WINDOW}) AS artists,
-                (SELECT count(*) FROM t0_music WHERE ${IN_WINDOW}) AS plays,
+        `SELECT (SELECT count(artist) FROM (${MUSIC_WINDOW_ARTISTS})) AS artists,
+                (SELECT COALESCE(sum(plays), 0) FROM t0_music_day WHERE day BETWEEN ? AND ?) AS plays,
                 (SELECT count(*) FROM t1_notes WHERE ${IN_WINDOW}) AS notes,
                 (SELECT count(*) FROM t0_film  WHERE ${IN_WINDOW}) AS films,
                 (SELECT count(*) FROM t0_book  WHERE ${IN_WINDOW} AND shelf = 'read') AS books,

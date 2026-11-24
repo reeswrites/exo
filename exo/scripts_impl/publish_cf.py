@@ -78,6 +78,12 @@ _INDEXES = {
     # 41,294 writes on every full import — a third of the whole daily free
     # budget, spent on a sort. See ADR-0026, which is about the rewrite itself.
     "t0_music": [],
+    # The per-day rollup of t0_music (see `_emit_music_day`). Indexed, unlike the
+    # stream itself, because every query against it is a range on `day` and the
+    # index is what turns "a month" into thirty rows read instead of a thousand.
+    # It is ~1,100 rows, so the index costs ~1,100 writes on the nights the
+    # stream moves — against the 44,000 reads per call it exists to remove.
+    "t0_music_day": ["day"],
     # No index here either, for the same meter. `albums` does join on equality
     # (the keys are stored pre-folded), but against a 3,782-row table SQLite
     # builds a transient automatic index for that join per query at no billed
@@ -172,8 +178,13 @@ def _row_hash(shape: str, rendered: str) -> int:
                16) & 0x7FFFFFFF
 
 
-def _emit_table(con, parquet, table, out_dir, ddl_dir=None) -> tuple[str, dict]:
-    cols = con.execute(f"DESCRIBE SELECT * FROM read_parquet('{parquet}')").fetchall()
+def _emit_table(con, parquet, table, out_dir, ddl_dir=None, *,
+                source: str | None = None) -> tuple[str, dict]:
+    # `source` is a DuckDB relation to read INSTEAD of the parquet — how a table
+    # derived at publish time (`_emit_music_day`) goes through exactly the same
+    # DDL, digest and batching as everything else rather than a second writer.
+    src = source or f"read_parquet('{parquet}')"
+    cols = con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()
     names = [c[0] for c in cols]
     if ROW_HASH in names:
         # Fail rather than emit two columns of one name. No loader writes this
@@ -214,7 +225,7 @@ def _emit_table(con, parquet, table, out_dir, ddl_dir=None) -> tuple[str, dict]:
     if ddl_dir is not None:
         (ddl_dir / f"{table}.sql").write_text(ddl_text + "\n", encoding="utf-8")
 
-    rows = con.execute(f"SELECT * FROM read_parquet('{parquet}')").fetchall()
+    rows = con.execute(f"SELECT * FROM {src}").fetchall()
     collist = ", ".join(f'"{n}"' for n in names) + f', "{ROW_HASH}"'
     header = f'INSERT INTO "{table}" ({collist}) VALUES\n'
     lines = [f'DELETE FROM "{table}";']  # re-import is idempotent
@@ -270,6 +281,74 @@ def _emit_table(con, parquet, table, out_dir, ddl_dir=None) -> tuple[str, dict]:
         "key": [names[i] for i in key_at],
         "duplicate_keys": duplicate_keys,
     }
+
+
+# The scrobble stream, rolled up per day, emitted beside it.
+#
+# Every aggregate the read surface takes over t0_music used to be a scan of the
+# whole stream: `consumption` and `medium` for a count and a last date,
+# `around_the_time` for how many artists and plays a window held, and its top
+# five. 44,005 rows read per statement, and on 2026-11-24 those statements alone
+# spent over a million of D1's five-million-row daily budget — with the nightly's
+# guard behind them, the account hit the limit and the nightly could not publish.
+#
+# One row per day: `plays` is every scrobble that day, and `artists` is a JSON
+# array of `[artist, plays]` pairs. A range of days then answers all three
+# questions EXACTLY — distinct artists across the range via json_each, which D1
+# does not bill as rows read — while reading only the days in it (`day` is
+# indexed). Bucketed coarser, a month could not answer an arbitrary window
+# exactly; finer, one row per (day, artist) is 27k rows, which is the write bill
+# the load was rebuilt to avoid (ADR-0026).
+#
+# Derived, so it follows its source and nothing else: emitted exactly when
+# t0_music is, from the same parquet, in the same bundle. Its exposure is the
+# stream's — the worker declares `reads: t0_music` for every tool that touches
+# it — and it re-decides no policy: everything in it is a count of rows the
+# bundle already carries.
+#
+# `day` is `substr(created, 1, 10)`, the same expression the tools filtered the
+# stream with, so a window on one is a window on the other. A scrobble with no
+# `created` lands in the NULL day: counted in the total, in no window, and never
+# the last date — exactly what the old scans did with it.
+MUSIC_DAY = "t0_music_day"
+
+
+def _music_day_rows(con, parquet) -> list[tuple]:
+    names = {c[0] for c in con.execute(
+        f"DESCRIBE SELECT * FROM read_parquet('{parquet}')").fetchall()}
+    # An empty zone publishes an envelope-only parquet (see publish.run), which
+    # may carry no `artist`. No scrobbles is no days, not an error.
+    if not {"created", "artist"} <= names:
+        return []
+    # CAST so the day is the text D1 holds: `_sql_literal` renders the stream's
+    # `created` with str(), and the tools take substr(…, 1, 10) of THAT.
+    grouped = con.execute(f"""
+        SELECT substr(CAST(created AS VARCHAR), 1, 10) AS day, artist, count(*) AS n
+        FROM read_parquet('{parquet}')
+        GROUP BY ALL
+    """).fetchall()
+    days: dict = {}
+    for day, artist, n in grouped:
+        days.setdefault(day, []).append((artist, int(n)))
+    out = []
+    # Sorted, both the days and the pairs inside them, so an unchanged stream
+    # renders byte-identical JSON and the table's digest lets the load skip it.
+    for day in sorted(days, key=lambda d: (d is not None, d or "")):
+        pairs = sorted(days[day], key=lambda p: (p[0] is not None, p[0] or ""))
+        out.append((day, sum(n for _, n in pairs),
+                    json.dumps([[a, n] for a, n in pairs], ensure_ascii=False,
+                               separators=(",", ":"))))
+    return out
+
+
+def _emit_music_day(con, parquet, out_dir, ddl_dir=None) -> tuple[str, dict]:
+    con.execute("CREATE OR REPLACE TEMP TABLE _music_day "
+                "(day VARCHAR, plays BIGINT, artists VARCHAR)")
+    rows = _music_day_rows(con, parquet)
+    if rows:
+        con.executemany("INSERT INTO _music_day VALUES (?, ?, ?)", rows)
+    return _emit_table(con, None, MUSIC_DAY, out_dir, ddl_dir=ddl_dir,
+                       source="_music_day")
 
 
 # Every vector kind the blob is made of. `vectors.f32` is ONE artifact — the
@@ -942,6 +1021,12 @@ def run() -> int:
             print(f"  D1  {p.stem:<18}{info['rows']:>8,} rows"
                   + (f"   — {dup:,} rows share a key with another"
                      if dup else ""))
+            if p.stem == "t0_music":
+                ddl, info = _emit_music_day(con, p, out / "data",
+                                            ddl_dir=out / "ddl")
+                schema.append(ddl)
+                tables[MUSIC_DAY] = info
+                print(f"  D1  {MUSIC_DAY:<18}{info['rows']:>8,} rows   — derived from t0_music")
 
         if not tables:
             print("publish-cf: REFUSING — the scope names no table this "
