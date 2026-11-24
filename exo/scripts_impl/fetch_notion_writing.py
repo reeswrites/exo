@@ -47,6 +47,7 @@ separate some AI pages and not others, and the report counts both.
 """
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -84,6 +85,21 @@ def _ids(env: str, key: str) -> set[str]:
     raw = os.environ.get(env, "").strip()
     vals = raw.split(",") if raw else (_cfg(key, []) or [])
     return {api._norm_id(v.strip()) for v in vals if v.strip()}
+
+
+def _names(env: str, key: str) -> list[str]:
+    """A list of page-tree names (folders, path segments), from env or config."""
+    raw = os.environ.get(env, "").strip()
+    vals = raw.split(",") if raw else (_cfg(key, []) or [])
+    return [v.strip() for v in vals if v.strip()]
+
+
+def under(entry: dict, names: list[str]) -> bool:
+    """Whether a page sits under any of `names`: its archive folder starts with
+    one (`Private`, `Private/Shopping`), or one is a segment of its page path."""
+    folder = entry.get("folder") or ""
+    segs = (entry.get("path") or "").split("/")
+    return any(folder == n or folder.startswith(n + "/") or n in segs for n in names)
 
 
 # ─────────────────────────────── one page ───────────────────────────────
@@ -215,6 +231,11 @@ def authorship(entry: dict, decided: dict) -> str:
     m = marker(entry.get("body", ""))
     if m:
         return m
+    # A subtree the owner has declared co-written as a whole — the Research Log,
+    # which a skill drafts from his questions and he edits. One rule instead of
+    # a hundred decisions, and a decision file entry still overrides it.
+    if under(entry, _names("EXO_NOTION_WRITING_MIXED", "mixed_paths")):
+        return "mixed"
     return "unreviewed" if len(suspicion(entry)) >= 2 else "human"
 
 
@@ -334,17 +355,56 @@ def vault_notes(base: Path | None = None) -> list[dict]:
                     "created": _s(fm.get("created")),
                     "folder": _s(fm.get("folder")),
                     "uuid": _s(fm.get("uuid")),
+                    "modified": _s(fm.get("modified")),
+                    "version": int(fm.get("version") or 1)
+                    if str(fm.get("version") or "1").isdigit() else 1,
                     "body": body})
     return out
+
+
+def newest(notes: list[dict]) -> tuple[dict[str, str], set[str]]:
+    """Collapse the vault's edit versions. Apple Notes re-imports of an edited
+    note landed beside the original as `-v2`, `-v3` … under the SAME uuid, each
+    `supersedes:` the one before. The newest (latest `modified`, then highest
+    `version`) is the note; the rest are history.
+
+    Returns ({origin_ref: newest origin_ref of its family}, superseded refs).
+    Notes without a uuid are their own family.
+    """
+    fam: dict[str, list[dict]] = {}
+    for n in notes:
+        fam.setdefault(n.get("uuid") or n["origin_ref"], []).append(n)
+    head: dict[str, str] = {}
+    gone: set[str] = set()
+    for members in fam.values():
+        top = max(members, key=lambda n: (n.get("modified") or "", n.get("version", 1),
+                                          n["origin_ref"]))
+        for n in members:
+            head[n["origin_ref"]] = top["origin_ref"]
+            if n is not top:
+                gone.add(n["origin_ref"])
+    return head, gone
+
+
+def _similarity(a: str, b: str) -> float:
+    return difflib.SequenceMatcher(None, norm_body(a)[:4000], norm_body(b)[:4000],
+                                   autojunk=False).ratio()
 
 
 def match(pages: list[dict], notes: list[dict]) -> dict:
     """Pair pages with vault notes on (normalised title, created ±1 day).
 
-    One-to-one only: a key two notes share, or a note two pages claim, is
-    reported as ambiguous and left unmatched rather than guessed. A wrong
-    adoption would hand one note's atoms to another.
+    Candidates are folded onto the newest version of their note first, so a page
+    whose title matches `foo.md` and `foo-v2.md` adopts `foo-v2.md` — one note,
+    not two guesses. Two different notes left over are split by exact creation
+    day, then by body (a unique closest body, and only when the page has one).
+
+    One-to-one only: anything still tied, or a note two pages claim, is reported
+    as ambiguous and left unmatched rather than guessed. A wrong adoption would
+    hand one note's atoms to another.
     """
+    head, superseded = newest(notes)
+    note_by_ref = {n["origin_ref"]: n for n in notes}
     by_title: dict[str, list[dict]] = {}
     for n in notes:
         by_title.setdefault(norm_title(n["title"]), []).append(n)
@@ -352,6 +412,17 @@ def match(pages: list[dict], notes: list[dict]) -> dict:
     def near(n, day):
         nd = _day(n["created"])
         return bool(day and nd and abs((nd - day).days) <= 1)
+
+    def narrow(p, day, refs: list[str]) -> list[str]:
+        if len(refs) > 1:
+            exact = [r for r in refs if _day(note_by_ref[r]["created"]) == day]
+            refs = exact or refs
+        if len(refs) > 1 and p.get("body"):
+            scored = sorted(((_similarity(p["body"], note_by_ref[r]["body"]), r) for r in refs),
+                            reverse=True)
+            if scored[0][0] - scored[1][0] >= 0.1:
+                refs = [scored[0][1]]
+        return refs
 
     pairs: dict[str, str] = {}
     ambiguous: list[dict] = []
@@ -365,12 +436,13 @@ def match(pages: list[dict], notes: list[dict]) -> dict:
             # The Notion importer cut long titles; the vault kept them whole.
             stem = t[:-3].rstrip()
             cands = [n for n in notes if norm_title(n["title"]).startswith(stem) and near(n, day)]
-        if len(cands) == 1:
-            pairs[p["page_id"]] = cands[0]["origin_ref"]
-            claimed.setdefault(cands[0]["origin_ref"], []).append(p["page_id"])
-        elif cands:
+        refs = narrow(p, day, sorted({head[c["origin_ref"]] for c in cands}))
+        if len(refs) == 1:
+            pairs[p["page_id"]] = refs[0]
+            claimed.setdefault(refs[0], []).append(p["page_id"])
+        elif refs:
             ambiguous.append({"page_id": p["page_id"], "title": p["title"],
-                              "candidates": [c["origin_ref"] for c in cands]})
+                              "candidates": refs})
         else:
             new.append({"page_id": p["page_id"], "title": p["title"],
                         "created": p["created"], "folder": p.get("folder", "")})
@@ -381,22 +453,22 @@ def match(pages: list[dict], notes: list[dict]) -> dict:
                 ambiguous.append({"page_id": pid, "candidates": [ref]})
 
     page_by_id = {p["page_id"]: p for p in pages}
-    note_by_ref = {n["origin_ref"]: n for n in notes}
     folder_agree = sum(1 for pid, ref in pairs.items()
                        if page_by_id[pid].get("folder") == note_by_ref[ref]["folder"])
     with_body = [(pid, ref) for pid, ref in pairs.items() if "body" in page_by_id[pid]]
     body_same = sum(1 for pid, ref in with_body
                     if norm_body(page_by_id[pid]["body"]) == norm_body(note_by_ref[ref]["body"]))
-    unmatched_notes = sorted(set(note_by_ref) - set(pairs.values()))
+    unmatched_notes = sorted(set(note_by_ref) - set(pairs.values()) - superseded)
     return {
         "pages": len(pages), "vault_notes": len(notes),
         "matched": len(pairs), "ambiguous": len(ambiguous), "new": len(new),
-        "vault_unmatched": len(unmatched_notes),
+        "vault_unmatched": len(unmatched_notes), "superseded": len(superseded),
         "matched_folder_agrees": folder_agree,
         "matched_with_body": len(with_body), "matched_body_identical": body_same,
         "map": pairs,
         "ambiguous_pages": ambiguous, "new_pages": new,
         "vault_unmatched_refs": unmatched_notes,
+        "superseded_refs": sorted(superseded),
     }
 
 
@@ -436,6 +508,7 @@ def report(pages: list[dict], result: dict | None, review: list[dict]) -> None:
         print(f"    ambiguous, left unmatched    {r['ambiguous']:>6,}")
         print(f"    new to the record            {r['new']:>6,}")
         print(f"    vault notes with no page     {r['vault_unmatched']:>6,}")
+        print(f"    older edit versions, dropped {r.get('superseded', 0):>6,}")
 
 
 # ─────────────────────────────── entry ───────────────────────────────
