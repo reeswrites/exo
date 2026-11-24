@@ -142,6 +142,23 @@ uv run exo query "SELECT artist, count(*) FROM t0_music GROUP BY 1 ORDER BY 2 DE
 uv run exo publish --dry-run    # what would leave, and what is held back
 ```
 
+Sources with an API or feed are pulled into `raw/` by fetch commands rather
+than read at ingest, so a rebuild stays offline. Credentials come from
+`~/.config/exo/secrets/env`; each fetch keeps its existing cache rather than
+overwrite it with an empty or shrunken answer:
+
+```bash
+uv run exo fetch-lastfm         # scrobbles (LASTFM_API_KEY, LASTFM_USER)
+uv run exo fetch-letterboxd     # film diary (RSS window)
+uv run exo fetch-untappd        # check-ins (RSS window)
+uv run exo fetch-goodreads      # shelves (GOODREADS_USER_ID) — Goodreads retired
+                                #   its RSS in late 2026; this now 404s
+uv run exo fetch-trakt          # TV + anime watches (TRAKT_CLIENT_ID; a secret
+                                #   only for legacy apps; tokens in
+                                #   secrets/trakt-tokens.json)
+uv run exo trakt-auth           # one-time device-code login for fetch-trakt
+```
+
 The templates `exo init` copies are [exo/templates/](exo/templates/) — read
 them before you edit the copies.
 
