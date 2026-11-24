@@ -10,7 +10,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { TOOLS } from "../src/tools.js";
+import { TOOLS, DERIVED_FROM } from "../src/tools.js";
 
 const CF = path.resolve(process.env.EXO_HOME, "zones/_serve/cf");
 const db = new DatabaseSync(":memory:");
@@ -95,6 +95,25 @@ for (const [name, t] of Object.entries(TOOLS)) {
 }
 
 console.log(`prepared ${seen.size} distinct statements`);
+// A missing table is only "absent" when the zone behind it is absent too. A
+// derived table (DERIVED_FROM) whose source zone IS in the schema is a table the
+// publish step should have emitted and did not — deploying then breaks every
+// tool that reads it. On 2026-11-24 the t0_music_day rollup was deployed ahead
+// of the nightly that imports it, and this check filed it as "absent" and
+// passed: consumption, medium and around_the_time answered "no such table".
+const hasTable = (t) =>
+  db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(t).n > 0;
+for (const a of absent.splice(0)) {
+  const table = a.msg.replace("no such table: ", "");
+  const source = DERIVED_FROM[table];
+  if (source && hasTable(source)) {
+    bad.push({ sql: a.sql, msg: `${a.msg} — derived from ${source}, which IS published; ` +
+      `the bundle (or the live database) is missing a table the code needs. ` +
+      `Publish and import it before deploying.` });
+  } else {
+    absent.push(a);
+  }
+}
 if (absent.length) {
   const zones = [...new Set(absent.map((a) => a.msg.replace("no such table: ", "")))];
   console.log(`  ${absent.length} skipped — zones absent from this bundle: ${zones.join(", ")}`);
