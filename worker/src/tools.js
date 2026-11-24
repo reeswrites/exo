@@ -2489,7 +2489,7 @@ export const TOOLS = {
     class: "revealed", domain: "culture", kind: "entity",
     reads: ["t0_tv", "t0_anime"],
     description:
-      "What the owner started and has not finished, per show: episodes watched, how long since the last one, and an episode total where one is known. Trakt is the record of what is actually watched and is what every status here is derived from. MyAnimeList supplies denominators only — the list was abandoned in August 2023, so the word they last filed against a title is returned as `declared` and clearly dated, never as the current state. Filter status='stalled' for what quietly stopped, or declared='dropped' for what they abandoned on purpose back when they were still keeping the list.",
+      "What the owner started and has not finished, per show: episodes watched, how long since the last one, and an episode total where one is known. Trakt is the record of what is actually watched and is what every status here is derived from. MyAnimeList supplies denominators only — the list was abandoned in August 2023, so the word they last filed against a title is returned as `declared` and clearly dated, never as the current state. Filter status='stalled' for what quietly stopped, or declared='dropped' for what they abandoned on purpose back when they were still keeping the list. For 'have I seen / am I partway through <show>' pass `title`: every show they have watched is here, and a list without it truncates.",
     schema: {
       type: "object",
       properties: {
@@ -2509,9 +2509,12 @@ export const TOOLS = {
             "ISO date. Only shows whose last episode was on or before it, and which are not already finished.",
         },
         order: { type: "string", description: "oldest (default, longest untouched first) | recent | rated" },
+        title: { type: "string", description: "One show by title (substring, case-insensitive). The way to ask whether they have seen it at all." },
       },
     },
-    async run(env, { status, declared, stalled_since, order }, ctx) {
+    async run(env, { status, declared, stalled_since, order, title }, ctx) {
+      const titleLike = typeof title === "string" && title.trim()
+        ? `%${title.trim().toLowerCase().replace(/[\\%_]/g, (c) => "\\" + c)}%` : null;
       // Today, bound rather than read inside SQL, so the same call against the
       // same bundle is reproducible from outside and the day boundary is the
       // worker's rather than D1's.
@@ -2627,6 +2630,7 @@ export const TOOLS = {
             AND (? IS NULL OR declared = ?)
             AND (? IS NULL OR (last_watched IS NOT NULL AND last_watched <= ?
                                AND status <> 'completed'))
+            AND (? IS NULL OR lower(title) LIKE ? ESCAPE '\\')
           ORDER BY ${by.sql}, id
           LIMIT ?`,
         today,
@@ -2635,6 +2639,7 @@ export const TOOLS = {
         wantStatus, wantStatus,
         wantDeclared, wantDeclared,
         stalled_since ?? null, stalled_since ?? null,
+        titleLike, titleLike,
         probe(ctx)
       );
 
@@ -2672,6 +2677,9 @@ export const TOOLS = {
       }));
 
       const notes = [
+        titleLike && !rows.length
+          ? `no show matching '${title.trim()}' in the watch record — not watched as far as Trakt knows; anime they only listed is in ratings(medium:'anime', title:)`
+          : null,
         COUNT_GAP,
         `every status here is derived from Trakt activity; \`declared\` is the owner's MyAnimeList word and the list was abandoned on 2023-08-31`,
         `stalled means no episode in ${STALL_DAYS} days with episodes still to watch — derived here, never declared`,
@@ -2794,15 +2802,15 @@ export const TOOLS = {
     // reading list, and a 436-book shelf answered twenty at a time because a
     // folder of present ideas shared the door (ADR-0019 §2).
     readsFor: ({ kind }) =>
-      kind === "read" || kind === "resume" ? ["t0_book"]
+      kind === "read" || kind === "resume" || kind === "reading" ? ["t0_book"]
       : kind === "make" || kind === "buy" ? ["t0_raindrop"]
       : ["t0_book", "t0_raindrop"],   // no kind: the summary counts both piles
     description:
-      "What the owner has queued but not done — things they decided they wanted and have not gotten to. Shelving a book or filing a link into a bucket is a deliberate act, which is what separates this from `saves` (attention) and from `collection` (already owned). Kinds: 'read' (436 shelved to-read), 'resume' (41 books started and abandoned mid-way — the strongest candidates, since they already began), 'make' (things they want to build or cook), 'buy' (gift and shopping ideas). Call with no kind to see the sizes. Default order is newest-first; pass order='oldest' to dig up what has been sitting, which is usually the point of asking.",
+      "What the owner has queued but not done — things they decided they wanted and have not gotten to. Shelving a book or filing a link into a bucket is a deliberate act, which is what separates this from `saves` (attention) and from `collection` (already owned). For 'what am I reading right now' pass kind='reading'. Kinds: 'read' (the to-read shelf), 'reading' (books in progress now), 'resume' (books started and set down mid-way — the strongest candidates, since they already began), 'make' (things they want to build or cook), 'buy' (gift and shopping ideas). Call with no kind to see the sizes. Default order is newest-first; pass order='oldest' to dig up what has been sitting, which is usually the point of asking.",
     schema: {
       type: "object",
       properties: {
-        kind: { type: "string", description: "read | resume | make | buy" },
+        kind: { type: "string", description: "read | reading | resume | make | buy" },
         topic: { type: "string", description: "Match against title or author." },
         since: { type: "string", description: "ISO date; only things queued on or after." },
         order: { type: "string", description: "recent (default) | oldest" },
@@ -2824,7 +2832,10 @@ export const TOOLS = {
       // means each can say what it actually knows.
       const SHELVES = {
         read: ["to-read"],
-        resume: ["partly-read", "currently-reading"],
+        // In progress now, not set down: the Reading Log keeps the two apart,
+        // and folding them made 'what am I reading' unanswerable.
+        reading: ["currently-reading"],
+        resume: ["partly-read"],
       };
       const COLLECTIONS = {
         make: ["want-to-make"],
@@ -2837,7 +2848,8 @@ export const TOOLS = {
       if (!kind) {
         const [b] = await q(env,
           `SELECT sum(CASE WHEN lower(shelf) = 'to-read' THEN 1 ELSE 0 END) AS to_read,
-                  sum(CASE WHEN lower(shelf) IN ('partly-read','currently-reading') THEN 1 ELSE 0 END) AS resume
+                  sum(CASE WHEN lower(shelf) = 'currently-reading' THEN 1 ELSE 0 END) AS reading,
+                  sum(CASE WHEN lower(shelf) = 'partly-read' THEN 1 ELSE 0 END) AS resume
            FROM t0_book`);
         const [m] = await q(env,
           `SELECT sum(CASE WHEN lower(collection) = 'want-to-make' THEN 1 ELSE 0 END) AS make,
@@ -2846,8 +2858,9 @@ export const TOOLS = {
         return {
           rows: [],
           kinds: [
-            { kind: "read", n: b?.to_read ?? 0, source: "goodreads shelf" },
-            { kind: "resume", n: b?.resume ?? 0, source: "goodreads shelf" },
+            { kind: "read", n: b?.to_read ?? 0, source: "reading log shelf" },
+            { kind: "reading", n: b?.reading ?? 0, source: "reading log shelf" },
+            { kind: "resume", n: b?.resume ?? 0, source: "reading log shelf" },
             { kind: "make", n: m?.make ?? 0, source: "raindrop collection" },
             { kind: "buy", n: m?.buy ?? 0, source: "raindrop collection" },
           ],
@@ -2929,7 +2942,7 @@ export const TOOLS = {
       return {
         rows: [],
         error: `unknown kind '${kind}'`,
-        kinds: ["read", "resume", "make", "buy"],
+        kinds: ["read", "reading", "resume", "make", "buy"],
         gap: WATCH_GAP,
       };
     },

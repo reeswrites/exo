@@ -935,6 +935,20 @@ ok(bk.total_label === "finished", "the total says what it counts");
   ok(shelf.rows.every((r) => "status" in r), "book matches carry their shelf, so to-read is not read as read");
   ok(shelf.rows.every((r) => r.rating === null || r.rating > 0), "unrated rows report null, never zero");
 }
+// backlog(kind:'reading') is in-progress only; resume no longer swallows it
+{
+  const reading = await TOOLS.backlog.run(env, { kind: "reading" });
+  ok(reading.rows.every((r) => r.shelf === "currently-reading"), "backlog reading returns only books in progress");
+  const resume = await TOOLS.backlog.run(env, { kind: "resume" });
+  ok(resume.rows.every((r) => r.shelf === "partly-read"), "backlog resume no longer includes books in progress");
+  const sample = (await TOOLS.watching.run(env, { order: "recent" })).rows[0];
+  if (sample) {
+    const hit = await TOOLS.watching.run(env, { title: sample.title.toUpperCase() });
+    ok(hit.rows.some((r) => r.title === sample.title), "watching(title:) finds a show case-insensitively");
+  }
+  const miss = await TOOLS.watching.run(env, { title: "zzqx-no-such-show" });
+  ok(miss.rows.length === 0 && /no show matching/.test(miss.note), "a watching miss says so");
+}
 const bratings = await TOOLS.ratings.run(env, { medium: "books" });
 ok(bratings.rows.length > 0, `book ratings -> ${bratings.rows.length}`);
 
