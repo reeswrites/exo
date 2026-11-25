@@ -448,15 +448,23 @@ def _emit_vectors(con, out, *, partial: bool) -> dict:
         # floats. any_value is safe here precisely because the colliding rows
         # are versions of the same note.
         n_in = con.execute(f"SELECT count(*) FROM read_parquet('{parquet}')").fetchone()[0]
+        # A Chat digest note's `link` is the claude.ai chat it came from. It
+        # rides in the sidecar so `notes_on`'s list view can hand it back with
+        # no D1 read; absent on older bundles and on every other kind.
+        cols = {c for (c, *_) in con.execute(
+            f"DESCRIBE SELECT * FROM read_parquet('{join}')").fetchall()}
+        link = "any_value(link)" if "link" in cols else "''"
         rows = con.execute(f"""
             WITH j AS (
                 SELECT id,
                        any_value("{label}")   AS label,
-                       any_value(origin_ref)  AS origin_ref
+                       any_value(origin_ref)  AS origin_ref,
+                       {link}                 AS link
                 FROM read_parquet('{join}')
                 GROUP BY id
             )
-            SELECT v.id, COALESCE(j.label, ''), COALESCE(j.origin_ref, ''), v.vec
+            SELECT v.id, COALESCE(j.label, ''), COALESCE(j.origin_ref, ''),
+                   COALESCE(j.link, ''), v.vec
             FROM read_parquet('{parquet}') v
             LEFT JOIN j ON j.id = v.id
         """).fetchall()
@@ -465,7 +473,7 @@ def _emit_vectors(con, out, *, partial: bool) -> dict:
                 f"publish-cf: {kind} join changed row count {n_in} -> {len(rows)}. "
                 "A non-unique join key would corrupt the vector blob; refusing."
             )
-        for vid, label_val, ref, vec in rows:
+        for vid, label_val, ref, link_val, vec in rows:
             if dim is None:
                 dim = len(vec)
             elif len(vec) != dim:
@@ -476,6 +484,9 @@ def _emit_vectors(con, out, *, partial: bool) -> dict:
                 "id": vid,
                 "ref": ref,
                 "label": (label_val or "")[:180],
+                # Only when there is one: ~3,000 empty strings would be bytes
+                # every cold isolate parses for nothing.
+                **({"link": link_val} if link_val else {}),
             })
 
     if partial and missing:

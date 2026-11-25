@@ -623,7 +623,7 @@ export const TOOLS = {
     class: "authored", domain: "mind", kind: "text",
     reads: ["t1_notes"],
     description:
-      "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents. Pass full:true for the entire text of the single best match. Not for consumption questions: what they played, watched, read, rated, saved or own is answered by the culture tools (`ratings`, `albums`, `around_the_time`, `saves`, `collection`, `places`), not by notes.",
+      "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents. A note digested from a claude.ai chat carries `link`, the chat itself, for when the owner wants the conversation back. Pass full:true for the entire text of the single best match. Not for consumption questions: what they played, watched, read, rated, saved or own is answered by the culture tools (`ratings`, `albums`, `around_the_time`, `saves`, `collection`, `places`), not by notes.",
     schema: {
       type: "object",
       properties: {
@@ -659,7 +659,8 @@ export const TOOLS = {
         return { ...one, peer, note: [one.note, said].filter(Boolean).join("; ") };
       }
       const hits = await search(env, topic, { k: probe(ctx), kind: "note" });
-      return cap(hits.map((h) => ({ title: h.label, score: h.score })));
+      // `link` is set only on Chat digests: the claude.ai chat behind the note.
+      return cap(hits.map((h) => ({ title: h.label, score: h.score, ...(h.link ? { link: h.link } : {}) })));
     },
   },
 
