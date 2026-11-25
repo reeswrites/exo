@@ -51,13 +51,15 @@ def test_no_saves_writes_nothing(tmp_path, monkeypatch):
     assert publish_cf._emit_save_vectors(duckdb.connect(), out, partial=False)["written"] is False
 
 
-def test_the_owners_note_is_embedded_after_the_title_and_before_the_excerpt(monkeypatch):
+def test_the_owners_note_is_embedded_after_the_title_then_the_post_then_the_excerpt(monkeypatch):
     monkeypatch.setattr(t2, "read_source", lambda q: [
-        ("s1", "You won't believe", "on loneliness in cities", "A page about tricks"),
-        ("s2", "Bare title", "", ""),
+        ("s1", "You won't believe", "on loneliness in cities", "", "A page about tricks"),
+        ("s2", "Bare title", "", "", ""),
+        ("s3", "A tweet", "", "the tweet's own words", ""),
     ])
     seen = {}
     monkeypatch.setattr(t2.embed, "embed_texts", lambda texts: seen.setdefault("t", texts) and [[0.0]] * len(texts))
     rows = t2.embed_saves()
-    assert seen["t"] == ["You won't believe. on loneliness in cities. A page about tricks", "Bare title"]
-    assert [r.id for r in rows] == ["s1", "s2"] and rows[0].zone == "save_vec"
+    assert seen["t"] == ["You won't believe. on loneliness in cities. A page about tricks", "Bare title",
+                         "A tweet. the tweet's own words"]
+    assert [r.id for r in rows] == ["s1", "s2", "s3"] and rows[0].zone == "save_vec"

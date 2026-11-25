@@ -591,6 +591,22 @@ export function chatLinks(cell) {
                                url: `https://claude.ai/chat/${id.toLowerCase()}` }));
 }
 
+// Saves search, measured on the 2,480-save library against 18 queries the audit
+// log recorded coming back empty (2026-11-25; numbers in the PR).
+//
+// The prefix is BGE's own instruction for short-query-to-passage retrieval,
+// applied to the query only — the corpus is embedded without it, as BGE
+// intends. It ranked the right save higher on short queries ("fragrance
+// perfume" -> the owner's signature-scent save; "homeless" -> a tiny-home
+// village) and lowers every score, so the floor below is set WITH it.
+//
+// The floor: right answers topped out at 0.64-0.80, empty topics at 0.54-0.62.
+// It cannot catch everything — "mental load" scored 0.69 on essays about
+// compression — which is why `exact` is reported and the description tells the
+// reader to say when nothing contains their words.
+export const SAVES_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
+export const SAVES_WEAK_BELOW = 0.63;
+
 export const TOOLS = {
   whats_relevant: {
     class: "derived", domain: "mind", kind: "vector",
@@ -2739,27 +2755,28 @@ export const TOOLS = {
     class: "intent", domain: "*", kind: "pointer",
     reads: ["t0_raindrop"],
     description:
-      "Links the owner bookmarked \u2014 about 2,500 of them across nine years. Filter by platform (youtube, substack, x, pinterest, tiktok, soundcloud...), by collection (the owner's own buckets: Gift Ideas, thought-provoking, aesthetically-pleasing, want-to-think-about, Tattoo Inspiration, yummy...), by kind, by tag, or by topic, which is searched by meaning, not just by words in the title. Call with no arguments to see which platforms and collections exist before narrowing. A save is intent, not consumption: it caught their attention, they did not necessarily finish it.",
+      "Links the owner bookmarked \u2014 about 2,500 of them across nine years. Filter by platform (youtube, substack, x, pinterest, tiktok, soundcloud...), by collection (the owner's own buckets: Gift Ideas, thought-provoking, aesthetically-pleasing, want-to-think-about, Tattoo Inspiration, yummy...), by kind, by tag, by shape (own | utterance | artifact | pointer), or by topic, which is searched by meaning, not just by words in the title. Call with no arguments to see which platforms and collections exist before narrowing. A save is intent, not consumption: it caught their attention, they did not necessarily finish it. Only `note` is the owner's own words; `post_text` and `by` are the saved post's text and its author — never quote those as the owner.",
     schema: {
       type: "object",
       properties: {
-        topic: { type: "string", description: "What the save is about, in any words. Matched by meaning against the title, the owner's note and the page's excerpt, so 'how cities shape loneliness' finds a save titled something else entirely." },
+        topic: { type: "string", description: "What the save is about, in any words. Matched by meaning against the title, the owner's note, the saved post's text and the page's excerpt, so 'how cities shape loneliness' finds a save titled something else entirely. Saves that contain the exact words come first." },
         platform: { type: "string", description: "youtube | substack | x | pinterest | tiktok | soundcloud | etsy ..." },
         collection: { type: "string", description: "One of the owner's collections, e.g. 'thought-provoking'." },
         kind: { type: "string", description: "link | article | video | image | audio | document" },
         tag: { type: "string", description: "A single tag." },
         since: { type: "string", description: "ISO date; only saves on or after." },
-        with_note: { type: "boolean", description: "Only saves with a note written on them." },
+        with_note: { type: "boolean", description: "Only saves the owner wrote a note on (about 50 — their own words, the rarest and most telling)." },
+        shape: { type: "string", description: "own (their own posts) | utterance (a tweet or note that IS the content) | artifact (an image that is the content) | pointer (a link to something elsewhere)" },
       },
     },
-    async run(env, { topic, platform, collection, kind, tag, since, with_note }, ctx) {
+    async run(env, { topic, platform, collection, kind, tag, since, with_note, shape }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
 
       // With nothing to narrow by, return the AXES rather than 20 arbitrary
       // links. A flat sample of a 2,188-item library teaches an assistant
       // nothing about what is in it; the facets tell it what it can ask next,
       // which is the same job the standing brief does one level up.
-      if (!topic && !platform && !collection && !kind && !tag && !since && !with_note) {
+      if (!topic && !platform && !collection && !kind && !tag && !since && !with_note && !shape) {
         const plats = await q(env,
           `SELECT platform AS name, count(*) AS n FROM t0_raindrop
            GROUP BY 1 ORDER BY n DESC LIMIT 10`);
@@ -2785,7 +2802,8 @@ export const TOOLS = {
            AND (? IS NULL OR kind = ?)
            AND (? IS NULL OR lower(COALESCE(tags,'')) LIKE ?)
            AND (? IS NULL OR substr(created,1,10) >= ?)
-           AND (? IS NULL OR note <> '')`;
+           AND (? IS NULL OR note <> '')
+           AND (? IS NULL OR shape = lower(?))`;
       const fparams = [
         platform ?? null, platform ?? "",
         collection ?? null, collection ?? "",
@@ -2793,49 +2811,55 @@ export const TOOLS = {
         tag ?? null, tag ? `%${tag.toLowerCase()}%` : "",
         since ?? null, since ?? "",
         with_note ? 1 : null,
+        shape ?? null, shape ?? "",
       ];
-      const COLS = `id, title, url, kind, platform, collection, tags,
-                nullif(note,'') AS note, substr(created,1,10) AS saved`;
+      const COLS = `id, title, url, kind, platform, collection, tags, shape,
+                nullif(note,'') AS note, nullif(by,'') AS by,
+                nullif(substr(post_text,1,280),'') AS post_text, substr(created,1,10) AS saved`;
 
-      // By meaning first: a save's title is often the page's own marketing, and
-      // what the owner meant by keeping it is in their note or the excerpt,
-      // which the saves index embeds. Up to 60 candidates, then the filters.
-      // Falls back to words when the index is not published yet, or when the
-      // filters leave nothing of what meaning found.
-      let rows = null;
+      // Words and meaning together. A save that contains the exact words is the
+      // surest hit and comes first; meaning finds the ones that say it another
+      // way (a title is often the page's marketing; the owner's note, the post's
+      // own text and the excerpt carry what it is about). Meaning alone has no
+      // floor — it always returns the nearest saves — so a topic that nothing
+      // contains and nothing sits close to is said to be weak, not dressed up.
+      let rows;
       let how = "words";
+      let weak = false;
       if (topic) {
-        const hits = await search(env, topic, { k: 60, index: "saves" });
-        if (hits?.length) {
-          const score = new Map(hits.map((h) => [h.id, h.score]));
-          const found = await q(env,
+        const [hits, worded] = await Promise.all([
+          search(env, topic, { k: 60, index: "saves", prefix: SAVES_QUERY_PREFIX }),
+          q(env,
             `SELECT ${COLS} FROM t0_raindrop
-             WHERE id IN (${hits.map(() => "?").join(",")}) AND ${FILTERS}`,
-            ...hits.map((h) => h.id), ...fparams);
-          if (found.length) {
-            rows = found
-              .sort((a, b) => score.get(b.id) - score.get(a.id))
-              .slice(0, probe(ctx))
-              .map((r) => ({ ...r, score: score.get(r.id) }));
-            how = "meaning";
-          }
-        }
+             WHERE (lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?
+                    OR lower(COALESCE(collection,'')) LIKE ? OR lower(COALESCE(note,'')) LIKE ?
+                    OR lower(COALESCE(post_text,'')) LIKE ? OR lower(COALESCE(by,'')) LIKE ?
+                    OR lower(COALESCE(excerpt,'')) LIKE ?)
+               AND ${FILTERS}
+             ORDER BY created DESC, id LIMIT 30`,
+            like, like, like, like, like, like, like, ...fparams),
+        ]);
+        const score = new Map((hits ?? []).map((h) => [h.id, h.score]));
+        const found = hits?.length
+          ? await q(env,
+              `SELECT ${COLS} FROM t0_raindrop
+               WHERE id IN (${hits.map(() => "?").join(",")}) AND ${FILTERS}`,
+              ...hits.map((h) => h.id), ...fparams)
+          : [];
+        const seen = new Set(worded.map((r) => r.id));
+        const byScore = (a, b) => (score.get(b.id) ?? -1) - (score.get(a.id) ?? -1);
+        rows = [
+          ...worded.map((r) => ({ ...r, exact: true })).sort(byScore),
+          ...found.filter((r) => !seen.has(r.id)).sort(byScore),
+        ].slice(0, probe(ctx)).map((r) => (score.has(r.id) ? { ...r, score: score.get(r.id) } : r));
+        how = hits?.length ? (worded.length ? "words+meaning" : "meaning") : "words";
+        const top = hits?.length ? Math.max(...found.map((r) => score.get(r.id) ?? 0), 0) : 0;
+        weak = hits?.length > 0 && worded.length === 0 && top < SAVES_WEAK_BELOW;
+      } else {
+        rows = await q(env,
+          `SELECT ${COLS} FROM t0_raindrop WHERE ${FILTERS}
+           ORDER BY created DESC, id LIMIT ?`, ...fparams, probe(ctx));
       }
-      rows ??= await q(
-        env,
-        `SELECT ${COLS}
-         FROM t0_raindrop
-         WHERE (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?
-                          OR lower(COALESCE(collection,'')) LIKE ?
-                          OR lower(COALESCE(note,'')) LIKE ?
-                          OR lower(COALESCE(excerpt,'')) LIKE ?)
-           AND ${FILTERS}
-         ORDER BY created DESC, id
-         LIMIT ?`,
-        like, like, like, like, like, like,
-        ...fparams,
-        probe(ctx)
-      );
       rows = rows.map(({ id: _id, ...r }) => r);
       const [tot] = await q(env,
         `SELECT count(*) AS n, max(substr(created,1,10)) AS newest,
@@ -2848,12 +2872,15 @@ export const TOOLS = {
       return {
         ...cap(rows, ctx),
         scope: `searched ${tot?.n ?? 0} saves, newest ${tot?.newest ?? "?"}`,
-        ...(topic ? { matched_by: how === "meaning"
-          ? "meaning — title, the owner's note and the page excerpt; best first, with a score"
-          : "words in the title, tags, collection, note or excerpt; newest first" } : {}),
+        ...(topic ? { matched_by: {
+          "words+meaning": "saves containing the exact words first (`exact`), then the closest by meaning, with a score",
+          meaning: "meaning only — no save contains these exact words; closest first, with a score",
+          words: "words only (the saves index is not published); newest first",
+        }[how] } : {}),
+        ...(weak ? { confidence: `weak — no save contains '${topic}' and none sits close to it; these are only the nearest, likely unrelated. Say so rather than presenting them as matches.` } : {}),
         ...(noted === 0
           ? { notes: "the owner's own notes on these saves are not synced yet — absence here is not evidence none were written" }
-          : { notes: `${noted} of these carry a note the owner wrote` }),
+          : { notes: `${noted} of these carry a note the owner wrote; post_text is the saved post's own words, not theirs` }),
       };
     },
   },

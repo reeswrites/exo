@@ -68,10 +68,10 @@ export async function embed(env, text) {
  * Top-k by dot product. `kind` filters to 'atom' or 'note'; omit for both.
  * Keeps a small running top-k rather than sorting 10,971 scores.
  */
-export async function search(env, query, { k = 10, kind = null, index = "vectors" } = {}) {
+export async function search(env, query, { k = 10, kind = null, index = "vectors", prefix = "" } = {}) {
   const idx = await loadIndex(env, index);
   if (!idx) return null; // that index is not published; the caller falls back
-  const q = await embed(env, query);
+  const q = await embed(env, prefix + query);
   if (q.length !== idx.dim) throw new Error(`query dim ${q.length} != ${idx.dim}`);
 
   const { vectors, rows, dim, count } = idx;
