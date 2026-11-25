@@ -22,6 +22,7 @@
     "t0_meal_event": "serve",
     "t0_meal_rating": "serve",
     "t0_chat_topic": "serve",
+    "t0_attention_thread": "serve",
     "t0_chat": "serve",
     "t1_notes": "serve",
     "t1_open_thread": "serve",

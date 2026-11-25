@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Callable
 
 from .. import plugins
-from . import album_pool, anime, chat, csv_sources, meal, music_tags, raindrop, tv
+from . import album_pool, anime, attention, chat, csv_sources, meal, music_tags, raindrop, tv
 
 
 def t0_loaders() -> dict[str, list[tuple[str, Callable]]]:
@@ -37,6 +37,10 @@ def t0_loaders() -> dict[str, list[tuple[str, Callable]]]:
         "anime": anime.load,
         # Conversation TOPICS, not turns. t0_chat stays held.
         "chat_topic": chat.topics,
+        # What has held the owner's attention across chats, from a Notion
+        # database a skill keeps (`exo fetch-attention-threads`). What
+        # `recent_topics` reads now that the chat exports have stopped.
+        "attention_thread": attention.load,
     }
     reg: dict[str, list[tuple[str, Callable]]] = {k: [("core", v)] for k, v in core.items()}
     for zone, contributors in plugins.loaders().items():

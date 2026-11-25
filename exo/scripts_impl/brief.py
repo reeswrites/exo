@@ -508,7 +508,19 @@ def build(served_counts: dict[str, int] | None = None,
     # check one against the other), and the one instruction whose absence
     # misattributes — an assistant line in a thread is another model's output.
     topics_n = counts.get("t0_chat_topic", 0)
-    if topics_n:
+    threads_n = counts.get("t0_attention_thread", 0)
+    if threads_n:
+        # The attention threads replace the chat-export topics as what
+        # `recent_topics` reads. The routing line is the point: the copy is
+        # nightly, so "right this hour" belongs to the live database.
+        newest = _one(con, f"SELECT max(substr(last_touched,1,10)) FROM {P('t0_attention_thread')}",
+                      default=None)
+        A(f"- **what has been on their mind lately** — {threads_n:,} threads of thinking "
+          f"across their chats, last touched {newest} (`recent_topics`): how many chats "
+          "each took, when it started, where it stands. A nightly copy — for what is live "
+          "this very hour, read the attention-threads database in Notion. Summaries are "
+          f"machine-written, never {config.OWNER_POSSESSIVE} words.")
+    elif topics_n:
         newest = _one(con, f"SELECT max(last_seen) FROM {P('t0_chat_topic')}", default=None)
         A(f"- **what they have been working through in conversation** — {topics_n:,} "
           f"threads, newest {newest} (`recent_topics`); one in full with `thread`. "
