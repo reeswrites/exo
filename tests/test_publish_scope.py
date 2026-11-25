@@ -344,3 +344,29 @@ def test_the_ddl_goes_through_the_busy_queue_handler(tmp_path):
     assert 'CREATE TABLE "t0_music"' in _applied(out)
     assert "applying batch" in proc.stdout
     assert "rows written" in proc.stdout, "and it is counted"
+
+
+def test_a_chat_digest_link_rides_in_the_vector_sidecar(tmp_path, monkeypatch):
+    # notes_on's list view renders hits straight from vectors.json, with no D1
+    # read, so the link has to be there. Only on rows that have one, and an
+    # older t1_notes without the column must still build.
+    import duckdb
+    monkeypatch.setattr(publish_cf.config, "SERVE", tmp_path)
+    con = duckdb.connect(":memory:")
+    url = "https://claude.ai/chat/77bee321-20eb-4c39-a124-493e5a68edb5"
+    con.execute(f"""COPY (SELECT * FROM (VALUES ('n1', [1.0, 0.0]::FLOAT[]), ('n2', [0.0, 1.0]::FLOAT[]))
+                         t(id, vec)) TO '{tmp_path}/t2_note_vec.parquet' (FORMAT parquet)""")
+
+    def build(notes_sql):
+        con.execute(f"COPY ({notes_sql}) TO '{tmp_path}/t1_notes.parquet' (FORMAT parquet)")
+        out = tmp_path / "cf"
+        out.mkdir(exist_ok=True)
+        publish_cf._emit_vectors(con, out, partial=False)
+        return {r["id"]: r for r in json.loads((out / "vectors.json").read_text())["rows"]}
+
+    rows = build(f"""SELECT * FROM (VALUES ('n1', 'Digest', 'r1', '{url}'), ('n2', 'Essay', 'r2', ''))
+                     t(id, title, origin_ref, link)""")
+    assert rows["n1"]["link"] == url
+    assert "link" not in rows["n2"]
+    old = build("SELECT * FROM (VALUES ('n1', 'Digest', 'r1'), ('n2', 'Essay', 'r2')) t(id, title, origin_ref)")
+    assert all("link" not in r for r in old.values())
