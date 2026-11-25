@@ -32,7 +32,7 @@ import json
 from datetime import datetime
 
 from .. import config
-from ..provenance import Row
+from ..provenance import Row, stable_id
 
 
 def _cache(name: str) -> dict:
@@ -114,33 +114,41 @@ def letterboxd() -> list[Row]:
     # The community average, from `exo fetch-letterboxd-avg`. Absent is not an
     # error — the column comes through empty and only the null-model check goes
     # missing with it. Keyed title+year, the same identity _film_key uses below.
-    _avgs = {e.get("_key"): e.get("avg_rating")
-             for e in _cache("letterboxd-avg-cache.json").get("films", [])}
+    _films = {e.get("_key"): e for e in _cache("letterboxd-avg-cache.json").get("films", [])}
+
+    def _hit(title: str, year) -> dict:
+        return _films.get(f"{(title or '').strip().lower()}|{str(year or '').strip()}") or {}
 
     def _avg(title: str, year) -> str:
-        hit = _avgs.get(f"{(title or '').strip().lower()}|{str(year or '').strip()}")
+        hit = _hit(title, year).get("avg_rating")
         return "" if hit is None else str(hit)
+
+    def _film(created, origin_ref, payload) -> Row:
+        # The director is enrichment, fetched later and filled in over several
+        # nights. It stays out of the id: Row.id hashes the payload, and letting
+        # a backfilled name re-mint 720 films would announce the whole library as
+        # newly seen. The id is exactly what it was before the field existed.
+        payload["director"] = _hit(payload["title"], payload["year"]).get("director") or ""
+        ident = {k: v for k, v in payload.items() if k != "director"}
+        return Row(tier="t0", zone="film", source="letterboxd", author="external",
+                   created=created, origin_ref=origin_ref, payload=payload,
+                   id=stable_id("letterboxd", "film", *[ident[k] for k in sorted(ident)]))
 
     rows: list[Row] = []
     with open(path, newline="", encoding="utf-8") as fh:
         for rec in csv.DictReader(fh):
             title, year = rec.get("Name", ""), rec.get("Year", "")
-            rows.append(Row(
-                tier="t0", zone="film", source="letterboxd", author="external",
-                created=(rec.get("Date") or None), origin_ref=rec.get("Letterboxd URI", ""),
-                payload={
-                    "title": title, "year": year,
-                    "rating": rec.get("Rating", ""),
-                    "avg_rating": _avg(title, year),
-                },
+            rows.append(_film(
+                rec.get("Date") or None, rec.get("Letterboxd URI", ""),
+                {"title": title, "year": year, "rating": rec.get("Rating", ""),
+                 "avg_rating": _avg(title, year)},
             ))
 
     cached = [
-        Row(tier="t0", zone="film", source="letterboxd", author="external",
-            created=(w.get("date") or None), origin_ref=w.get("letterboxd_uri", ""),
-            payload={"title": w.get("name", ""), "year": str(w.get("year") or ""),
-                     "rating": str(w.get("rating") or ""),
-                     "avg_rating": _avg(w.get("name", ""), w.get("year"))})
+        _film(w.get("date") or None, w.get("letterboxd_uri", ""),
+              {"title": w.get("name", ""), "year": str(w.get("year") or ""),
+               "rating": str(w.get("rating") or ""),
+               "avg_rating": _avg(w.get("name", ""), w.get("year"))})
         for w in _cache("letterboxd-cache.json").get("watched", [])
     ]
     # Keyed on title+year, NOT on the uri. Letterboxd hands out a different

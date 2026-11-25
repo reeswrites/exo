@@ -513,8 +513,12 @@ export const CLASSES = ["revealed", "authored", "intent", "possession", "dialogu
 export const DOMAINS = ["culture", "table", "mind", "workshop", "commitments", "world", "*"];
 export const KINDS = ["event", "judgement", "text", "entity", "pointer", "vector", "mixed"];
 
+// The director, off the same Letterboxd page as the community average. Filled
+// in over a few nights, so an absent key means "not fetched yet", not "none".
+const FILM_META = [["director", "director"]];
+
 const RATINGS_SRC = {
-    films:       { table: "t0_film",   label: "title",      col: "rating",       scale: "0-5", url: "origin_ref" },
+    films:       { table: "t0_film",   label: "title",      col: "rating",       scale: "0-5", url: "origin_ref", extra: FILM_META },
     books:       { table: "t0_book",   label: "title",      col: "my_rating",    scale: "0-5", status: "shelf", where: "AND shelf IN ('read','partly-read')" },
     beer:        { table: "t0_beer",   label: "beer_name",  col: "rating_score", scale: "0-5", extra: BEER_META },
     restaurants: { table: "t1_visits", label: "restaurant", col: "rating",       scale: "0-10" },
@@ -537,9 +541,13 @@ const RATINGS_SRC = {
  * seen) and, for books, every shelf, returning the shelf so 'to-read' is not
  * mistaken for read.
  */
-async function ratingsLookup(env, { medium, title }, ctx) {
+async function ratingsLookup(env, { medium, title, director }, ctx) {
+  // A director is a film fact, so it narrows to films whatever medium was asked.
+  if (director) medium = "films";
   const picked = medium ? { [medium]: RATINGS_SRC[medium] } : RATINGS_SRC;
-  const needle = `%${title.toLowerCase().replace(/[\\%_]/g, (c) => "\\" + c)}%`;
+  const term = director ?? title;
+  const field = director ? "director" : null;
+  const needle = `%${term.toLowerCase().replace(/[\\%_]/g, (c) => "\\" + c)}%`;
   const out = [];
   for (const [name, d] of Object.entries(picked)) {
     if (!d) continue;
@@ -550,7 +558,7 @@ async function ratingsLookup(env, { medium, title }, ctx) {
       `SELECT ${d.label} AS label, CAST(${d.col} AS REAL) AS rating, ${urlCol} ${statusCol}
               substr(created,1,10) AS when_${selectMeta(d.extra)}
        FROM ${d.table}
-       WHERE lower(${d.label}) LIKE ? ESCAPE '\\'
+       WHERE lower(COALESCE(${field ?? d.label}, '')) LIKE ? ESCAPE '\\'
        ORDER BY created DESC, id
        LIMIT ?`,
       needle, probe(ctx)
@@ -564,9 +572,12 @@ async function ratingsLookup(env, { medium, title }, ctx) {
   }
   const capped = cap(out, ctx);
   const where = medium ? medium : "any rated medium (films, books, beer, restaurants, anime)";
+  const what = director ? `director '${director}'` : `title '${title}'`;
   const note = capped.rows.length
-    ? `title lookup for '${title}' in ${where}; rating null = logged without a rating`
-    : `no title matching '${title}' in ${where}. Not in the record, which is good evidence but not proof: TV outside anime is in \`watching\`, and anything never logged is invisible here.`;
+    ? `lookup for ${what} in ${where}; rating null = logged without a rating`
+    : director
+      ? `no logged film directed by anyone matching '${director}'. Directors are filled in over a few nights after a film is logged, so a very recent watch may not carry one yet.`
+      : `no title matching '${title}' in ${where}. Not in the record, which is good evidence but not proof: TV outside anime is in \`watching\`, and anything never logged is invisible here.`;
   return { ...capped, order: "recent", note: [capped.note, note].filter(Boolean).join(" \u00b7 ") };
 }
 
@@ -2140,7 +2151,7 @@ export const TOOLS = {
       beer: ["t0_beer"], restaurants: ["t1_visits"], anime: ["t0_anime"],
     })[medium] ?? ["t0_anime", "t0_beer", "t0_book", "t0_film", "t1_visits"],
     description:
-      "For 'what did I think of…', 'my favourite films or books or beers', 'what did I dislike' (order='lowest'), and anything that has to skip what they already know. For 'have I seen / read / had X?' pass `title`: it searches every logged item in that medium (or all of them), rated or not, and says plainly when nothing matches. Check each candidate this way before recommending it, because a top-twenty answer that lacks X does NOT mean they haven't seen X. What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
+      "For 'what did I think of…', 'my favourite films or books or beers', 'what did I dislike' (order='lowest'), and anything that has to skip what they already know. For 'which films by director X have I seen' pass `director`. For 'have I seen / read / had X?' pass `title`: it searches every logged item in that medium (or all of them), rated or not, and says plainly when nothing matches. Check each candidate this way before recommending it, because a top-twenty answer that lacks X does NOT mean they haven't seen X. What the owner rated and how highly, per medium. Use this to judge taste from behaviour rather than prose \u2014 `verdicts` has only 10 written opinions, while they have rated 720 films, 409 books, 1,906 beers and 93 restaurants, plus every anime on their MyAnimeList. Scales differ per medium and are returned with each row; do not compare a 9.5 restaurant to a 5 film, or either to a 9 anime on MAL's 1-10 scale. Default order is their rating, highest first, so a truncated answer is the TOP twenty and not a sample \u2014 pass order='recent' for what they have rated lately, which is a different twenty entirely.",
     schema: {
       type: "object",
       properties: {
@@ -2148,9 +2159,13 @@ export const TOOLS = {
         min_rating: { type: "number", description: "Only at or above this, on that medium's own scale." },
         order: { type: "string", description: "rated (default, highest first) | lowest (lowest-rated first: what they disliked) | recent" },
         title: { type: "string", description: "Look up one title (substring, case-insensitive) instead of ranking. Returns every logged match, rated or not; books carry their shelf, so 'to-read' means not read yet." },
+        director: { type: "string", description: "Films only: every logged film by a director (substring, case-insensitive), rated or not. 'Which Ken Russell films have I seen?'" },
       },
     },
-    async run(env, { medium, min_rating, order, title }, ctx) {
+    async run(env, { medium, min_rating, order, title, director }, ctx) {
+      if (typeof director === "string" && director.trim()) {
+        return ratingsLookup(env, { medium, director: director.trim() }, ctx);
+      }
       if (typeof title === "string" && title.trim()) {
         return ratingsLookup(env, { medium, title: title.trim() }, ctx);
       }

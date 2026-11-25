@@ -8,7 +8,13 @@ column is what let the book verticals be checked at all; Letterboxd's export has
 no equivalent, so it is fetched.
 
 Each film page embeds JSON-LD with an `aggregateRating` on the same 0.5-5 scale
-as his own ratings, and needs no API key.
+as his own ratings, and needs no API key. The same blob names the film's
+`director`, which is the one fact a "which Ken Russell films have I seen" question
+needs and no export carries, so it is kept from the same request.
+
+Entries cached before the director was kept are re-fetched a bounded number per
+run (`BACKFILL`), so the gap closes over a few nights without making any one run
+long enough to crowd out the rest of the nightly.
 
 **Resumable, because this one is per-film rather than per-feed.** Six hundred
 films is six hundred requests, so the cache is read first and only unseen films
@@ -31,6 +37,7 @@ CACHE = "letterboxd-avg-cache.json"
 KEY = "films"
 DELAY = 0.7          # spacing between requests; this is one page per film
 CHECKPOINT = 25
+BACKFILL = 300       # cached entries without a director, re-fetched per run
 
 _LD = re.compile(rb'<script type="application/ld\+json">(.*?)</script>', re.S)
 # Letterboxd wraps its JSON-LD in CDATA comment markers, which json cannot read.
@@ -48,17 +55,29 @@ def _key(title: str, year) -> str:
     return f"{(title or '').strip().lower()}|{str(year or '').strip()}"
 
 
-def _average(uri: str) -> float | None:
-    """The community average from a film page, or None if the page has none."""
+def _page(uri: str) -> tuple[float | None, str]:
+    """(community average or None, director(s) or "") from one film page."""
     m = _LD.search(_fetch.get(uri))
     if not m:
-        return None
+        return None, ""
     try:
         data = json.loads(_CDATA.sub("", m.group(1).decode("utf-8", "replace")))
     except json.JSONDecodeError:
-        return None
+        return None, ""
     value = (data.get("aggregateRating") or {}).get("ratingValue")
-    return float(value) if value is not None else None
+    return (float(value) if value is not None else None), _directors(data.get("director"))
+
+
+def _directors(raw) -> str:
+    """JSON-LD `director` is one Person or a list of them; names joined by ', '."""
+    people = raw if isinstance(raw, list) else [raw] if raw else []
+    names = [p.get("name", "").strip() if isinstance(p, dict) else str(p).strip() for p in people]
+    return ", ".join(n for n in names if n)
+
+
+def _average(uri: str) -> float | None:
+    """The community average from a film page, or None if the page has none."""
+    return _page(uri)[0]
 
 
 def _films() -> list[tuple[str, str, str]]:
@@ -96,10 +115,14 @@ def run(limit: int | None = None) -> int:
     had = len(cached)
     seen = {e.get("_key") for e in cached}
     todo = [f for f in films if _key(f[0], f[1]) not in seen]
+    # Cached before directors were kept: re-fetch some, replacing in place.
+    stale = [e for e in cached if "director" not in e and e.get("uri")][:BACKFILL]
     if limit:
         todo = todo[:limit]
+        stale = stale[:max(0, limit - len(todo))]
 
-    print(f"  films {len(films):,}   cached {had:,}   to fetch {len(todo):,}")
+    print(f"  films {len(films):,}   cached {had:,}   to fetch {len(todo):,}"
+          f"   director backfill {len(stale):,}")
 
     def flush() -> bool:
         try:
@@ -111,9 +134,23 @@ def run(limit: int | None = None) -> int:
         return True
 
     missing = failed = 0
+    for entry in stale:
+        try:
+            average, director = _page(entry["uri"])
+        except Exception as exc:                       # noqa: BLE001 — one film, not the run
+            failed += 1
+            print(f"  {entry.get('title', '')[:44]:<46} backfill failed ({type(exc).__name__})")
+        else:
+            entry["director"] = director
+            if average is not None:
+                entry["avg_rating"] = average
+        time.sleep(DELAY)
+    if stale and not flush():
+        return 1
+
     for i, (title, year, uri) in enumerate(todo, 1):
         try:
-            average = _average(uri)
+            average, director = _page(uri)
         except Exception as exc:                       # noqa: BLE001 — one film, not the run
             failed += 1
             print(f"  {title[:44]:<46} failed ({type(exc).__name__})")
@@ -123,10 +160,12 @@ def run(limit: int | None = None) -> int:
                 # rerun does not fetch it forever; an unrated film is a fact.
                 missing += 1
                 cached.append({"_key": _key(title, year), "title": title,
-                               "year": year, "avg_rating": None, "uri": uri})
+                               "year": year, "avg_rating": None, "uri": uri,
+                               "director": director})
             else:
                 cached.append({"_key": _key(title, year), "title": title,
-                               "year": year, "avg_rating": average, "uri": uri})
+                               "year": year, "avg_rating": average, "uri": uri,
+                               "director": director})
         if i % CHECKPOINT == 0:
             if not flush():
                 return 1
@@ -141,6 +180,8 @@ def run(limit: int | None = None) -> int:
         return 1
 
     rated = sum(1 for e in cached if e.get("avg_rating") is not None)
+    directed = sum(1 for e in cached if e.get("director"))
     print(f"  wrote {len(cached):,} films -> {CACHE}"
-          f"  ({rated:,} with an average; this run: no rating {missing}, failed {failed})")
+          f"  ({rated:,} with an average, {directed:,} with a director;"
+          f" this run: no rating {missing}, failed {failed})")
     return 0
