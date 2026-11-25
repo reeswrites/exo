@@ -104,6 +104,15 @@ _INDEXES = {
 # batching by ROW COUNT overflows on the wide ones. Batch by bytes instead.
 _MAX_STATEMENT_BYTES = 40_000
 
+# Byte-batching cannot help a row that is ITSELF over D1's ~100KB statement cap:
+# it goes out alone and is still too long. Notes bodies are uncapped (a Notion
+# page can be any length), and the 2026-11-25 nightly died on one with
+# SQLITE_TOOBIG. Such a row is inserted with each long text cell cut to its first
+# chunk, and the rest of each cell is appended by UPDATEs of one chunk apiece.
+# 10,000 characters is at most ~40KB rendered even if every one is a 4-byte
+# character, and at most ~20KB more if every one is a doubled quote.
+_CELL_CHUNK = 10_000
+
 
 # Characters that make a statement unloadable rather than merely ugly. A NUL
 # inside a string literal is the one that matters: D1 accepted such a batch,
@@ -176,6 +185,30 @@ def _row_hash(shape: str, rendered: str) -> int:
     """
     return int(hashlib.sha1(f"{shape}\x1f{rendered}".encode()).hexdigest()[:8],
                16) & 0x7FFFFFFF
+
+
+def _oversized_row(table, header, names, row, h) -> list[str]:
+    """One INSERT with long text cells cut to a chunk, then one UPDATE per
+    further chunk. Each UPDATE is pinned to the row by its hash AND the cell's
+    current length, so it lands once on the row it was meant for: identical
+    duplicate rows (same hash) are each extended by every statement exactly once
+    and so finish identical and whole, and an unrelated row that happens to share
+    the 31-bit hash is not touched because its cell is not that length."""
+    head = list(row)
+    tails: list[tuple[str, str, int]] = []  # (column, rest, length after head)
+    for i, v in enumerate(row):
+        if isinstance(v, str) and len(v) > _CELL_CHUNK:
+            head[i] = v[:_CELL_CHUNK]
+            tails.append((names[i], v[_CELL_CHUNK:], _CELL_CHUNK))
+    body = ", ".join(_sql_literal(v) for v in head)
+    out = [header + f"({body}, {h});"]
+    for col, rest, have in tails:
+        for at in range(0, len(rest), _CELL_CHUNK):
+            piece = rest[at:at + _CELL_CHUNK]
+            out.append(
+                f'UPDATE "{table}" SET "{col}" = "{col}" || {_sql_literal(piece)} '
+                f'WHERE "{ROW_HASH}" = {h} AND length("{col}") = {have + at};')
+    return out
 
 
 def _emit_table(con, parquet, table, out_dir, ddl_dir=None, *,
@@ -257,6 +290,19 @@ def _emit_table(con, parquet, table, out_dir, ddl_dir=None, *,
         h = _row_hash(shape, body)
         digest += h
         tup = f"({body}, {h})"
+        if len(tup.encode("utf-8")) > _MAX_STATEMENT_BYTES:
+            # Flush what is queued so the oversized row's INSERT precedes its
+            # UPDATEs, then emit the row in pieces. The hash was taken over the
+            # WHOLE row above, so the digest D1 reports still matches.
+            if batch:
+                lines.append(header + ",\n".join(batch) + ";")
+                batch, size = [], len(header)
+            lines.extend(_oversized_row(table, header, names, r, h))
+            if key_at:
+                k = tuple(r[i] for i in key_at)
+                duplicate_keys += k in seen
+                seen.add(k)
+            continue
         if key_at:
             k = tuple(r[i] for i in key_at)
             if k in seen:
