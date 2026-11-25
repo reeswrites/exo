@@ -25,6 +25,8 @@ VEC_PRECISION = 6
 # big batch with one long span is catastrophically slow. 32 is second-brain's
 # measured sweet spot (larger was 11-18x slower). Text is also capped upstream.
 BATCH = 32
+# Texts embedded between cache writes, so an interrupted run keeps its progress.
+CHECKPOINT = 2000
 
 _model = None
 
@@ -72,7 +74,15 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         model = _get_model()
         # batch_size caps padding waste; parallel=0 fans the encode across all
         # cores (fastembed's recommendation for large sets) — ~1 core does 11/s.
-        for text, vec in zip(misses, model.embed(misses, batch_size=BATCH, parallel=0)):
-            cache[_key(text)] = [round(float(x), VEC_PRECISION) for x in vec]
-        _save_cache(cache)
+        #
+        # Embedded in chunks, with the cache written after each one. Saving only
+        # at the end meant a run killed partway (a CI job hitting its timeout on
+        # a big batch of new text) kept none of its work, so the next run started
+        # from zero and was killed at the same place: a loop that never ends.
+        # A chunk is a few minutes of CPU at worst; the write is a second.
+        for start in range(0, len(misses), CHECKPOINT):
+            chunk = misses[start:start + CHECKPOINT]
+            for text, vec in zip(chunk, model.embed(chunk, batch_size=BATCH, parallel=0)):
+                cache[_key(text)] = [round(float(x), VEC_PRECISION) for x in vec]
+            _save_cache(cache)
     return [cache[_key(t)] for t in texts]
