@@ -369,7 +369,9 @@ def test_already_cached_films_are_not_fetched_again(exports, monkeypatch, tmp_pa
             {"name": "Solaris", "year": "1972", "letterboxd_uri": "https://boxd.it/b"}])
     _write(exports / "letterboxd-avg-cache.json", "films",
            [{"_key": "stalker|1979", "title": "Stalker", "year": "1979",
-             "avg_rating": 4.28, "uri": "https://boxd.it/a"}])
+             "avg_rating": 4.28, "uri": "https://boxd.it/a",
+             # Already carries its director, so the backfill leaves it alone too.
+             "director": "Andrei Tarkovsky"}])
     monkeypatch.setattr(fetch_letterboxd_avg.config, "EXPORTS", exports)
     monkeypatch.setattr(fetch_letterboxd_avg.config, "latest", lambda _pat: None)
     monkeypatch.setattr(fetch_letterboxd_avg, "DELAY", 0)
