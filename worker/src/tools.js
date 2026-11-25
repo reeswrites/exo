@@ -2739,11 +2739,11 @@ export const TOOLS = {
     class: "intent", domain: "*", kind: "pointer",
     reads: ["t0_raindrop"],
     description:
-      "Links the owner bookmarked \u2014 2,188 of them across nine years. Filter by platform (youtube, substack, x, pinterest, tiktok, soundcloud...), by collection (the owner's own buckets: Gift Ideas, thought-provoking, aesthetically-pleasing, want-to-think-about, Tattoo Inspiration, yummy...), by kind, by tag, or by topic. Call with no arguments to see which platforms and collections exist before narrowing. A save is intent, not consumption: it caught their attention, they did not necessarily finish it.",
+      "Links the owner bookmarked \u2014 about 2,500 of them across nine years. Filter by platform (youtube, substack, x, pinterest, tiktok, soundcloud...), by collection (the owner's own buckets: Gift Ideas, thought-provoking, aesthetically-pleasing, want-to-think-about, Tattoo Inspiration, yummy...), by kind, by tag, or by topic, which is searched by meaning, not just by words in the title. Call with no arguments to see which platforms and collections exist before narrowing. A save is intent, not consumption: it caught their attention, they did not necessarily finish it.",
     schema: {
       type: "object",
       properties: {
-        topic: { type: "string", description: "Match against title, tags or collection." },
+        topic: { type: "string", description: "What the save is about, in any words. Matched by meaning against the title, the owner's note and the page's excerpt, so 'how cities shape loneliness' finds a save titled something else entirely." },
         platform: { type: "string", description: "youtube | substack | x | pinterest | tiktok | soundcloud | etsy ..." },
         collection: { type: "string", description: "One of the owner's collections, e.g. 'thought-provoking'." },
         kind: { type: "string", description: "link | article | video | image | audio | document" },
@@ -2779,30 +2779,64 @@ export const TOOLS = {
         };
       }
 
-      const rows = await q(
-        env,
-        `SELECT title, url, kind, platform, collection, tags,
-                nullif(note,'') AS note, substr(created,1,10) AS saved
-         FROM t0_raindrop
-         WHERE (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?
-                          OR lower(COALESCE(collection,'')) LIKE ?)
-           AND (? IS NULL OR lower(platform) = lower(?))
+      // Every filter but the topic, shared by both ways of finding a save.
+      const FILTERS = `(? IS NULL OR lower(platform) = lower(?))
            AND (? IS NULL OR lower(collection) = lower(?))
            AND (? IS NULL OR kind = ?)
            AND (? IS NULL OR lower(COALESCE(tags,'')) LIKE ?)
            AND (? IS NULL OR substr(created,1,10) >= ?)
-           AND (? IS NULL OR note <> '')
-         ORDER BY created DESC, id
-         LIMIT ?`,
-        like, like, like, like,
+           AND (? IS NULL OR note <> '')`;
+      const fparams = [
         platform ?? null, platform ?? "",
         collection ?? null, collection ?? "",
         kind ?? null, kind ?? "",
         tag ?? null, tag ? `%${tag.toLowerCase()}%` : "",
         since ?? null, since ?? "",
         with_note ? 1 : null,
+      ];
+      const COLS = `id, title, url, kind, platform, collection, tags,
+                nullif(note,'') AS note, substr(created,1,10) AS saved`;
+
+      // By meaning first: a save's title is often the page's own marketing, and
+      // what the owner meant by keeping it is in their note or the excerpt,
+      // which the saves index embeds. Up to 60 candidates, then the filters.
+      // Falls back to words when the index is not published yet, or when the
+      // filters leave nothing of what meaning found.
+      let rows = null;
+      let how = "words";
+      if (topic) {
+        const hits = await search(env, topic, { k: 60, index: "saves" });
+        if (hits?.length) {
+          const score = new Map(hits.map((h) => [h.id, h.score]));
+          const found = await q(env,
+            `SELECT ${COLS} FROM t0_raindrop
+             WHERE id IN (${hits.map(() => "?").join(",")}) AND ${FILTERS}`,
+            ...hits.map((h) => h.id), ...fparams);
+          if (found.length) {
+            rows = found
+              .sort((a, b) => score.get(b.id) - score.get(a.id))
+              .slice(0, probe(ctx))
+              .map((r) => ({ ...r, score: score.get(r.id) }));
+            how = "meaning";
+          }
+        }
+      }
+      rows ??= await q(
+        env,
+        `SELECT ${COLS}
+         FROM t0_raindrop
+         WHERE (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?
+                          OR lower(COALESCE(collection,'')) LIKE ?
+                          OR lower(COALESCE(note,'')) LIKE ?
+                          OR lower(COALESCE(excerpt,'')) LIKE ?)
+           AND ${FILTERS}
+         ORDER BY created DESC, id
+         LIMIT ?`,
+        like, like, like, like, like, like,
+        ...fparams,
         probe(ctx)
       );
+      rows = rows.map(({ id: _id, ...r }) => r);
       const [tot] = await q(env,
         `SELECT count(*) AS n, max(substr(created,1,10)) AS newest,
                 sum(CASE WHEN note <> '' THEN 1 ELSE 0 END) AS noted FROM t0_raindrop`);
@@ -2814,6 +2848,9 @@ export const TOOLS = {
       return {
         ...cap(rows, ctx),
         scope: `searched ${tot?.n ?? 0} saves, newest ${tot?.newest ?? "?"}`,
+        ...(topic ? { matched_by: how === "meaning"
+          ? "meaning — title, the owner's note and the page excerpt; best first, with a score"
+          : "words in the title, tags, collection, note or excerpt; newest first" } : {}),
         ...(noted === 0
           ? { notes: "the owner's own notes on these saves are not synced yet — absence here is not evidence none were written" }
           : { notes: `${noted} of these carry a note the owner wrote` }),

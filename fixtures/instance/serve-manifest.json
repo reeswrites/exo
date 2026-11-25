@@ -44,6 +44,7 @@
     "t1_procedure": "serve",
     "t2_note_vec": "serve",
     "t2_post_vec": "serve",
+    "t2_save_vec": "serve",
     "t2_affinity": "serve",
     "rows": "hold",
     "cache_embed": "hold",
