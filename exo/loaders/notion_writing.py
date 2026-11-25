@@ -53,9 +53,15 @@ SOURCE = "notion-writing"
 
 
 def note_id(source: str, payload: dict) -> str:
-    """The note id, as it was before `authorship` existed."""
+    """The note id, as it was before `authorship` and `link` existed.
+
+    Both are pointers ABOUT a note rather than its content, and adding either
+    must not re-mint every Notion note's id (first_seen is keyed on it)."""
     return stable_id(source, "note",
-                     *[payload[k] for k in sorted(payload) if k != "authorship"])
+                     *[payload[k] for k in sorted(payload) if k not in _NOT_IDENTITY])
+
+
+_NOT_IDENTITY = {"authorship", "link"}
 
 
 def _loose(s: str) -> str:
@@ -155,6 +161,7 @@ def overlay(rows: list[Row], cache: dict | None = None) -> list[Row]:
             "uuid": p["page_id"],
             "body": p["body"],
             "authorship": p["authorship"],
+            "link": p.get("chat_url", ""),
         }
         out.append(Row(tier="t1", zone="note", source=SOURCE, author=author,
                        payload=payload, created=(p.get("created") or "")[:10] or None,

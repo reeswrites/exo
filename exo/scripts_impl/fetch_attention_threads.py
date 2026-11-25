@@ -19,6 +19,7 @@ Expected properties (a missing one reads as empty, never an error):
     First seen    date
     Last touched  date
     Authorship    select   AI | Mixed
+    Chats         text     one claude.ai chat per line: `<chat uuid> <title>`
 
 The database's own `Status` (Live / Cooling / Dormant) is deliberately not
 copied. It means "touched in the last two hours", which a nightly copy turns
@@ -75,6 +76,7 @@ def parse(page: dict) -> dict | None:
         "title": title,
         "summary": _text(page, "Summary"),
         "moves": _text(page, "Moves"),
+        "chats": _text(page, "Chats"),
         "touches": int(n) if isinstance(n, (int, float)) else 0,
         "load": _select(page, "Load"),
         "first_seen": _date(page, "First seen"),

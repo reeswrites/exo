@@ -38,6 +38,9 @@ def load() -> list[Row]:
                 "title": t.get("title", ""),
                 "summary": t.get("summary", ""),
                 "moves": t.get("moves", ""),
+                # `<chat uuid> <title>` per line; the surface turns each into a
+                # claude.ai link, so a thread leads back to its chats verbatim.
+                "chats": t.get("chats", ""),
                 "touches": int(t.get("touches") or 0),
                 "load": t.get("load", ""),
                 "first_seen": t.get("first_seen"),

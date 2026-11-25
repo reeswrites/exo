@@ -581,6 +581,16 @@ async function ratingsLookup(env, { medium, title, director }, ctx) {
   return { ...capped, order: "recent", note: [capped.note, note].filter(Boolean).join(" \u00b7 ") };
 }
 
+// An attention thread's `Chats` cell, one claude.ai chat per line as
+// `<chat uuid> <title>`, as links. A line without a uuid is skipped rather than
+// guessed at: a wrong link is worse than a missing one.
+const CHAT_LINE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*(.*)$/i;
+export function chatLinks(cell) {
+  return String(cell ?? "").split("\n").map((l) => l.trim().match(CHAT_LINE)).filter(Boolean)
+    .map(([, id, title]) => ({ title: title.replace(/^\((.*)\)$/, "$1").trim() || null,
+                               url: `https://claude.ai/chat/${id.toLowerCase()}` }));
+}
+
 export const TOOLS = {
   whats_relevant: {
     class: "derived", domain: "mind", kind: "vector",
@@ -631,7 +641,9 @@ export const TOOLS = {
           // match this row to the live page instead of treating the two as two
           // notes — which is the whole difference between a second source and a
           // second copy.
-          select: "title, folder, created, source, uuid, body",
+          // `link` is the claude.ai chat a Chat digest was written from; empty
+          // on every other note.
+          select: "title, folder, created, source, uuid, link, body",
           onClip: (_r, kept, total) =>
             `body truncated to ${kept} of ${total} chars — this is one of the owner's longer notes; ask about a specific part of it rather than requesting it again`,
         });
@@ -2967,7 +2979,7 @@ export const TOOLS = {
     class: "dialogue", domain: "mind", kind: "event",
     reads: ["t0_attention_thread"],
     description:
-      "For 'what has been on their mind lately', 'what are they working through this week or month', and 'when did they start thinking about X'. Threads of thinking that ran across their chats and days, newest-touched first, each with how many chats touched it, when it was first and last touched, where it stands now and how it moved. `touches` is the signal a title cannot carry: twelve chats is a preoccupation, one is a passing look. A copy taken nightly, so it can trail the last few hours; for what is live this very hour, ask the attention-threads database in Notion directly. Summaries and moves are machine-written from the chats: report them as a summary, never quote them as the owner's words. For what they WROTE on a topic, use notes_on.",
+      "For 'what has been on their mind lately', 'what are they working through this week or month', and 'when did they start thinking about X'. Threads of thinking that ran across their chats and days, newest-touched first, each with how many chats touched it, when it was first and last touched, where it stands now and how it moved. `touches` is the signal a title cannot carry: twelve chats is a preoccupation, one is a passing look. A copy taken nightly, so it can trail the last few hours; for what is live this very hour, ask the attention-threads database in Notion directly. Summaries and moves are machine-written from the chats: report them as a summary, never quote them as the owner's words. Each thread carries `chats`, claude.ai links to the conversations behind it, for when the owner wants the chat itself back rather than its summary. For what they WROTE on a topic, use notes_on.",
     schema: {
       type: "object",
       properties: {
@@ -2975,7 +2987,7 @@ export const TOOLS = {
         since: { type: "string", description: "ISO date; only threads touched on or after it." },
         min_touches: { type: "number", description: "Only threads at least this many chats touched." },
         order: { type: "string", description: "recent (default, last touched first) | touches (most-touched first) | started (newest first-seen first)" },
-        full: { type: "boolean", description: "Return every dated move rather than the latest one." },
+        full: { type: "boolean", description: "Return every dated move and every chat link, rather than the latest move and the last five chats." },
       },
     },
     async run(env, { topic, since, min_touches, order, full }, ctx) {
@@ -2989,7 +3001,7 @@ export const TOOLS = {
         `SELECT title, substr(last_touched,1,10) AS last_touched,
                 substr(first_seen,1,10) AS first_seen, touches, load,
                 substr(COALESCE(summary,''), 1, 300) AS summary,
-                COALESCE(moves,'') AS moves
+                COALESCE(moves,'') AS moves, COALESCE(chats,'') AS chats
          FROM t0_attention_thread
          WHERE (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(summary,'')) LIKE ?
                           OR lower(COALESCE(moves,'')) LIKE ?)
@@ -3006,11 +3018,14 @@ export const TOOLS = {
       const days = (d) => d ? Math.round((Date.parse(today) - Date.parse(d)) / 86400000) : null;
       const shaped = rows.map((r) => {
         const moves = r.moves.split("\n").map((m) => m.trim()).filter(Boolean);
-        const { moves: _m, ...rest } = r;
+        const chats = chatLinks(r.chats);
+        const { moves: _m, chats: _c, ...rest } = r;
         return {
           ...rest,
           days_since_touched: days(r.last_touched),
           ...(full ? { moves } : { latest_move: moves.at(-1) ?? null, move_count: moves.length }),
+          chat_count: chats.length,
+          chats: full ? chats : chats.slice(-5),
         };
       });
       const [span] = await q(env,

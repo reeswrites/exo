@@ -164,6 +164,9 @@ def shape(page: dict, index: dict) -> dict:
         "locked": _check(page, "Locked"),
         "skip": _check(page, "Skip?"),
         "url": page.get("url", ""),
+        # Set on Chat digests rows: the claude.ai chat the digest was written
+        # from. Served as the note's `link`, so a hit leads back to the chat.
+        "chat_url": api._prop_text(_prop(page, "Chat URL")).strip(),
     }
 
 
