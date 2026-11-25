@@ -41,6 +41,7 @@ def _page(pid="p1", title="Housing plan", summary="Weighing rent vs buy.",
             "Last touched": {"type": "date", "date": {"start": last}},
             "Authorship": {"type": "select", "select": {"name": "AI"}},
             "Status": {"type": "select", "select": {"name": "Live"}},
+            "Chats": _rt("77bee321-20eb-4c39-a124-493e5a68edb5 Housing numbers"),
         },
     }
 
@@ -59,6 +60,7 @@ def test_fetch_and_load(monkeypatch):
     assert r.payload["touches"] == 4 and r.payload["load"] == "Heavy"
     assert r.payload["moves"].endswith("ran the numbers")
     assert "status" not in r.payload          # "Live" goes stale overnight; not copied
+    assert r.payload["chats"].startswith("77bee321-")  # the surface links these
 
 
 def test_a_thread_that_moves_keeps_its_id(monkeypatch):

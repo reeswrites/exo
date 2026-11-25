@@ -129,3 +129,17 @@ def test_authorship_is_left_out_of_the_id():
     row = _vault_row("raw/import/a.md")
     payload = dict(row.payload, authorship="mixed")
     assert nw.note_id("second-brain", payload) == row.id
+
+
+def test_a_chat_digest_carries_its_chat_link_without_changing_any_note_id():
+    url = "https://claude.ai/chat/77bee321-20eb-4c39-a124-493e5a68edb5"
+    [plain] = nw.overlay([], _cache(_page("p1", title="Digest", body=LONG, created_by=ME)))
+    [linked] = nw.overlay([], _cache(_page("p1", title="Digest", body=LONG, created_by=ME,
+                                           chat_url=url)))
+    assert linked.payload["link"] == url
+    assert plain.payload["link"] == ""
+    # A pointer about the note, not its content: the id (and first_seen with it)
+    # must be the one the note had before links existed.
+    assert linked.id == plain.id
+    before = {k: v for k, v in plain.payload.items() if k != "link"}
+    assert nw.note_id(plain.source, before) == plain.id
