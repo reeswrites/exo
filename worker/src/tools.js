@@ -600,12 +600,17 @@ export function chatLinks(cell) {
 // perfume" -> the owner's signature-scent save; "homeless" -> a tiny-home
 // village) and lowers every score, so the floor below is set WITH it.
 //
-// The floor: right answers topped out at 0.64-0.80, empty topics at 0.54-0.62.
-// It cannot catch everything — "mental load" scored 0.69 on essays about
-// compression — which is why `exact` is reported and the description tells the
-// reader to say when nothing contains their words.
+// The floor is set on LIVE scores, not local ones. The corpus is embedded by
+// fastembed in CI and the query by Workers AI, and the two copies of the model
+// disagree by ~0.08: tuned locally at 0.63, it called "fragrance perfume" weak
+// live (0.60) while returning exactly the right saves. Live, right answers
+// topped at 0.60-0.76 (fragrance, meaning, meditation, AI art ethics) and empty
+// or loose topics at 0.47-0.58 (lolcow, Karlsson, malleable software, emotional
+// labor, relationship anarchy). It cannot catch everything — "mental load"
+// scores 0.63 on essays about compression — which is why `exact` is reported
+// and the description tells the reader to say when nothing contains their words.
 export const SAVES_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
-export const SAVES_WEAK_BELOW = 0.63;
+export const SAVES_WEAK_BELOW = 0.59;
 
 export const TOOLS = {
   whats_relevant: {
@@ -2846,11 +2851,17 @@ export const TOOLS = {
                WHERE id IN (${hits.map(() => "?").join(",")}) AND ${FILTERS}`,
               ...hits.map((h) => h.id), ...fparams)
           : [];
+        // Three tiers. An exact match meaning also rates close is the surest
+        // hit. Then meaning. Last, exact matches meaning did not rate at all:
+        // "meditation" appears in a candle shop's blurb, and that should not
+        // outrank an essay about meditation that never uses the word.
         const seen = new Set(worded.map((r) => r.id));
         const byScore = (a, b) => (score.get(b.id) ?? -1) - (score.get(a.id) ?? -1);
+        const exact = worded.map((r) => ({ ...r, exact: true }));
         rows = [
-          ...worded.map((r) => ({ ...r, exact: true })).sort(byScore),
+          ...exact.filter((r) => score.has(r.id)).sort(byScore),
           ...found.filter((r) => !seen.has(r.id)).sort(byScore),
+          ...exact.filter((r) => !score.has(r.id)),
         ].slice(0, probe(ctx)).map((r) => (score.has(r.id) ? { ...r, score: score.get(r.id) } : r));
         how = hits?.length ? (worded.length ? "words+meaning" : "meaning") : "words";
         const top = hits?.length ? Math.max(...found.map((r) => score.get(r.id) ?? 0), 0) : 0;
@@ -2873,7 +2884,7 @@ export const TOOLS = {
         ...cap(rows, ctx),
         scope: `searched ${tot?.n ?? 0} saves, newest ${tot?.newest ?? "?"}`,
         ...(topic ? { matched_by: {
-          "words+meaning": "saves containing the exact words first (`exact`), then the closest by meaning, with a score",
+          "words+meaning": "saves containing the exact words that are also close in meaning first (`exact`), then the closest by meaning, then other saves that merely contain the words",
           meaning: "meaning only — no save contains these exact words; closest first, with a score",
           words: "words only (the saves index is not published); newest first",
         }[how] } : {}),

@@ -55,13 +55,22 @@ ok(r.rows.map((x) => x.title).join("|").startsWith("You won't believe this one t
 ok(r.confidence === undefined, "a close match is not called weak");
 
 const ex = await TOOLS.saves.run(env(), { topic: "lonely" }, ctx);
-ok(ex.rows[0].exact === true && /lonely/i.test(ex.rows[0].title + ex.rows[0].post_text) && /exact words first/.test(ex.matched_by),
+ok(ex.rows[0].exact === true && /lonely/i.test(ex.rows[0].title + ex.rows[0].post_text) && /exact words that are also close/.test(ex.matched_by),
    "a save containing the exact words comes first, marked exact");
 ok(ex.rows.some((x) => x.title === "a tweet" && x.by === "Kim" && x.post_text),
    "post_text is searched by words and returned with its author");
 
 const weak = await TOOLS.saves.run(env(), { topic: "mushroom foraging" }, ctx);
 ok(/^weak/.test(weak.confidence ?? "") && weak.rows.length > 0, "nothing contains it and nothing is close: said to be weak");
+
+// "glaze" is in s2's excerpt; meaning (axis 1) rates s2 highest, so it leads.
+// An exact match meaning does NOT rate (not in the index's candidates) must
+// trail the meaning matches.
+db.prepare("INSERT INTO t0_raindrop VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").run(
+  "s6", "Candle shop", "https://e", "link", "web", "Gift Ideas", "", "pointer", "", "", "", "great for glaze lovers", "2025-06-01");
+const tier = await TOOLS.saves.run(env(), { topic: "glaze" }, ctx);
+ok(tier.rows[0].title === "Glaze recipes" && tier.rows.at(-1).title === "Candle shop",
+   "an exact match meaning never rated comes after the meaning matches");
 
 const sh = await TOOLS.saves.run(env(), { shape: "utterance" }, ctx);
 ok(sh.rows.length === 1 && sh.rows[0].title === "a tweet", "shape filter, with no topic");
