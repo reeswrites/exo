@@ -89,6 +89,9 @@ _INDEXES = {
     # builds a transient automatic index for that join per query at no billed
     # cost, while a stored one is ~3,800 more writes on every import of it.
     "t0_music_tag": [],
+    # `saves` resolves meaning-search hits by id (`WHERE id IN (...)`). Without
+    # an index that is a 2,500-row scan per call; with it, one seek per hit.
+    "t0_raindrop": ["id"],
     "t0_album_pool": [],   # same reasoning: a few thousand rows, auto-indexed per join
     "t1_open_thread": [],
     # Every project tool filters or groups by repo first, and the commit table is
@@ -506,6 +509,50 @@ def _emit_vectors(con, out, *, partial: bool) -> dict:
     )
     return {"complete": True, "count": len(index), "dim": dim, "bytes": len(blob) * 4}
 
+
+
+def _emit_save_vectors(con, out, *, partial: bool) -> dict:
+    """`saves.f32` + `saves.json`: the Raindrop index, apart from `vectors.f32`.
+
+    Apart for two reasons. These are other people's pages, and `whats_relevant`
+    ranks the owner's writing from the main blob — a bookmark outranking their
+    own note would answer "what have I thought" with something they only saved.
+    And the main blob is all-or-nothing on scoped runs, so joining it would make
+    the notes lane (which never loads Raindrop) unable to publish vectors at all.
+
+    Written on full runs only. A scoped run did not rebuild the saves, and the
+    instance uploads these files only when they exist, so the copy in R2 stands.
+    """
+    vec = config.SERVE / "t2_save_vec.parquet"
+    join = config.SERVE / "t0_raindrop.parquet"
+    if partial or not vec.exists() or not join.exists():
+        return {"written": False, "count": 0}
+    n_in = con.execute(f"SELECT count(*) FROM read_parquet('{vec}')").fetchone()[0]
+    rows = con.execute(f"""
+        WITH j AS (SELECT id, any_value(title) AS title FROM read_parquet('{join}') GROUP BY id)
+        SELECT v.id, COALESCE(j.title, ''), v.vec
+        FROM read_parquet('{vec}') v JOIN j ON j.id = v.id
+        ORDER BY v.id
+    """).fetchall()
+    if not rows:
+        return {"written": False, "count": 0}
+    if len(rows) > n_in:
+        raise SystemExit(f"publish-cf: save join changed row count {n_in} -> {len(rows)}; refusing")
+    blob = array("f")
+    index = []
+    dim = len(rows[0][2])
+    for vid, title, v in rows:
+        if len(v) != dim:
+            raise SystemExit(f"publish-cf: ragged save vector dim {len(v)} != {dim}")
+        blob.extend(v)
+        index.append({"kind": "save", "id": vid, "label": (title or "")[:180]})
+    if sys.byteorder != "little":
+        blob.byteswap()
+    (out / "saves.f32").write_bytes(blob.tobytes())
+    (out / "saves.json").write_text(
+        json.dumps({"dim": dim, "count": len(index), "normalized": True, "rows": index}),
+        encoding="utf-8")
+    return {"written": True, "count": len(index), "dim": dim, "bytes": len(blob) * 4}
 
 
 IMPORT_SH = r"""#!/bin/sh
@@ -1131,6 +1178,10 @@ def run() -> int:
             print("  R2  surface.json: absent — the surface will offer every tool it defines")
         _emit_reconcile(out, tables, scope)
         vinfo = _emit_vectors(con, out, partial=(scope == "partial"))
+        sinfo = _emit_save_vectors(con, out, partial=(scope == "partial"))
+        if sinfo["written"]:
+            print(f"  R2  saves.f32       {sinfo['count']:>8,} x {sinfo['dim']}d "
+                  f"= {sinfo['bytes'] / 1e6:.2f} MB")
         if vinfo.get("complete"):
             print(f"  R2  vectors.f32     {vinfo['count']:>8,} x {vinfo['dim']}d "
                   f"= {vinfo['bytes'] / 1e6:.2f} MB")

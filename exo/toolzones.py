@@ -158,7 +158,9 @@ TOOL_ZONES: dict[str, Reads] = {
     # rows carry one, so holding that zone is the whole tool rather than a
     # narrower answer — which is `required`, not `any_of` with one group.
     "facets": Reads(required=("t0_beer",)),
-    "saves": Reads(required=("t0_raindrop",)),
+    # Words still answer without the index; meaning needs it (its own blob,
+    # saves.f32, never mixed into whats_relevant's).
+    "saves": Reads(required=("t0_raindrop",), enriches=("t2_save_vec",)),
     # Two independent halves. `dining` and `clusters` are taste-engine's
     # documents; `beer` is computed from the check-in log, because taste-engine
     # has never seen it and nothing upstream is going to write that file. Either

@@ -61,6 +61,7 @@
     "t1_project_open": "serve",
     "t1_post": "serve",
     "t2_post_vec": "serve",
+    "t2_save_vec": "serve",
     "t1_draft": "serve",
     "t1_procedure": "serve"
   },

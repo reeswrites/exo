@@ -12,23 +12,27 @@
  * product. Only the query embedding needs normalising.
  */
 
-let CACHE = null; // per-isolate; survives across requests, rebuilt on cold start
+// Per-isolate, one entry per index ("vectors" = the owner's writing, "saves" =
+// their bookmarks); survives across requests, rebuilt on cold start.
+const CACHES = new Map();
 
-export async function loadIndex(env) {
+export async function loadIndex(env, name = "vectors") {
   // Version-check before trusting the cache. An isolate can outlive a nightly
   // publish, and the failure is silent: it keeps the old vectors while D1 holds
   // the new rows, so hits resolve to refs that no longer exist — or worse, to a
   // different note that now owns that hash. One HEAD per search is cheap next to
   // a 14MB load, and it turns "intermittently wrong" into "correct".
-  const head = await env.VECTORS.head("vectors.f32");
+  const head = await env.VECTORS.head(`${name}.f32`);
+  if (!head && name !== "vectors") return null; // an optional index not yet published
   const version = head?.etag ?? head?.uploaded?.toISOString?.() ?? null;
-  if (CACHE && CACHE.version === version) return CACHE;
+  const hit = CACHES.get(name);
+  if (hit && hit.version === version) return hit;
 
   const [blobObj, metaObj] = await Promise.all([
-    env.VECTORS.get("vectors.f32"),
-    env.VECTORS.get("vectors.json"),
+    env.VECTORS.get(`${name}.f32`),
+    env.VECTORS.get(`${name}.json`),
   ]);
-  if (!blobObj || !metaObj) throw new Error("vector index missing from R2");
+  if (!blobObj || !metaObj) throw new Error(`vector index ${name} missing from R2`);
 
   const meta = JSON.parse(await metaObj.text());
   const buf = await blobObj.arrayBuffer();
@@ -41,8 +45,9 @@ export async function loadIndex(env) {
     throw new Error(`vector blob length ${vectors.length} != ${expected}`);
   }
 
-  CACHE = { vectors, rows: meta.rows, dim: meta.dim, count: meta.count, version };
-  return CACHE;
+  const entry = { vectors, rows: meta.rows, dim: meta.dim, count: meta.count, version };
+  CACHES.set(name, entry);
+  return entry;
 }
 
 /** Embed a query in the same space as the corpus, then unit-normalise it. */
@@ -63,8 +68,9 @@ export async function embed(env, text) {
  * Top-k by dot product. `kind` filters to 'atom' or 'note'; omit for both.
  * Keeps a small running top-k rather than sorting 10,971 scores.
  */
-export async function search(env, query, { k = 10, kind = null } = {}) {
-  const idx = await loadIndex(env);
+export async function search(env, query, { k = 10, kind = null, index = "vectors" } = {}) {
+  const idx = await loadIndex(env, index);
+  if (!idx) return null; // that index is not published; the caller falls back
   const q = await embed(env, query);
   if (q.length !== idx.dim) throw new Error(`query dim ${q.length} != ${idx.dim}`);
 

@@ -258,6 +258,33 @@ def embed_posts() -> list[Row]:
     ]
 
 
+# ─────────────────────────── save_vec (embed) ────────────────────────
+def embed_saves() -> list[Row]:
+    """t2_save_vec: one 384-d vector per Raindrop save, keyed by the save's id.
+
+    Saves were findable only by words in the title, tag or collection, and a
+    bookmark's title is often a page's marketing ("You won't believe..."). What
+    the owner meant by saving it lives in their `note` and, failing that, in the
+    page's `excerpt`; both are embedded after the title, note first because it is
+    theirs. Capped at 1,500 chars for the same batch-padding reason as notes.
+
+    Searched from `saves` only. These are other people's pages, so they get a
+    blob of their own (publish_cf `_emit_save_vectors`) rather than joining the
+    one `whats_relevant` ranks the owner's own writing from.
+    """
+    rows = read_source(
+        "SELECT id, title, note, excerpt FROM t0_raindrop ORDER BY id"
+    )
+    texts = [". ".join(p for p in ((t or "").strip(), (n or "").strip(), (e or "").strip()) if p)[:1500]
+             for _id, t, n, e in rows]
+    vecs = embed.embed_texts(texts)
+    return [
+        Row(tier="t2", zone="save_vec", source="warehouse.embed", author="machine",
+            grounds=False, regenerable=True, id=_id, payload={"vec": v})
+        for (_id, *_), v in zip(rows, vecs)
+    ]
+
+
 # ────────────────────────────── affinity ─────────────────────────────
 def affinity() -> list[Row]:
     """artist -> (plays, authored notes mentioning them, blended score).
@@ -299,6 +326,14 @@ def run_all() -> None:
     pvecs = embed_posts() if _ready("t1_post", "title", "body") else []
     io.write_zone("t2", "post_vec", pvecs)
     print(f"  t2/post_vec   {len(pvecs):>7,} rows  (bge-small 384d · published blog · cache)")
+    # Skipped, not emptied, when the saves are absent: a lane that never loads
+    # Raindrop (the notes lane) must not write a zero-row index over a good one.
+    if _ready("t0_raindrop", "title", "note", "excerpt"):
+        svecs = embed_saves()
+        io.write_zone("t2", "save_vec", svecs)
+        print(f"  t2/save_vec   {len(svecs):>7,} rows  (bge-small 384d · raindrop saves · cache)")
+    else:
+        print("  t2/save_vec   skipped — no t0_raindrop with note/excerpt in this run")
     aff = affinity() if _ready("t0_music", "artist") and _ready("t1_notes", "body") else []
     io.write_zone("t2", "affinity", aff)
     print(f"  t2/affinity   {len(aff):>7,} rows  (cross-zone example)")
