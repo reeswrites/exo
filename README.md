@@ -155,6 +155,7 @@ uv run exo fetch-goodreads      # shelves (GOODREADS_USER_ID) — Goodreads reti
                                 #   its RSS in late 2026; this now 404s
 uv run exo fetch-reading-log    # books from a Notion database that replaces it
 uv run exo fetch-raindrop       # every bookmark, with notes and excerpts (RAINDROP_TOKEN)
+uv run exo fetch-attention-threads  # threads of thinking, from a Notion database
                                 #   (NOTION_TOKEN, READING_LOG_DATABASE_ID);
                                 #   Goodreads-seeded rows keep their ids
 uv run exo fetch-trakt          # TV + anime watches (TRAKT_CLIENT_ID; a secret

@@ -93,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     ssr = sub.add_parser("search"); ssr.add_argument("query"); ssr.add_argument("--k", type=int, default=10)
     sub.add_parser("fetch-goodreads")
     sub.add_parser("fetch-reading-log")
+    sub.add_parser("fetch-attention-threads")
     sub.add_parser("fetch-raindrop")
     sub.add_parser("fetch-lastfm")
     sap = sub.add_parser("fetch-album-pool")
@@ -241,6 +242,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "fetch-reading-log":
         from .scripts_impl import fetch_reading_log
         return fetch_reading_log.run()
+    elif args.cmd == "fetch-attention-threads":
+        from .scripts_impl import fetch_attention_threads
+        return fetch_attention_threads.run()
     elif args.cmd == "fetch-raindrop":
         from .scripts_impl import fetch_raindrop
         return fetch_raindrop.run()

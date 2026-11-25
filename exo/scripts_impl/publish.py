@@ -582,6 +582,14 @@ def run(dry_run: bool = False, only: list[str] | None = None) -> int:
                       )
                 """
                 params = [list(ct.get("hold_titles", [])) or [""]]
+            elif zone == "t0_attention_thread":
+                # Thread titles are written by a skill from the chats' content,
+                # so a private conversation gets a revealing title here exactly
+                # as it did in t0_chat_topic. Same review, same mechanism: titles
+                # named in `attention_threads.hold_titles` never leave. Named,
+                # not matched (ADR-0009's argument). No window: a thread is
+                # already a rollup over time, and `last_touched` is its recency.
+                sql, params = _attention_select(manifest)
             elif zone == "t0_chat_topic" and _has_column(con, "t0_chat_topic", "last_seen"):
                 # Attach the machine distillation. The columns are emitted
                 # ALWAYS, null when no cache exists — a schema that changes
@@ -778,6 +786,13 @@ def run(dry_run: bool = False, only: list[str] | None = None) -> int:
         return 0
     finally:
         con.close()
+
+
+def _attention_select(manifest: dict) -> tuple[str, list]:
+    """The served rows of t0_attention_thread: every thread but the held titles."""
+    held = list(manifest.get("attention_threads", {}).get("hold_titles", []))
+    return ("SELECT * FROM t0_attention_thread WHERE NOT list_contains(?::VARCHAR[], title)",
+            [held or [""]])
 
 
 def _hash_expr(col: str) -> str:

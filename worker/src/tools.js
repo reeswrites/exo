@@ -2950,41 +2950,64 @@ export const TOOLS = {
 
   recent_topics: {
     class: "dialogue", domain: "mind", kind: "event",
-    reads: ["t0_chat_topic"],
+    reads: ["t0_attention_thread"],
     description:
-      "What the owner has been working through in conversation lately \u2014 titles and volume, not transcripts. Fresher than their notes, which lag a deliberate act of capture. Turn count is the signal a title cannot carry: 40 turns is a preoccupation, 3 is a passing look. Use this to know what is live for them right now.",
+      "For 'what has been on their mind lately', 'what are they working through this week or month', and 'when did they start thinking about X'. Threads of thinking that ran across their chats and days, newest-touched first, each with how many chats touched it, when it was first and last touched, where it stands now and how it moved. `touches` is the signal a title cannot carry: twelve chats is a preoccupation, one is a passing look. A copy taken nightly, so it can trail the last few hours; for what is live this very hour, ask the attention-threads database in Notion directly. Summaries and moves are machine-written from the chats: report them as a summary, never quote them as the owner's words. For what they WROTE on a topic, use notes_on.",
     schema: {
       type: "object",
       properties: {
-        topic: { type: "string", description: "Match against the conversation title, its gist, or where it landed." },
-        min_turns: { type: "number", description: "Only conversations at least this long." },
+        topic: { type: "string", description: "Match against the thread's title, summary or moves." },
+        since: { type: "string", description: "ISO date; only threads touched on or after it." },
+        min_touches: { type: "number", description: "Only threads at least this many chats touched." },
+        order: { type: "string", description: "recent (default, last touched first) | touches (most-touched first) | started (newest first-seen first)" },
+        full: { type: "boolean", description: "Return every dated move rather than the latest one." },
       },
     },
-    async run(env, { topic, min_turns }, ctx) {
+    async run(env, { topic, since, min_touches, order, full }, ctx) {
       const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const by = {
+        touches: "touches DESC, last_touched DESC",
+        started: "first_seen DESC, last_touched DESC",
+      }[order] ?? "last_touched DESC, touches DESC";
       const rows = await q(
         env,
-        `SELECT title, last_seen, started, turns, his_turns,
-                -- Clipped here, whole in the thread tool. Listing threads with
-                -- no distillation meant the only route to one was already
-                -- knowing which thread to ask about, which is the opposite of
-                -- what a list is for.
-                substr(COALESCE(summary,''), 1, 200) AS gist
-         FROM t0_chat_topic
-         -- Title, gist and landing, not title alone. Titles here are topical
-         -- and the gist is thematic: a thread about theory of change is titled
-         -- after healthcare, so a title-only match answers "no such thread" to
-         -- a question the corpus does contain. The gist was already SELECTed
-         -- and shown to the caller; it was simply never searched.
-         WHERE (? IS NULL OR lower(title) LIKE ?
-                          OR lower(COALESCE(summary, '')) LIKE ?
-                          OR lower(COALESCE(landed, '')) LIKE ?)
-           AND (? IS NULL OR turns >= ?)
-         ORDER BY last_seen DESC, turns DESC, id
+        `SELECT title, substr(last_touched,1,10) AS last_touched,
+                substr(first_seen,1,10) AS first_seen, touches, load,
+                substr(COALESCE(summary,''), 1, 300) AS summary,
+                COALESCE(moves,'') AS moves
+         FROM t0_attention_thread
+         WHERE (? IS NULL OR lower(title) LIKE ? OR lower(COALESCE(summary,'')) LIKE ?
+                          OR lower(COALESCE(moves,'')) LIKE ?)
+           AND (? IS NULL OR substr(last_touched,1,10) >= ?)
+           AND (? IS NULL OR touches >= ?)
+         ORDER BY ${by}, id
          LIMIT ?`,
-        like, like, like, like, min_turns ?? null, min_turns ?? 0, probe(ctx)
+        like, like, like, like,
+        since ?? null, since ?? "",
+        min_touches ?? null, min_touches ?? 0,
+        probe(ctx)
       );
-      return cap(rows, ctx);
+      const today = new Date().toISOString().slice(0, 10);
+      const days = (d) => d ? Math.round((Date.parse(today) - Date.parse(d)) / 86400000) : null;
+      const shaped = rows.map((r) => {
+        const moves = r.moves.split("\n").map((m) => m.trim()).filter(Boolean);
+        const { moves: _m, ...rest } = r;
+        return {
+          ...rest,
+          days_since_touched: days(r.last_touched),
+          ...(full ? { moves } : { latest_move: moves.at(-1) ?? null, move_count: moves.length }),
+        };
+      });
+      const [span] = await q(env,
+        `SELECT count(*) AS n, max(substr(last_touched,1,10)) AS newest FROM t0_attention_thread`);
+      return {
+        ...cap(shaped, ctx),
+        scope: `${span?.n ?? 0} threads, most recently touched ${span?.newest ?? "?"}`,
+        voice: "titles, summaries and moves are machine-written from the owner's chats — a summary of their thinking, not their words",
+        ...(rows.length === 0 && topic
+          ? { note: `no thread matching '${topic}' — for what they have written about it, try notes_on` }
+          : {}),
+      };
     },
   },
 

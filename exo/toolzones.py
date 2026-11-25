@@ -88,7 +88,7 @@ TOOL_ZONES: dict[str, Reads] = {
     "open_threads": Reads(required=("t1_open_thread",)),
     "posts": Reads(required=("t1_post", "t2_post_vec")),
     "drafts": Reads(required=("t1_draft",)),
-    "recent_topics": Reads(required=("t0_chat_topic",)),
+    "recent_topics": Reads(required=("t0_attention_thread",)),
     # Three of its four include-modes are turns. A `thread` that can only ever
     # return the title and the distillation is not this tool with less in it.
     "thread": Reads(required=("t0_chat", "t0_chat_topic")),

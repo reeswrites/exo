@@ -52,6 +52,7 @@
     "t1_film_review": "serve",
     "t1_collection": "serve",
     "t0_chat_topic": "serve",
+    "t0_attention_thread": "serve",
     "t0_tv": "serve",
     "t0_anime": "serve",
     "t1_project": "serve",
@@ -65,6 +66,7 @@
   },
   "zone_notes": {
     "t0_anime": "Your MyAnimeList list. The one source here carrying how MANY episodes a series has, which is what turns \"five watched\" into \"five of twelve\" \u2014 plus your 1-10 scores and your own Dropped / On-Hold words. Grade it `profile` in zone_exposure only if your MAL profile really is public.",
+    "t0_attention_thread": "Threads of thinking that have held your attention across chats, from a Notion database a skill keeps. Titles, touch counts and dates, plus a machine-written summary and dated moves \u2014 what `recent_topics` reads.",
     "t0_chat": "Your own turns only. The assistant's half is another model's output, not your words.",
     "t1_procedure": "Your own methods, published as MCP resources (ADR-0016). Listing it here only lets a procedure BE published — each one still carries its own serve: flag, and a served one that reads a held zone fails the build.",
     "rows": "The cross-zone provenance union. Held: it is a join surface, not an answer."
