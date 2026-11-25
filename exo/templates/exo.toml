@@ -13,6 +13,10 @@ possessive = "her"
 # STORED IN EVERY ATOM'S ID. Choose it once. Changing it later re-mints the
 # whole derived tier and every reader will see a life's worth of "new" rows.
 voice = "ada"
+# URL fragments that mark a saved link as your own published work, so a save of
+# something you wrote reads as yours rather than as someone else's. Match is a
+# case-insensitive substring of the link. Optional; leave it out and nothing is.
+handles = ["substack.com/@ada", "ada.example.com"]
 
 [blog]
 # Only if you publish. {slug} is substituted with each post's frontmatter slug —

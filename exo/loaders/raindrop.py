@@ -16,7 +16,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 from .. import config
-from ..provenance import Row
+from ..provenance import Row, stable_id
 
 _SNAPSHOT = config.SNAPSHOTS / "raindrop.json"
 
@@ -71,6 +71,71 @@ def _platform(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+# Tags the bulk-import userscripts stamp on a save whose content IS the post —
+# no external page behind it. Matched exactly, against the joined tag list.
+_UTTERANCE_TAGS = {"tweet-only", "note-like", "comment-like", "comment"}
+_ARTIFACT_TAGS = {"image-only"}
+_IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+
+
+def _shape(url: str, tags: str, kind: str, platform: str) -> str:
+    """What a save IS, which decides how it can be passed on.
+
+    - `own` — the owner's own published work (matched on `owner.handles`)
+    - `utterance` — someone's words, where the post is the content (a tweet, a note)
+    - `artifact` — an image that is the content (a pin)
+    - `pointer` — a link to something that lives elsewhere (article, video, track)
+
+    Platform alone cannot answer this: a Substack link is an utterance when it is
+    a note and a pointer when it is a post, and an x.com link is a tweet either
+    way. Own is checked first — the owner's note is also a note.
+    """
+    u = (url or "").lower()
+    tagset = {t.strip().lower() for t in tags.split(",") if t.strip()}
+    if any(h in u for h in config.OWNER_HANDLES):
+        return "own"
+    if tagset & _UTTERANCE_TAGS or "/status/" in u or (platform == "substack" and "/note/" in u):
+        return "utterance"
+    if tagset & _ARTIFACT_TAGS or platform == "pinterest" or kind == "image" \
+            or u.split("?", 1)[0].endswith(_IMAGE_EXT):
+        return "artifact"
+    return "pointer"
+
+
+# Lines the import userscripts write INTO Raindrop's note field. None of them is
+# the owner talking: a pointer back to the post, or a pin's image. Raindrop has
+# one note field, and the scripts used it to carry the post along.
+_STAMP_PREFIXES = ("tweet: http", "pin: http", "image: http", "read: http")
+_IMPORT_TAGS = {"substack", "pinterest", "bookmark"}
+
+
+def _split_note(raw: str, tags: str) -> tuple[str, str, str]:
+    """Raindrop's note field -> (owner's note, the post's own text, its author).
+
+    Measured on the 2,480-save library (2026-11-25): of 1,923 non-empty notes,
+    925 were Substack imports (`By: <author>` then the note's text), 486 were X
+    (the tweet's text, then `Tweet: <url>`) and 496 Pinterest (the pin's
+    description, then `Pin:` / `Image:`). About 50 were the owner's own words.
+    Served as the owner's commentary, the rest put a stranger's tweet and a
+    pin's marketing copy in their mouth.
+
+    So: stamp lines are dropped; on a save an import script filed (its tags, or
+    a stamp line present) what remains is the POST's text; anything else is the
+    owner's. Saves of the owner's own posts are theirs either way — `_shape`
+    marks them `own` and the text stays in `note`.
+    """
+    lines = [l for l in (raw or "").replace("\r", "").split("\n")]
+    stamped = any(l.strip().lower().startswith(_STAMP_PREFIXES) for l in lines)
+    by = ""
+    if lines and lines[0].startswith("By: "):
+        by, lines, stamped = lines[0][4:].strip(), lines[1:], True
+    body = "\n".join(l for l in lines
+                     if not l.strip().lower().startswith(_STAMP_PREFIXES)).strip()
+    tagset = {t.strip().lower() for t in tags.split(",") if t.strip()}
+    imported = stamped or bool(tagset & _IMPORT_TAGS)
+    return ("", body, by) if imported else (body, "", by)
+
+
 def _tags(raw) -> str:
     if raw is None:
         return ""
@@ -79,30 +144,62 @@ def _tags(raw) -> str:
     return ", ".join(str(t).strip() for t in raw if str(t).strip())
 
 
+# Raindrop's id for the Unsorted bucket. The API lists it with no title, so it
+# came through as a bare "-1" — 256 saves filed under a number.
+_UNSORTED = {"-1": "Unsorted", "": "Unsorted"}
+
+
 def _row(bm: dict, collections: dict[str, str]) -> Row:
     cid = str(bm.get("collection_id", ""))
+    url, tags = bm.get("link", ""), _tags(bm.get("tags"))
+    kind, platform = bm.get("type", "link"), _platform(bm.get("link", ""))
+    raw_note = (bm.get("note") or "").strip()
+    note, post_text, by = _split_note(raw_note, tags)
+    shape = _shape(url, tags, kind, platform)
+    if shape == "own" and not note:
+        # The owner's own post: its text is theirs, wherever the import put it.
+        note, post_text = post_text, ""
+    # The id is minted from the payload as it was BEFORE shape, post_text, by and
+    # the note split existed: a save's identity did not change when its fields
+    # were read more carefully, and re-minting would make all 2,480 look newly
+    # saved (first_seen is keyed on the id).
+    legacy = {
+        "title": bm.get("title", ""), "url": url, "kind": kind,
+        "collection": collections.get(cid, cid), "tags": tags, "platform": platform,
+        "note": raw_note, "excerpt": (bm.get("excerpt") or "").strip(),
+    }
     return Row(
         tier="t0", zone="save", source="raindrop", author="external",
         created=_to_iso(bm.get("created", "")),
         origin_ref=str(bm.get("bookmark_id", "")),
+        id=stable_id("raindrop", "save", *[legacy[k] for k in sorted(legacy)]),
         payload={
             "title": bm.get("title", ""),
-            "url": bm.get("link", ""),
-            "kind": bm.get("type", "link"),
-            "collection": collections.get(cid, cid),
+            "url": url,
+            "kind": kind,
+            "collection": collections.get(cid) or _UNSORTED.get(cid, cid),
             # Accept both shapes. The live API hands back a list; the snapshot
             # now stores a comma-joined string, and `", ".join(a_string)`
             # silently iterates characters — 1,948 saves came through as
             # "I, F, T, T, T, ,, Y, o, u..." rather than "IFTTT, YouTube",
             # which reads as data rather than as a bug.
-            "tags": _tags(bm.get("tags")),
-            "platform": _platform(bm.get("link", "")),
+            "tags": tags,
+            "platform": platform,
+            # How the save can be passed on (see _shape). Derived here, not
+            # stored in Raindrop, so a rule change reclassifies the whole
+            # library on the next ingest.
+            "shape": shape,
             # `note` is the OWNER's commentary on why a link was worth keeping —
-            # the same category as verdicts and reviews, and 1,906 saves have one.
+            # the same category as verdicts and reviews. About 50 saves have one;
+            # the import scripts' text moved to `post_text` (see _split_note).
             # `excerpt` is the page's own description, which is the world's
             # words; kept apart so an assistant never quotes marketing copy back
             # as if it were an authored thought.
-            "note": (bm.get("note") or "").strip(),
+            "note": note,
+            # The saved post's own words (a tweet, a Substack note, a pin's
+            # description) and who wrote them — never the owner's (_split_note).
+            "post_text": post_text,
+            "by": by,
             "excerpt": (bm.get("excerpt") or "").strip(),
         },
     )

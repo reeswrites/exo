@@ -161,6 +161,9 @@ LEGACY_ENV_FILE = Path.home() / ".config" / "warehouse" / "secrets" / "env"
 OWNER = setting("owner", "name", "you")
 OWNER_POSSESSIVE = setting("owner", "possessive", "their")
 OWNER_VOICE = setting("owner", "voice", "owner")  # atom attribution label
+# URL fragments that mark a link as the owner's own published work (a profile
+# path, a blog domain). Lowercased once here so every matcher compares alike.
+OWNER_HANDLES = tuple(h.lower() for h in setting("owner", "handles", []) if h)
 BLOG_URL_TEMPLATE = _env("EXO_BLOG_URL_TEMPLATE") or setting("blog", "url_template", "")
 
 
