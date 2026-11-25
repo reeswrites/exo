@@ -2414,7 +2414,7 @@ export const TOOLS = {
     class: "possession", domain: "culture", kind: "entity",
     reads: ["t0_music", "t1_collection"],
     description:
-      "For 'what do I own' and decisions about it: 'help me pick a fragrance from what I have', 'which records should I sell or never play' (order='played'), 'what board games do we have'. What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes. Most recently acquired first; order='oldest' reaches what has been on the shelf longest, and order='played' ranks vinyl by scrobbles \u2014 owning a record and wearing it out are different claims. Every answer carries the `genres` vocabulary, which is a few coarse buckets the owner typed into their own inventory rather than a taxonomy: read a genre this shelf has no bucket for as unrecorded, never as absent.",
+      "For 'what do I own' and decisions about it: 'help me pick a fragrance from what I have', 'which records should I sell or never play' (order='played'), 'what board games do we have'. What the owner OWNS, which is not what they consumed: 89 vinyl records, 66 DVDs, 24 board games, 7 fragrances. Buying and keeping a thing is a stronger signal than playing it once \u2014 use this when the question is about taste they committed to. Fragrances carry the owner's own written notes; board games carry their 1-5 rating and, often, a note on why — owning a game is not the same as liking it. Most recently acquired first; order='oldest' reaches what has been on the shelf longest, and order='played' ranks vinyl by scrobbles \u2014 owning a record and wearing it out are different claims. Every answer carries the `genres` vocabulary, which is a few coarse buckets the owner typed into their own inventory rather than a taxonomy: read a genre this shelf has no bucket for as unrecorded, never as absent.",
     schema: {
       type: "object",
       properties: {
@@ -2441,7 +2441,7 @@ export const TOOLS = {
         // Matched on artist AND album (74 of 89): artist alone reported the
         // total Bladee plays against every Bladee record.
         `SELECT c.kind, c.title, c.creator, c.genre, c.form, c.acquired,
-                c.url, c.thoughts, c.cost, c.retailer, p.plays
+                c.url, c.thoughts, c.rating, c.rating_note, c.cost, c.retailer, p.plays
          FROM t1_collection c
          LEFT JOIN (
            SELECT lower(artist) AS a, lower(album) AS al, count(*) AS plays

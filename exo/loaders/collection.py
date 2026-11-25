@@ -93,6 +93,14 @@ def load() -> list[Row]:
             "form": g.get("type", ""),
             "mechanism": g.get("mechanism", ""),
             "url": g.get("game_information", ""),
+            # Owning a game and liking it are different facts — the same
+            # distinction `plays` draws for vinyl. 1-5, blank where unrated.
+            # `rating_note` is usually the more interesting half: a bare 3 on a
+            # party game hides that it may have been the crowd and not the game.
+            # The id is keyed on kind + name (`_row`), so adding these re-mints
+            # nothing.
+            "rating": g.get("rating", ""),
+            "rating_note": g.get("rating_note", ""),
         }))
 
     for f in _json("fragrance.json"):
