@@ -139,7 +139,30 @@ def _from_api(token: str) -> list[Row]:
     return rows
 
 
+def _from_cache() -> list[Row] | None:
+    """The library as `exo fetch-raindrop` last wrote it, or None if it never has.
+
+    Preferred to both the live API and the snapshot: it is the whole library
+    with notes and excerpts (unlike the snapshot), and reading it keeps a rebuild
+    offline (unlike paging the API from inside ingest)."""
+    path = config.EXPORTS / "raindrop-cache.json"
+    if not path.exists():
+        return None
+    try:
+        blob = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        print("  raindrop: raindrop-cache.json is unreadable — falling back")
+        return None
+    cols = blob.get("collections", {})
+    rows = [_row(bm, cols) for bm in blob.get("bookmarks", [])]
+    print(f"  raindrop: {len(rows):,} saves from the API cache")
+    return rows or None
+
+
 def load() -> list[Row]:
+    cached = _from_cache()
+    if cached is not None:
+        return cached
     token = os.environ.get("RAINDROP_TOKEN")
     if token:
         return _from_api(token)
