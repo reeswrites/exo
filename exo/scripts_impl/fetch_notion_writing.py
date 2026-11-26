@@ -153,14 +153,15 @@ def shape(page: dict, index: dict) -> dict:
         # axis is these names); otherwise its place in the Home tree is `path`.
         "folder": folder,
         # The date the WRITING happened, when the page records one; created_time
-        # is only when the page was made. Two properties carry it: `Created`, the
-        # Apple date on the archive (created_time is the 2026-08-20 import for
-        # all of it), and `Started`, the chat's date on a Chat digests row (whose
-        # created_time is when the digest was written — every backfilled digest
-        # read as 2026-11-25). Recomputed on every run, so a fix here re-dates
-        # every page without reading a single body again.
+        # is only when the page was made. Three properties carry it: `Created`,
+        # the Apple date on the archive (created_time is the 2026-08-20 import
+        # for all of it); `Started`, the chat's date on a Chat digests row; and
+        # `First seen`, when an Attention threads row's thread began. Both of
+        # those databases were backfilled on 2026-11-25, so their created_time
+        # dated every row that day. Recomputed on every run, so a fix here
+        # re-dates every page without reading a single body again.
         "created": (_date(page, "Created") or _date(page, "Started")
-                    or page.get("created_time", "")),
+                    or _date(page, "First seen") or page.get("created_time", "")),
         "created_time": page.get("created_time", ""),
         "edited": page.get("last_edited_time", ""),
         "created_by": _who(page.get("created_by")),
