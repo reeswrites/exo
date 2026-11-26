@@ -114,6 +114,14 @@ def test_a_chat_digest_is_dated_by_its_chat_not_by_when_the_digest_was_written()
     assert fw.shape(page, {})["created"] == "2026-10-17"
 
 
+def test_an_attention_thread_is_dated_by_when_it_began():
+    page = _page(created=None)
+    page["created_time"] = "2026-11-25T12:00:00.000Z"
+    page["properties"]["First seen"] = {"type": "date", "date": {"start": "2026-09-02"}}
+    fw._USERS.update({api._norm_id(u["id"]): u["type"] for u in USERS})
+    assert fw.shape(page, {})["created"] == "2026-09-02"
+
+
 def test_created_by_type_comes_from_the_user_list():
     assert _entry(author="u-bot")["created_by"]["type"] == "bot"
 
