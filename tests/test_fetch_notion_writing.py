@@ -104,6 +104,16 @@ def test_shape_falls_back_to_created_time_without_a_created_property():
     assert _entry(created=None)["created"].startswith("2026-08-20")
 
 
+def test_a_chat_digest_is_dated_by_its_chat_not_by_when_the_digest_was_written():
+    # Chat digests rows carry the chat's date in `Started`; their created_time
+    # is when the digest was written, and every backfilled one read 2026-11-25.
+    page = _page(created=None)
+    page["created_time"] = "2026-11-25T12:00:00.000Z"
+    page["properties"]["Started"] = {"type": "date", "date": {"start": "2026-10-17"}}
+    fw._USERS.update({api._norm_id(u["id"]): u["type"] for u in USERS})
+    assert fw.shape(page, {})["created"] == "2026-10-17"
+
+
 def test_created_by_type_comes_from_the_user_list():
     assert _entry(author="u-bot")["created_by"]["type"] == "bot"
 
