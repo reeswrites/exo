@@ -547,7 +547,7 @@ async function ratingsLookup(env, { medium, title, director }, ctx) {
   const picked = medium ? { [medium]: RATINGS_SRC[medium] } : RATINGS_SRC;
   const term = director ?? title;
   const field = director ? "director" : null;
-  const needle = `%${term.toLowerCase().replace(/[\\%_]/g, (c) => "\\" + c)}%`;
+  const needle = clipLike(`%${term.toLowerCase().replace(/[\\%_]/g, (c) => "\\" + c)}%`);
   const out = [];
   for (const [name, d] of Object.entries(picked)) {
     if (!d) continue;
@@ -589,6 +589,24 @@ export function chatLinks(cell) {
   return String(cell ?? "").split("\n").map((l) => l.trim().match(CHAT_LINE)).filter(Boolean)
     .map(([, id, title]) => ({ title: title.replace(/^\((.*)\)$/, "$1").trim() || null,
                                url: `https://claude.ai/chat/${id.toLowerCase()}` }));
+}
+
+// D1 refuses a LIKE pattern over 50 bytes ("LIKE or GLOB pattern too
+// complex"), and every tool here builds one straight from what the caller
+// typed, so a long topic failed the whole call (saves, 2026-11-26, a 63-char
+// comma list). Clipped to the first 48 bytes instead: the match widens a
+// little — anything containing the opening of the phrase — rather than erroring.
+const LIKE_MAX_BYTES = 50;
+const ENC = new TextEncoder();
+export function clipLike(pattern) {
+  if (ENC.encode(pattern).length <= LIKE_MAX_BYTES) return pattern;
+  let body = pattern.slice(1, -1);
+  while (body && ENC.encode(`%${body}%`).length > LIKE_MAX_BYTES) body = body.slice(0, -1);
+  if (body.endsWith("\\")) body = body.slice(0, -1); // never end on a dangling escape
+  return `%${body}%`;
+}
+export function likeOf(s) {
+  return s == null ? null : clipLike(`%${String(s).toLowerCase()}%`);
 }
 
 // Saves search, measured on the 2,480-save library against 18 queries the audit
@@ -753,7 +771,7 @@ export const TOOLS = {
       },
     },
     async run(env, { artist, since, until, order, with_mentions }, ctx) {
-      const like = artist ? `%${artist.toLowerCase()}%` : null;
+      const like = artist ? likeOf(artist) : null;
       // Three facts per artist, so all three axes come off one scan. `plays`
       // alone could not say what fell OUT of rotation, and that is most of what
       // "lately" means against a decade of scrobbles.
@@ -849,7 +867,7 @@ export const TOOLS = {
       },
     },
     async run(env, { tags, artist, since, until, min_plays, unplayed_since, order, owned, vocabulary }, ctx) {
-      const like = artist ? `%${artist.toLowerCase()}%` : null;
+      const like = artist ? likeOf(artist) : null;
       const wanted = String(tags ?? "")
         .split(",").map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 12);
       const floor = Number.isInteger(min_plays) && min_plays > 1 ? min_plays : 1;
@@ -892,7 +910,7 @@ export const TOOLS = {
                      floor, unplayed_since ?? null, unplayed_since ?? null];
       const tagWhere = wanted.length
         ? `WHERE (${wanted.map(() => "t.tags LIKE ?").join(" OR ")})` : "";
-      const tagBinds = wanted.map((w) => `%${w}%`);
+      const tagBinds = wanted.map((w) => clipLike(`%${w}%`));
 
       // What the rows were drawn FROM (ADR-0023 §1): how many albums the window
       // holds, and how many of them no tag filter could ever reach.
@@ -996,7 +1014,7 @@ export const TOOLS = {
       },
     },
     async run(env, { tags, artist, found_via, new_artists, order, vocabulary }, ctx) {
-      const like = artist ? `%${artist.toLowerCase()}%` : null;
+      const like = artist ? likeOf(artist) : null;
       const via = ["back_catalog", "scene"].includes(found_via) ? `%${found_via}%` : null;
       const wanted = String(tags ?? "")
         .split(",").map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 12);
@@ -1036,7 +1054,7 @@ export const TOOLS = {
         ...(wanted.length ? [`(${wanted.map(() => "q.tags LIKE ?").join(" OR ")})`] : []),
       ];
       const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-      const tagBinds = wanted.map((w) => `%${w}%`);
+      const tagBinds = wanted.map((w) => clipLike(`%${w}%`));
 
       const [scope] = await q(
         env,
@@ -1168,7 +1186,7 @@ export const TOOLS = {
       properties: { title: { type: "string", description: "Match against the item's title." } },
     },
     async run(env, { title }, ctx) {
-      const like = title ? `%${title.toLowerCase()}%` : null;
+      const like = title ? likeOf(title) : null;
       const rows = await q(
         env,
         `SELECT e.event, e.to_status, e.date, e.ts, e.ref_kind, e.from_,
@@ -1205,7 +1223,7 @@ export const TOOLS = {
       },
     },
     async run(env, { topic, full }, ctx) {
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
       const match = "(? IS NULL OR lower(title) LIKE ? OR lower(cuisine) LIKE ? OR lower(tags) LIKE ?)";
       // Alphabetical was the one ORDER BY on this surface that ranked by nothing
       // measured, and the zone holds two shapes of row: recipes written up and
@@ -1257,7 +1275,7 @@ export const TOOLS = {
       },
     },
     async run(env, { topic, stale_days, full }, ctx) {
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
       const match = "(? IS NULL OR lower(title) LIKE ? OR lower(body) LIKE ?)";
       const stale = "(? IS NULL OR julianday('now') - julianday(modified) >= ?)";
       const binds = [like, like, like, stale_days ?? null, stale_days ?? 0];
@@ -1639,7 +1657,7 @@ export const TOOLS = {
       },
     },
     async run(env, { topic, free, from, to }, ctx) {
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
       // Two corrections to "ORDER BY start LIMIT 20":
       //
       // Recurring programming swamps everything. The library alone contributes
@@ -1748,8 +1766,8 @@ export const TOOLS = {
         familiar: "plays DESC, release_date DESC, artist, title, url",
         spread: "scene_count DESC, listings DESC, release_date DESC, artist, title, url",
       });
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
-      const inScene = scene ? `%${scene.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
+      const inScene = scene ? likeOf(scene) : null;
       const share = topic || scene ? 1000 : 3;
 
       // Aggregated once and joined, never correlated per row: t0_music is 40k
@@ -1872,9 +1890,9 @@ export const TOOLS = {
         popular: "popularity DESC, title, url",
         oldest: "year_sort ASC, title, url",
       });
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
-      const g = genre ? `%${genre.toLowerCase()}%` : null;
-      const c = country ? `%${country.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
+      const g = genre ? likeOf(genre) : null;
+      const c = country ? likeOf(country) : null;
       const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : null);
       const [fy, ty, mm, lw] = [num(from_year), num(to_year), num(max_minutes), num(leaving_within)];
       const POOL = `
@@ -1972,7 +1990,7 @@ export const TOOLS = {
         recent: "published DESC, url",
         oldest: "published ASC, url",
       });
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
       const who = outlet ? outlet.toLowerCase() : null;
 
       // Round-robin by outlet, so a daily reviewer cannot fill an answer a
@@ -2406,7 +2424,7 @@ export const TOOLS = {
       },
     },
     async run(env, { topic, min_rating, order }, ctx) {
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
       // Same cast the min_rating filter already used: the column is TEXT off a
       // Letterboxd export, so an uncast DESC would rank '5' above '4.5' by luck
       // and '10' below both if the scale ever moved.
@@ -2445,7 +2463,7 @@ export const TOOLS = {
       },
     },
     async run(env, { kind, topic, order }, ctx) {
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
       // Undated rows go last on BOTH date axes. `acquired` is empty for a good
       // part of the shelf, and an ASC sort that took '' at face value would open
       // "what has been sitting longest" with everything nobody dated.
@@ -2563,7 +2581,7 @@ export const TOOLS = {
     },
     async run(env, { status, declared, stalled_since, order, title }, ctx) {
       const titleLike = typeof title === "string" && title.trim()
-        ? `%${title.trim().toLowerCase().replace(/[\\%_]/g, (c) => "\\" + c)}%` : null;
+        ? clipLike(`%${title.trim().toLowerCase().replace(/[\\%_]/g, (c) => "\\" + c)}%`) : null;
       // Today, bound rather than read inside SQL, so the same call against the
       // same bundle is reproducible from outside and the day boundary is the
       // worker's rather than D1's.
@@ -2775,7 +2793,7 @@ export const TOOLS = {
       },
     },
     async run(env, { topic, platform, collection, kind, tag, since, with_note, shape }, ctx) {
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
 
       // With nothing to narrow by, return the AXES rather than 20 arbitrary
       // links. A flat sample of a 2,188-item library teaches an assistant
@@ -2813,7 +2831,7 @@ export const TOOLS = {
         platform ?? null, platform ?? "",
         collection ?? null, collection ?? "",
         kind ?? null, kind ?? "",
-        tag ?? null, tag ? `%${tag.toLowerCase()}%` : "",
+        tag ?? null, tag ? likeOf(tag) : "",
         since ?? null, since ?? "",
         with_note ? 1 : null,
         shape ?? null, shape ?? "",
@@ -2828,6 +2846,17 @@ export const TOOLS = {
       // own text and the excerpt carry what it is about). Meaning alone has no
       // floor — it always returns the nearest saves — so a topic that nothing
       // contains and nothing sits close to is said to be weak, not dressed up.
+      // A topic is often a list ("games as unnecessary obstacles, AI and craft,
+      // friction"). As one LIKE it matches nothing and, past 50 bytes, D1
+      // refuses it outright. Each comma- or semicolon-separated phrase is
+      // matched on its own instead, up to four.
+      const phrases = topic
+        ? [...new Set(topic.split(/[,;]/).map((t) => t.trim()).filter(Boolean))].slice(0, 4).map(likeOf)
+        : [];
+      const WORD_FIELDS = `(lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?
+                    OR lower(COALESCE(collection,'')) LIKE ? OR lower(COALESCE(note,'')) LIKE ?
+                    OR lower(COALESCE(post_text,'')) LIKE ? OR lower(COALESCE(by,'')) LIKE ?
+                    OR lower(COALESCE(excerpt,'')) LIKE ?)`;
       let rows;
       let how = "words";
       let weak = false;
@@ -2836,13 +2865,10 @@ export const TOOLS = {
           search(env, topic, { k: 60, index: "saves", prefix: SAVES_QUERY_PREFIX }),
           q(env,
             `SELECT ${COLS} FROM t0_raindrop
-             WHERE (lower(title) LIKE ? OR lower(COALESCE(tags,'')) LIKE ?
-                    OR lower(COALESCE(collection,'')) LIKE ? OR lower(COALESCE(note,'')) LIKE ?
-                    OR lower(COALESCE(post_text,'')) LIKE ? OR lower(COALESCE(by,'')) LIKE ?
-                    OR lower(COALESCE(excerpt,'')) LIKE ?)
+             WHERE (${phrases.map(() => WORD_FIELDS).join(" OR ")})
                AND ${FILTERS}
              ORDER BY created DESC, id LIMIT 30`,
-            like, like, like, like, like, like, like, ...fparams),
+            ...phrases.flatMap((p) => Array(7).fill(p)), ...fparams),
         ]);
         const score = new Map((hits ?? []).map((h) => [h.id, h.score]));
         const found = hits?.length
@@ -2920,7 +2946,7 @@ export const TOOLS = {
       },
     },
     async run(env, { kind, topic, since, order }, ctx) {
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
       // Two piles, two date columns, one vocabulary: the shelves date from
       // Goodreads' date_added and the collections from raindrop's created, and
       // a caller should not have to know which pile it is asking.
@@ -3067,7 +3093,7 @@ export const TOOLS = {
       },
     },
     async run(env, { topic, since, min_touches, order, full }, ctx) {
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
       const by = {
         touches: "touches DESC, last_touched DESC",
         started: "first_seen DESC, last_touched DESC",
@@ -3132,7 +3158,7 @@ export const TOOLS = {
     },
     async run(env, { topic, include }, ctx) {
       const want = include || "both";
-      const like = `%${(topic || "").toLowerCase()}%`;
+      const like = likeOf(topic || "");
       const [hit] = await q(
         env,
         `SELECT title, landed, turns, his_turns, last_seen,
@@ -3339,7 +3365,7 @@ export const TOOLS = {
       },
     },
     async run(env, { topic, status, group, order }, ctx) {
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
       const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
 
       // Bound, not interpolated. `since` is derived from the clock rather than
@@ -3431,7 +3457,7 @@ export const TOOLS = {
         };
       }
 
-      const like = `%${repo.toLowerCase()}%`;
+      const like = likeOf(repo);
       const rows = await q(
         env,
         `SELECT c.repo, substr(c.committed_at,1,10) AS date, c.subject
@@ -3460,8 +3486,8 @@ export const TOOLS = {
       },
     },
     async run(env, { topic, repo, kind, full }, ctx) {
-      const like = topic ? `%${topic.toLowerCase()}%` : null;
-      const rlike = repo ? `%${repo.toLowerCase()}%` : null;
+      const like = topic ? likeOf(topic) : null;
+      const rlike = repo ? likeOf(repo) : null;
 
       const rows = await q(
         env,
@@ -3533,7 +3559,7 @@ export const TOOLS = {
         return { ...cap(rows, ctx), note: "where unfinished work sits — ask again with a repo for the items" };
       }
 
-      const like = `%${repo.toLowerCase()}%`;
+      const like = likeOf(repo);
       const rows = await q(
         env,
         `SELECT repo, kind, path, line, text
