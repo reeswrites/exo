@@ -28,7 +28,12 @@ meta.count = order.length;
 function env({ published = true } = {}) {
   return {
     DB: { prepare(sql) { return {
-      bind(...b) { this._b = b; return this; },
+      bind(...b) {
+        // D1 refuses a LIKE pattern over 50 bytes; node's SQLite does not, so
+        // the mock does it for it.
+        for (const v of b) if (typeof v === "string" && v.startsWith("%") && v.endsWith("%")
+            && new TextEncoder().encode(v).length > 50) throw new Error("D1_ERROR: LIKE or GLOB pattern too complex");
+        this._b = b; return this; },
       async all() { return { results: db.prepare(sql).all(...(this._b ?? [])) }; },
     }; } },
     VECTORS: {
@@ -86,6 +91,16 @@ ok(w.rows.length === 1 && w.rows[0].title === "Glaze recipes" && /words/.test(w.
 
 const axes = await TOOLS.saves.run(env(), {}, ctx);
 ok(axes.rows.length === 0 && axes.platforms.length > 0, "no arguments still returns the axes");
+
+const long = await TOOLS.saves.run(env(), { topic: "games as unnecessary obstacles, glaze, lonely city walks, a much longer phrase that runs well past fifty bytes of text" }, ctx);
+ok(long.rows.some((x) => x.title === "Glaze recipes" && x.exact) && long.rows.some((x) => x.title === "Lonely city walks" && x.exact),
+   "a comma list matches each phrase exactly, and a phrase past D1's 50-byte cap does not fail the call");
+
+const { likeOf } = await import("../src/tools.js");
+const clipped = likeOf("x".repeat(80));
+ok(new TextEncoder().encode(clipped).length <= 50 && clipped.startsWith("%x") && clipped.endsWith("x%"),
+   "likeOf clips any pattern to D1's 50 bytes");
+ok(new TextEncoder().encode(likeOf("é".repeat(40))).length <= 50, "clipping counts bytes, not characters");
 
 if (fails) { console.log(`\n${fails} failed`); process.exit(1); }
 console.log("\nall passed");
