@@ -53,15 +53,15 @@ SOURCE = "notion-writing"
 
 
 def note_id(source: str, payload: dict) -> str:
-    """The note id, as it was before `authorship` and `link` existed.
+    """The note id, as it was before `authorship`, `link` and `notion_id` existed.
 
-    Both are pointers ABOUT a note rather than its content, and adding either
+    All three are pointers ABOUT a note rather than its content, and adding any
     must not re-mint every Notion note's id (first_seen is keyed on it)."""
     return stable_id(source, "note",
                      *[payload[k] for k in sorted(payload) if k not in _NOT_IDENTITY])
 
 
-_NOT_IDENTITY = {"authorship", "link"}
+_NOT_IDENTITY = {"authorship", "link", "notion_id"}
 
 
 def _loose(s: str) -> str:
@@ -137,6 +137,10 @@ def overlay(rows: list[Row], cache: dict | None = None) -> list[Row]:
         page = by_id.get(pid) if pid else None
         payload = dict(r.payload)
         payload["authorship"] = (page or {}).get("authorship", "") if page and "body" in page else ""
+        # The Notion page this vault note was adopted onto, so a hit on it (or on
+        # any atom cut from it) can be opened where the note now lives. Empty for
+        # a vault note Notion never received.
+        payload["notion_id"] = pid or ""
         if page and "body" in page and _edited_in_notion(page) \
                 and _loose(page["body"]) != _loose(payload.get("body", "")):
             payload["body"] = page["body"]
@@ -162,6 +166,10 @@ def overlay(rows: list[Row], cache: dict | None = None) -> list[Row]:
             "body": p["body"],
             "authorship": p["authorship"],
             "link": p.get("chat_url", ""),
+            # The Notion page id: `uuid` already is one for these rows, but
+            # vault notes carry theirs in `notion_id`, so every note answers the
+            # same question in the same column.
+            "notion_id": p["page_id"],
         }
         out.append(Row(tier="t1", zone="note", source=SOURCE, author=author,
                        payload=payload, created=(p.get("created") or "")[:10] or None,

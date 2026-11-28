@@ -143,3 +143,18 @@ def test_a_chat_digest_carries_its_chat_link_without_changing_any_note_id():
     assert linked.id == plain.id
     before = {k: v for k, v in plain.payload.items() if k != "link"}
     assert nw.note_id(plain.source, before) == plain.id
+
+
+def test_every_note_carries_its_notion_page_without_changing_any_id():
+    # A Notion-native note: its own page.
+    [new] = nw.overlay([], _cache(_page("p9", title="Essay", body=LONG, created_by=ME)))
+    assert new.payload["notion_id"] == "p9"
+    before = {k: v for k, v in new.payload.items() if k != "notion_id"}
+    assert nw.note_id(new.source, before) == new.id
+    # A vault note adopted onto a Notion page: that page.
+    row = _vault_row("raw/import/a.md", folder="Notes")
+    [out] = nw.overlay([row], _cache(_page("p1", database=ARCHIVE, folder="Drafts")))
+    assert out.payload["notion_id"] == "p1" and out.id == row.id
+    # A vault note Notion never received: none.
+    [lone] = nw.overlay([_vault_row("raw/import/b.md")], _cache())
+    assert lone.payload["notion_id"] == ""

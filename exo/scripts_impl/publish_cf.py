@@ -457,6 +457,17 @@ def _emit_vectors(con, out, *, partial: bool) -> dict:
         cols = {c for (c, *_) in con.execute(
             f"DESCRIBE SELECT * FROM read_parquet('{join}')").fetchall()}
         link = "any_value(link)" if "link" in cols else "''"
+        # The Notion page behind a note or an atom, so a hit can be opened where
+        # the note lives. A note carries it; an atom inherits its note's, by the
+        # origin_ref they share. Absent on older bundles and on posts.
+        notes_pq = config.SERVE / "t1_notes.parquet"
+        has_nid = kind in ("note", "atom") and notes_pq.exists() and "notion_id" in {
+            c for (c, *_) in con.execute(
+                f"DESCRIBE SELECT * FROM read_parquet('{notes_pq}')").fetchall()}
+        nid_join = (f"""LEFT JOIN (SELECT origin_ref, max(notion_id) AS notion_id
+                                   FROM read_parquet('{notes_pq}') GROUP BY origin_ref) n
+                        ON n.origin_ref = j.origin_ref""" if has_nid else "")
+        nid = "n.notion_id" if has_nid else "''"
         rows = con.execute(f"""
             WITH j AS (
                 SELECT id,
@@ -467,16 +478,17 @@ def _emit_vectors(con, out, *, partial: bool) -> dict:
                 GROUP BY id
             )
             SELECT v.id, COALESCE(j.label, ''), COALESCE(j.origin_ref, ''),
-                   COALESCE(j.link, ''), v.vec
+                   COALESCE(j.link, ''), COALESCE({nid}, ''), v.vec
             FROM read_parquet('{parquet}') v
             LEFT JOIN j ON j.id = v.id
+            {nid_join}
         """).fetchall()
         if len(rows) != n_in:
             raise SystemExit(
                 f"publish-cf: {kind} join changed row count {n_in} -> {len(rows)}. "
                 "A non-unique join key would corrupt the vector blob; refusing."
             )
-        for vid, label_val, ref, link_val, vec in rows:
+        for vid, label_val, ref, link_val, nid_val, vec in rows:
             if dim is None:
                 dim = len(vec)
             elif len(vec) != dim:
@@ -490,6 +502,7 @@ def _emit_vectors(con, out, *, partial: bool) -> dict:
                 # Only when there is one: ~3,000 empty strings would be bytes
                 # every cold isolate parses for nothing.
                 **({"link": link_val} if link_val else {}),
+                **({"notion_id": nid_val} if nid_val else {}),
             })
 
     if partial and missing:

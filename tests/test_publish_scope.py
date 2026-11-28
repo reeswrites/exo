@@ -370,3 +370,23 @@ def test_a_chat_digest_link_rides_in_the_vector_sidecar(tmp_path, monkeypatch):
     assert "link" not in rows["n2"]
     old = build("SELECT * FROM (VALUES ('n1', 'Digest', 'r1'), ('n2', 'Essay', 'r2')) t(id, title, origin_ref)")
     assert all("link" not in r for r in old.values())
+
+
+def test_notes_and_their_atoms_carry_the_notion_page_in_the_sidecar(tmp_path, monkeypatch):
+    import duckdb
+    monkeypatch.setattr(publish_cf.config, "SERVE", tmp_path)
+    con = duckdb.connect(":memory:")
+    for z, ids in (("t2_note_vec", ("n1", "n2")), ("t2_atom_vec", ("a1", "a2"))):
+        con.execute(f"""COPY (SELECT * FROM (VALUES ('{ids[0]}', [1.0, 0.0]::FLOAT[]), ('{ids[1]}', [0.0, 1.0]::FLOAT[]))
+                        t(id, vec)) TO '{tmp_path}/{z}.parquet' (FORMAT parquet)""")
+    con.execute(f"""COPY (SELECT * FROM (VALUES ('n1', 'In Notion', 'r1', 'p1'), ('n2', 'Vault only', 'r2', ''))
+                    t(id, title, origin_ref, notion_id)) TO '{tmp_path}/t1_notes.parquet' (FORMAT parquet)""")
+    con.execute(f"""COPY (SELECT * FROM (VALUES ('a1', 'a span', 'r1'), ('a2', 'another', 'r2'))
+                    t(id, text, origin_ref)) TO '{tmp_path}/t2_atom.parquet' (FORMAT parquet)""")
+    out = tmp_path / "cf"
+    out.mkdir()
+    publish_cf._emit_vectors(con, out, partial=False)
+    rows = {r["id"]: r for r in json.loads((out / "vectors.json").read_text())["rows"]}
+    assert rows["n1"]["notion_id"] == "p1" and "notion_id" not in rows["n2"]
+    assert rows["a1"]["notion_id"] == "p1", "an atom inherits its note's page"
+    assert "notion_id" not in rows["a2"]
