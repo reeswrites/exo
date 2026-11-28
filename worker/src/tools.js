@@ -635,7 +635,7 @@ export const TOOLS = {
     class: "derived", domain: "mind", kind: "vector",
     reads: ["t2_atom", "t1_notes", "t1_post"],
     description:
-      "What has the owner written that bears on a topic? Searches their notes and the verbatim spans lifted from them, by meaning. Use this first when you want to know their thinking on something. Not for consumption questions: what they listened to, watched, read, rated, saved or own lives in the culture tools (`ratings`, `albums`, `around_the_time`, `saves`, `collection`, `places`), and notes only hold what they wrote about it.",
+      "What has the owner written that bears on a topic? Searches their notes and the verbatim spans lifted from them, by meaning. Use this first when you want to know their thinking on something. A note or span carries `notion_id`, the Notion page it lives on: open it with the Notion tool's fetch, or link it as https://www.notion.so/<notion_id>. Not for consumption questions: what they listened to, watched, read, rated, saved or own lives in the culture tools (`ratings`, `albums`, `around_the_time`, `saves`, `collection`, `places`), and notes only hold what they wrote about it.",
     schema: {
       type: "object",
       properties: { topic: { type: "string", description: "A topic, question, or phrase." } },
@@ -653,6 +653,7 @@ export const TOOLS = {
           text: h.label,
           score: h.score,
           ...(h.kind === "post" ? postUrl(env, h.ref) : {}),
+          ...(h.notion_id ? { notion_id: h.notion_id } : {}),
         }))
       );
     },
@@ -662,7 +663,7 @@ export const TOOLS = {
     class: "authored", domain: "mind", kind: "text",
     reads: ["t1_notes"],
     description:
-      "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents. A note digested from a claude.ai chat carries `link`, the chat itself, for when the owner wants the conversation back. Pass full:true for the entire text of the single best match. Not for consumption questions: what they played, watched, read, rated, saved or own is answered by the culture tools (`ratings`, `albums`, `around_the_time`, `saves`, `collection`, `places`), not by notes.",
+      "The owner's notes about a topic. Returns titles by default — a map of what exists rather than contents. A note digested from a claude.ai chat carries `link`, the chat itself, for when the owner wants the conversation back. Every note that lives in Notion carries `notion_id`: open it with the Notion tool's fetch, or link it as https://www.notion.so/<notion_id>. Pass full:true for the entire text of the single best match. Not for consumption questions: what they played, watched, read, rated, saved or own is answered by the culture tools (`ratings`, `albums`, `around_the_time`, `saves`, `collection`, `places`), not by notes.",
     schema: {
       type: "object",
       properties: {
@@ -682,7 +683,7 @@ export const TOOLS = {
           // second copy.
           // `link` is the claude.ai chat a Chat digest was written from; empty
           // on every other note.
-          select: "title, folder, created, source, uuid, link, body",
+          select: "title, folder, created, source, uuid, notion_id, link, body",
           onClip: (_r, kept, total) =>
             `body truncated to ${kept} of ${total} chars — this is one of the owner's longer notes; ask about a specific part of it rather than requesting it again`,
         });
@@ -699,7 +700,8 @@ export const TOOLS = {
       }
       const hits = await search(env, topic, { k: probe(ctx), kind: "note" });
       // `link` is set only on Chat digests: the claude.ai chat behind the note.
-      return cap(hits.map((h) => ({ title: h.label, score: h.score, ...(h.link ? { link: h.link } : {}) })));
+      return cap(hits.map((h) => ({ title: h.label, score: h.score,
+        ...(h.link ? { link: h.link } : {}), ...(h.notion_id ? { notion_id: h.notion_id } : {}) })));
     },
   },
 
